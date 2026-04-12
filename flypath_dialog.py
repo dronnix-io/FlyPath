@@ -105,12 +105,20 @@ QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox {
 QLineEdit:focus, QDoubleSpinBox:focus, QSpinBox:focus, QComboBox:focus {
     border: 1px solid #2D6DB5;
 }
-QComboBox::drop-down { border: none; width: 20px; }
+QComboBox::drop-down {
+    border: none;
+    width: 22px;
+    background-color: #3A3D45;
+    border-radius: 0 3px 3px 0;
+}
+QComboBox::drop-down:hover { background-color: #4A4D55; }
+QComboBox::down-arrow { image: url(ARROW_DOWN_PATH); width: 10px; height: 6px; }
 QComboBox QAbstractItemView {
     background-color: #2A2D35;
     border: 1px solid #3A3D45;
     selection-background-color: #2D6DB5;
     color: #E0E0E0;
+    outline: none;
 }
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button,
 QSpinBox::up-button,       QSpinBox::down-button {
@@ -194,7 +202,10 @@ class FlyPathDialog(QWidget):
     # ── UI construction ───────────────────────────────────────────────────
 
     def _build_ui(self):
-        self.setStyleSheet(STYLESHEET)
+        arrow_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'arrow_down.svg'
+        ).replace('\\', '/')
+        self.setStyleSheet(STYLESHEET.replace('ARROW_DOWN_PATH', arrow_path))
 
         outer = QVBoxLayout(self)
         outer.setSpacing(0)
