@@ -1,15 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 80" width="520" height="160">
 
-  <!-- Wordmark -->
+  <!-- Wordmark — positions match icon.png (Arial Black, measured by Pillow) -->
   <text font-family="'Arial Black', 'Helvetica Neue', Arial, sans-serif"
         font-weight="900"
-        font-size="58"
-        letter-spacing="-1">
-    <tspan x="8" y="60" fill="#2D6DB5">Fly</tspan><tspan fill="#F0A500">Path</tspan>
+        font-size="56">
+    <tspan x="8" y="72" fill="#2D6DB5">Fly</tspan><tspan x="98.5" y="72" fill="#F0A500">Path</tspan>
   </text>
 
-  <!-- Split underline: solid blue → dashed amber -->
-  <line x1="8"   y1="70" x2="100" y2="70" stroke="#2D6DB5" stroke-width="2.5" stroke-linecap="round"/>
-  <line x1="100" y1="70" x2="252" y2="70" stroke="#F0A500" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="5,3"/>
+  <!-- Underline: solid blue under "Fly", dashed amber under "Path" -->
+  <!-- Positions: x_start=8, fly_end=98.5, path_end=239, y=77.5 -->
+  <line x1="8"    y1="77.5" x2="98.5" y2="77.5"
+        stroke="#2D6DB5" stroke-width="3" stroke-linecap="round"/>
+  <line x1="98.5" y1="77.5" x2="239"  y2="77.5"
+        stroke="#F0A500" stroke-width="3" stroke-linecap="round"
+        stroke-dasharray="7,4"/>
 
 </svg>
