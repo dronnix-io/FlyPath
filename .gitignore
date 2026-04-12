@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# QGIS
+*.qgz
+*.qgs~
+*.pyc
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Plugin zip releases
+*.zip
+
+# Compiled UI files (generated from .ui)
+*_dialog_base.py
+
+# Logs
+*.log

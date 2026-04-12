@@ -1,0 +1,24 @@
+[general]
+name=FlyPath
+qgisMinimumVersion=3.16
+description=Generate DJI WPML KMZ mission files for 2D orthomosaic mapping directly from QGIS
+version=0.1.0
+author=Salar Ghaffarian
+email=salar@dronnix.com
+
+about=FlyPath is a QGIS plugin for planning autonomous drone mapping missions and exporting
+    them as native DJI WPML KMZ files, loadable directly in the DJI Fly app.
+    Supported drones: DJI Mini 3, Mini 3 Pro, Mini 4 Pro, Mini 5.
+    Draw your survey area on the map, set flight altitude and overlap, preview
+    the flight path, and export a ready-to-fly mission file.
+
+tracker=https://github.com/salar/FlyPath/issues
+repository=https://github.com/salar/FlyPath
+
+tags=drone, UAV, mapping, orthomosaic, DJI, mission planning, WPML, KMZ
+
+homepage=https://github.com/salar/FlyPath
+category=Plugins
+icon=icon.svg
+experimental=True
+deprecated=False
