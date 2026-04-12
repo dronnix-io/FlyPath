@@ -1,29 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 164 176" width="164" height="176">
 
-  <!-- Background — bright grey, rounded corners -->
-  <rect x="0" y="0" width="164" height="176" rx="12" fill="#E8E8E8"/>
+  <!-- Background — slightly darker grey, rounded corners -->
+  <rect x="0" y="0" width="164" height="176" rx="12" fill="#D8D8D8"/>
 
   <!-- "Fly" — blue, centred -->
-  <text x="82" y="92"
+  <text x="82" y="94"
         text-anchor="middle"
         font-family="'Arial Black', 'Helvetica Neue', Arial, sans-serif"
-        font-weight="900" font-size="56"
+        font-weight="900" font-size="64"
         fill="#2D6DB5">Fly</text>
 
   <!-- Underline under "Fly" -->
-  <line x1="41.5" y1="93.5" x2="122" y2="93.5"
-        stroke="#2D6DB5" stroke-width="3" stroke-linecap="round"/>
+  <line x1="35.5" y1="95" x2="128" y2="95"
+        stroke="#2D6DB5" stroke-width="4" stroke-linecap="round"/>
 
   <!-- "Path" — amber, centred -->
-  <text x="82" y="158"
+  <text x="82" y="162"
         text-anchor="middle"
         font-family="'Arial Black', 'Helvetica Neue', Arial, sans-serif"
-        font-weight="900" font-size="56"
+        font-weight="900" font-size="64"
         fill="#F0A500">Path</text>
 
   <!-- Underline under "Path" — dashed -->
-  <line x1="21.5" y1="160" x2="142.5" y2="160"
-        stroke="#F0A500" stroke-width="3" stroke-linecap="round"
+  <line x1="12.5" y1="168" x2="151" y2="168"
+        stroke="#F0A500" stroke-width="4" stroke-linecap="round"
         stroke-dasharray="7,4"/>
 
 </svg>
