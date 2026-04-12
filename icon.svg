@@ -1,18 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 80" width="520" height="160">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 164 176" width="164" height="176">
 
-  <!-- Wordmark — positions match icon.png (Arial Black, measured by Pillow) -->
-  <text font-family="'Arial Black', 'Helvetica Neue', Arial, sans-serif"
-        font-weight="900"
-        font-size="56">
-    <tspan x="8" y="72" fill="#2D6DB5">Fly</tspan><tspan x="98.5" y="72" fill="#F0A500">Path</tspan>
-  </text>
+  <!-- Background — dark navy, rounded corners -->
+  <rect x="0" y="0" width="164" height="176" rx="12" fill="#1E2128"/>
 
-  <!-- Underline: solid blue under "Fly", dashed amber under "Path" -->
-  <!-- Positions: x_start=8, fly_end=98.5, path_end=239, y=77.5 -->
-  <line x1="8"    y1="77.5" x2="98.5" y2="77.5"
+  <!-- "Fly" — blue, top line -->
+  <text x="12" y="86"
+        font-family="'Arial Black', 'Helvetica Neue', Arial, sans-serif"
+        font-weight="900" font-size="56"
+        fill="#2D6DB5">Fly</text>
+
+  <!-- Underline under "Fly" -->
+  <line x1="12" y1="86.5" x2="102.5" y2="86.5"
         stroke="#2D6DB5" stroke-width="3" stroke-linecap="round"/>
-  <line x1="98.5" y1="77.5" x2="239"  y2="77.5"
-        stroke="#F0A500" stroke-width="3" stroke-linecap="round"
-        stroke-dasharray="7,4"/>
+
+  <!-- "Path" — amber, bottom line -->
+  <text x="12" y="163"
+        font-family="'Arial Black', 'Helvetica Neue', Arial, sans-serif"
+        font-weight="900" font-size="56"
+        fill="#F0A500">Path</text>
+
+  <!-- Underline under "Path" -->
+  <line x1="12" y1="166" x2="152.5" y2="166"
+        stroke="#F0A500" stroke-width="3" stroke-linecap="round"/>
 
 </svg>
