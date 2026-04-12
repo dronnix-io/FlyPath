@@ -446,7 +446,9 @@ class FlyPathDialog(QWidget):
         ])
         self._refresh_layer_combo()
 
-    def _refresh_layer_combo(self):
+    def _refresh_layer_combo(self, _=None):
+        previously_selected = self.layerCombo.currentData()
+        self.layerCombo.blockSignals(True)
         self.layerCombo.clear()
         self.layerCombo.addItem('— none —', None)
         for layer in QgsProject.instance().mapLayers().values():
@@ -454,10 +456,18 @@ class FlyPathDialog(QWidget):
                     QgsWkbTypes.geometryType(layer.wkbType()) ==
                     QgsWkbTypes.PolygonGeometry):
                 self.layerCombo.addItem(layer.name(), layer.id())
+        # Restore previous selection if the layer still exists
+        idx = self.layerCombo.findData(previously_selected)
+        self.layerCombo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.layerCombo.blockSignals(False)
 
     # ── Signal wiring ─────────────────────────────────────────────────────
 
     def _connect_signals(self):
+        # Refresh layer combo whenever layers are added or removed in the project
+        QgsProject.instance().layersAdded.connect(self._refresh_layer_combo)
+        QgsProject.instance().layersRemoved.connect(self._refresh_layer_combo)
+
         self.droneModelCombo.currentIndexChanged.connect(self._on_drone_changed)
         self.altitudeSpin.valueChanged.connect(self._on_param_changed)
         self.frontOverlapSpin.valueChanged.connect(self._on_param_changed)
@@ -750,6 +760,14 @@ class FlyPathDialog(QWidget):
             QMessageBox.critical(self, 'Export Failed', str(exc))
 
     # ── Helpers ───────────────────────────────────────────────────────────
+
+    def closeEvent(self, event):
+        try:
+            QgsProject.instance().layersAdded.disconnect(self._refresh_layer_combo)
+            QgsProject.instance().layersRemoved.disconnect(self._refresh_layer_combo)
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     def _has_survey_area(self, silent=False):
         if self._survey_polygon is None or self._survey_polygon_crs is None:
