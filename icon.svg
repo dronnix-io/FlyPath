@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 80" width="520" height="160">
+
+  <!-- Wordmark -->
+  <text font-family="'Arial Black', 'Helvetica Neue', Arial, sans-serif"
+        font-weight="900"
+        font-size="58"
+        letter-spacing="-1">
+    <tspan x="8" y="60" fill="#2D6DB5">Fly</tspan><tspan fill="#F0A500">Path</tspan>
+  </text>
+
+  <!-- Split underline: solid blue → dashed amber -->
+  <line x1="8"   y1="70" x2="100" y2="70" stroke="#2D6DB5" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="100" y1="70" x2="252" y2="70" stroke="#F0A500" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="5,3"/>
+
+</svg>
