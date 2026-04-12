@@ -1,54 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 80" width="520" height="160">
 
-  <!-- Lawnmower flight path grid (amber) -->
-  <!-- Row 1: left to right -->
-  <line x1="6"  y1="42" x2="58" y2="42" stroke="#F0A500" stroke-width="2" stroke-linecap="round"/>
-  <!-- Turn right -->
-  <line x1="58" y1="42" x2="58" y2="50" stroke="#F0A500" stroke-width="2" stroke-linecap="round"/>
-  <!-- Row 2: right to left -->
-  <line x1="58" y1="50" x2="6"  y2="50" stroke="#F0A500" stroke-width="2" stroke-linecap="round"/>
-  <!-- Turn left -->
-  <line x1="6"  y1="50" x2="6"  y2="58" stroke="#F0A500" stroke-width="2" stroke-linecap="round"/>
-  <!-- Row 3: left to right -->
-  <line x1="6"  y1="58" x2="58" y2="58" stroke="#F0A500" stroke-width="2" stroke-linecap="round"/>
+  <!-- Wordmark -->
+  <text font-family="'Arial Black', 'Helvetica Neue', Arial, sans-serif"
+        font-weight="900"
+        font-size="58"
+        letter-spacing="-1">
+    <tspan x="8" y="60" fill="#2D6DB5">Fly</tspan><tspan fill="#F0A500">Path</tspan>
+  </text>
 
-  <!-- Waypoint dots row 1 -->
-  <circle cx="6"  cy="42" r="2.5" fill="#F0A500"/>
-  <circle cx="19" cy="42" r="2.5" fill="#F0A500"/>
-  <circle cx="32" cy="42" r="2.5" fill="#F0A500"/>
-  <circle cx="45" cy="42" r="2.5" fill="#F0A500"/>
-  <circle cx="58" cy="42" r="2.5" fill="#F0A500"/>
-
-  <!-- Waypoint dots row 2 -->
-  <circle cx="58" cy="50" r="2.5" fill="#F0A500"/>
-  <circle cx="45" cy="50" r="2.5" fill="#F0A500"/>
-  <circle cx="32" cy="50" r="2.5" fill="#F0A500"/>
-  <circle cx="19" cy="50" r="2.5" fill="#F0A500"/>
-  <circle cx="6"  cy="50" r="2.5" fill="#F0A500"/>
-
-  <!-- Waypoint dots row 3 -->
-  <circle cx="6"  cy="58" r="2.5" fill="#F0A500"/>
-  <circle cx="19" cy="58" r="2.5" fill="#F0A500"/>
-  <circle cx="32" cy="58" r="2.5" fill="#F0A500"/>
-  <circle cx="45" cy="58" r="2.5" fill="#F0A500"/>
-  <circle cx="58" cy="58" r="2.5" fill="#F0A500"/>
-
-  <!-- Drone arms (blue) -->
-  <line x1="27" y1="19" x2="19" y2="11" stroke="#2D6DB5" stroke-width="3" stroke-linecap="round"/>
-  <line x1="37" y1="19" x2="45" y2="11" stroke="#2D6DB5" stroke-width="3" stroke-linecap="round"/>
-  <line x1="27" y1="26" x2="19" y2="34" stroke="#2D6DB5" stroke-width="3" stroke-linecap="round"/>
-  <line x1="37" y1="26" x2="45" y2="34" stroke="#2D6DB5" stroke-width="3" stroke-linecap="round"/>
-
-  <!-- Drone rotors -->
-  <circle cx="19" cy="11" r="6" fill="none" stroke="#2D6DB5" stroke-width="2.5"/>
-  <circle cx="45" cy="11" r="6" fill="none" stroke="#2D6DB5" stroke-width="2.5"/>
-  <circle cx="19" cy="34" r="6" fill="none" stroke="#2D6DB5" stroke-width="2.5"/>
-  <circle cx="45" cy="34" r="6" fill="none" stroke="#2D6DB5" stroke-width="2.5"/>
-
-  <!-- Drone body -->
-  <rect x="24" y="17" width="16" height="11" rx="3" fill="#2D6DB5"/>
-
-  <!-- Camera lens -->
-  <circle cx="32" cy="22" r="2.5" fill="white" opacity="0.9"/>
+  <!-- Split underline: solid blue → dashed amber -->
+  <line x1="8"   y1="70" x2="100" y2="70" stroke="#2D6DB5" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="100" y1="70" x2="252" y2="70" stroke="#F0A500" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="5,3"/>
 
 </svg>
