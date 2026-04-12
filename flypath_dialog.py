@@ -261,6 +261,11 @@ class FlyPathDialog(QWidget):
         self.layerCombo = QComboBox()
         form.addRow('Layer', self.layerCombo)
 
+        self.featureCombo = QComboBox()
+        self.featureCombo.setVisible(False)
+        self._featureComboRow = form.rowCount()
+        form.addRow('Feature', self.featureCombo)
+
         self.drawPolygonBtn = QPushButton('Draw Polygon on Map')
         self.drawPolygonBtn.setObjectName('drawPolygonBtn')
         self.drawPolygonBtn.setCheckable(True)
@@ -476,6 +481,7 @@ class FlyPathDialog(QWidget):
         self.directionSpin.valueChanged.connect(self._update_stats)
         self.triggerModeCombo.currentIndexChanged.connect(self._update_interval)
         self.layerCombo.currentIndexChanged.connect(self._on_layer_changed)
+        self.featureCombo.currentIndexChanged.connect(self._on_feature_changed)
         self.drawPolygonBtn.clicked.connect(self._on_draw_polygon)
         self.autoDirectionBtn.clicked.connect(self._on_auto_direction)
         self.previewBtn.clicked.connect(self._on_preview)
@@ -542,20 +548,90 @@ class FlyPathDialog(QWidget):
 
     def _on_layer_changed(self):
         layer_id = self.layerCombo.currentData()
+
+        # Reset feature combo
+        self.featureCombo.blockSignals(True)
+        self.featureCombo.clear()
+        self.featureCombo.setVisible(False)
+        self.featureCombo.blockSignals(False)
+
         if not layer_id:
             self._survey_polygon     = None
             self._survey_polygon_crs = None
             self.areaLabel.setText('—')
             self._clear_stats()
             return
+
         layer = QgsProject.instance().mapLayer(layer_id)
         if not layer or layer.featureCount() == 0:
             return
-        feat = next(layer.getFeatures())
-        self._survey_polygon     = feat.geometry()
-        self._survey_polygon_crs = layer.crs()
-        self.areaLabel.setText(f'{self._area_ha():.2f} ha')
+
+        if layer.featureCount() == 1:
+            # Single feature — use it directly
+            feat = next(layer.getFeatures())
+            self._set_survey_polygon(feat.geometry(), layer.crs())
+        else:
+            # Multiple features — populate the feature selector
+            self.featureCombo.blockSignals(True)
+            self.featureCombo.clear()
+            self.featureCombo.addItem('— select a feature —', None)
+            name_field = self._guess_name_field(layer)
+            for feat in layer.getFeatures():
+                fid = feat.id()
+                label = (f'FID {fid}  —  {feat[name_field]}'
+                         if name_field else f'FID {fid}')
+                self.featureCombo.addItem(label, fid)
+            self.featureCombo.setVisible(True)
+            self.featureCombo.blockSignals(False)
+            # Clear any previous polygon until the user picks a feature
+            self._survey_polygon     = None
+            self._survey_polygon_crs = None
+            self.areaLabel.setText('—')
+            self._clear_stats()
+
+    def _on_feature_changed(self):
+        fid = self.featureCombo.currentData()
+        if fid is None:
+            self._survey_polygon     = None
+            self._survey_polygon_crs = None
+            self.areaLabel.setText('—')
+            self._clear_stats()
+            return
+        layer_id = self.layerCombo.currentData()
+        layer    = QgsProject.instance().mapLayer(layer_id)
+        if not layer:
+            return
+        feats = list(layer.getFeatures([fid]))
+        if not feats:
+            return
+        self._set_survey_polygon(feats[0].geometry(), layer.crs())
+
+    def _set_survey_polygon(self, geom, crs):
+        self._survey_polygon     = geom
+        self._survey_polygon_crs = crs
+        area_ha = self._area_ha()
+        self.areaLabel.setText(f'{area_ha:.2f} ha')
         self._update_stats()
+        self._check_area_advisory(area_ha)
+
+    def _check_area_advisory(self, area_ha):
+        if area_ha > 200:
+            QMessageBox.information(
+                self, 'Large Survey Area',
+                f'The selected area is {area_ha:.0f} ha.\n\n'
+                'Missions this size will require multiple battery swaps. '
+                'Check the estimated Batteries field in Statistics and '
+                'plan your swap stops before flying.'
+            )
+
+    @staticmethod
+    def _guess_name_field(layer):
+        """Return the first text-like field name, or None."""
+        from qgis.PyQt.QtCore import QVariant
+        for field in layer.fields():
+            if field.type() in (QVariant.String,):
+                return field.name()
+        return None
 
     def _on_draw_polygon(self, checked):
         if checked:
@@ -580,13 +656,12 @@ class FlyPathDialog(QWidget):
     def _on_polygon_drawn(self, geom):
         self.drawPolygonBtn.setChecked(False)
         self.drawPolygonBtn.setText('Draw Polygon on Map')
-        self._survey_polygon     = geom
-        self._survey_polygon_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
-        self.areaLabel.setText(f'{self._area_ha():.2f} ha')
         if self._prev_map_tool:
             self.iface.mapCanvas().setMapTool(self._prev_map_tool)
             self._prev_map_tool = None
-        self._update_stats()
+        self._set_survey_polygon(
+            geom, self.iface.mapCanvas().mapSettings().destinationCrs()
+        )
 
     def _on_drawing_cancelled(self):
         self.drawPolygonBtn.setChecked(False)
@@ -732,6 +807,8 @@ class FlyPathDialog(QWidget):
         self._waypoints          = []
         self.areaLabel.setText('—')
         self.layerCombo.setCurrentIndex(0)
+        self.featureCombo.clear()
+        self.featureCombo.setVisible(False)
         self._clear_stats()
 
     # ── Export ────────────────────────────────────────────────────────────
