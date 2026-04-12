@@ -559,6 +559,14 @@ class FlyPathDialog(QWidget):
 
     def _on_draw_polygon(self, checked):
         if checked:
+            if self._survey_polygon is not None:
+                QMessageBox.warning(
+                    self, 'Survey Area Already Defined',
+                    'A survey polygon is already set.\n\n'
+                    'Clear it first using the Clear Preview button before drawing a new one.'
+                )
+                self.drawPolygonBtn.setChecked(False)
+                return
             canvas = self.iface.mapCanvas()
             self._prev_map_tool = canvas.mapTool()
             self._draw_tool = PolygonDrawTool(canvas)
@@ -719,6 +727,12 @@ class FlyPathDialog(QWidget):
             QgsProject.instance().removeMapLayer(self._preview_layer_id)
             self._preview_layer_id = None
             self.iface.mapCanvas().refresh()
+        self._survey_polygon     = None
+        self._survey_polygon_crs = None
+        self._waypoints          = []
+        self.areaLabel.setText('—')
+        self.layerCombo.setCurrentIndex(0)
+        self._clear_stats()
 
     # ── Export ────────────────────────────────────────────────────────────
 
