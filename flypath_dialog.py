@@ -188,6 +188,7 @@ class FlyPathDialog(QWidget):
         self._survey_polygon     = None
         self._survey_polygon_crs = None
         self._draw_tool          = None
+        self._selected_layer_id  = None   # layer carrying the current map selection
         self._prev_map_tool      = None
         self._preview_layer_id   = None
         self._waypoints          = []
@@ -569,7 +570,8 @@ class FlyPathDialog(QWidget):
         if layer.featureCount() == 1:
             # Single feature — use it directly
             feat = next(layer.getFeatures())
-            self._set_survey_polygon(feat.geometry(), layer.crs())
+            self._set_survey_polygon(feat.geometry(), layer.crs(),
+                                     layer_id=layer_id, fid=feat.id())
         else:
             # Multiple features — populate the feature selector
             self.featureCombo.blockSignals(True)
@@ -592,6 +594,7 @@ class FlyPathDialog(QWidget):
     def _on_feature_changed(self):
         fid = self.featureCombo.currentData()
         if fid is None:
+            self._clear_layer_selection()
             self._survey_polygon     = None
             self._survey_polygon_crs = None
             self.areaLabel.setText('—')
@@ -604,15 +607,32 @@ class FlyPathDialog(QWidget):
         feats = list(layer.getFeatures([fid]))
         if not feats:
             return
-        self._set_survey_polygon(feats[0].geometry(), layer.crs())
+        self._set_survey_polygon(feats[0].geometry(), layer.crs(),
+                                 layer_id=layer_id, fid=fid)
 
-    def _set_survey_polygon(self, geom, crs):
+    def _set_survey_polygon(self, geom, crs, layer_id=None, fid=None):
+        self._clear_layer_selection()
         self._survey_polygon     = geom
         self._survey_polygon_crs = crs
+        # Highlight the chosen feature in the map canvas
+        if layer_id and fid is not None:
+            layer = QgsProject.instance().mapLayer(layer_id)
+            if layer:
+                layer.selectByIds([fid])
+                self._selected_layer_id = layer_id
+                self.iface.mapCanvas().refresh()
         area_ha = self._area_ha()
         self.areaLabel.setText(f'{area_ha:.2f} ha')
         self._update_stats()
         self._check_area_advisory(area_ha)
+
+    def _clear_layer_selection(self):
+        if self._selected_layer_id:
+            layer = QgsProject.instance().mapLayer(self._selected_layer_id)
+            if layer:
+                layer.removeSelection()
+                self.iface.mapCanvas().refresh()
+            self._selected_layer_id = None
 
     def _check_area_advisory(self, area_ha):
         if area_ha > 200:
@@ -801,7 +821,7 @@ class FlyPathDialog(QWidget):
         if self._preview_layer_id:
             QgsProject.instance().removeMapLayer(self._preview_layer_id)
             self._preview_layer_id = None
-            self.iface.mapCanvas().refresh()
+        self._clear_layer_selection()
         self._survey_polygon     = None
         self._survey_polygon_crs = None
         self._waypoints          = []
@@ -810,6 +830,7 @@ class FlyPathDialog(QWidget):
         self.featureCombo.clear()
         self.featureCombo.setVisible(False)
         self._clear_stats()
+        self.iface.mapCanvas().refresh()
 
     # ── Export ────────────────────────────────────────────────────────────
 
