@@ -8,7 +8,7 @@ from qgis.PyQt.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QSizePolicy,
     QMessageBox, QFileDialog,
 )
-from qgis.PyQt.QtCore import Qt, QObject, QEvent
+from qgis.PyQt.QtCore import Qt, QObject, QEvent, QSettings
 from qgis.PyQt.QtGui import QColor
 
 from qgis.core import (
@@ -190,6 +190,12 @@ QLabel#cameraInfoLabel { color: #7FB3E8; font-size: 10px; }
 QWidget#actionBar {
     border-top: 1px solid #3A3D45; background-color: #181B22;
 }
+QPushButton#rcPathBtn {
+    background-color: #3A3D45; color: #A0A8B8;
+    font-weight: normal; font-size: 10px; padding: 3px 6px;
+    border-radius: 3px;
+}
+QPushButton#rcPathBtn:hover { background-color: #4A4D55; }
 QLabel#infoBar {
     color: #7FB3E8;
     font-size: 10px;
@@ -600,6 +606,30 @@ class FlyPathDialog(QWidget):
         layout.setSpacing(4)
         layout.setContentsMargins(8, 6, 8, 10)
 
+        # RC waypoint folder row
+        rc_row = QWidget()
+        rc_layout = QHBoxLayout(rc_row)
+        rc_layout.setContentsMargins(0, 0, 0, 0)
+        rc_layout.setSpacing(4)
+
+        self.rcPathEdit = QLineEdit()
+        self.rcPathEdit.setPlaceholderText('Paste RC waypoint folder path…')
+        self.rcPathEdit.setText(
+            QSettings('FlyPath', 'FlyPath').value('rc_waypoint_dir', '')
+        )
+        self._tip(self.rcPathEdit,
+            'Path to the waypoint folder on your DJI RC. '
+            'Paste it here once — FlyPath will auto-replace the latest mission on export.')
+
+        self.rcPathBtn = QPushButton('Set')
+        self.rcPathBtn.setObjectName('rcPathBtn')
+        self.rcPathBtn.setFixedWidth(36)
+        self._tip(self.rcPathBtn, 'Save the RC waypoint folder path.')
+
+        rc_layout.addWidget(self.rcPathEdit)
+        rc_layout.addWidget(self.rcPathBtn)
+        layout.addWidget(rc_row)
+
         self.previewBtn = QPushButton('Preview on Map')
         self.previewBtn.setMinimumHeight(30)
         self._tip(self.previewBtn,
@@ -686,6 +716,7 @@ class FlyPathDialog(QWidget):
         self.layerCombo.currentIndexChanged.connect(self._on_layer_changed)
         self.featureCombo.currentIndexChanged.connect(self._on_feature_changed)
         self.useSelectionBtn.clicked.connect(self._on_use_qgis_selection)
+        self.rcPathBtn.clicked.connect(self._on_save_rc_path)
         self.drawPolygonBtn.clicked.connect(self._on_draw_polygon)
         self.removePolygonBtn.clicked.connect(self._on_remove_drawn_polygon)
         self.autoDirectionBtn.clicked.connect(self._on_auto_direction)
@@ -1359,16 +1390,78 @@ class FlyPathDialog(QWidget):
 
     # ── Export ────────────────────────────────────────────────────────────
 
+    def _on_save_rc_path(self):
+        path = self.rcPathEdit.text().strip()
+        QSettings('FlyPath', 'FlyPath').setValue('rc_waypoint_dir', path)
+        if path and os.path.isdir(path):
+            QMessageBox.information(self, 'RC Path Saved',
+                                    f'RC waypoint folder set to:\n{path}')
+        elif path:
+            QMessageBox.warning(self, 'Path Not Found',
+                                f'The folder was not found:\n{path}\n\n'
+                                'Make sure the RC is connected via USB '
+                                'and the path is correct.')
+        else:
+            QMessageBox.information(self, 'RC Path Cleared',
+                                    'RC waypoint folder path has been cleared.')
+
+    def _latest_mission_kmz(self, rc_waypoint_dir):
+        """
+        Find the KMZ file inside the most recently modified UUID folder
+        in the RC waypoint directory.  Returns the KMZ filepath or None.
+        """
+        try:
+            folders = [
+                os.path.join(rc_waypoint_dir, d)
+                for d in os.listdir(rc_waypoint_dir)
+                if os.path.isdir(os.path.join(rc_waypoint_dir, d))
+            ]
+            if not folders:
+                return None
+            latest = max(folders, key=os.path.getmtime)
+            uuid_name = os.path.basename(latest)
+            kmz_path  = os.path.join(latest, uuid_name + '.kmz')
+            return kmz_path if os.path.exists(kmz_path) else None
+        except Exception:
+            return None
+
     def _on_export(self):
         if not self._has_survey_area():
             return
         mission = self.missionNameEdit.text().strip() or 'FlyPath Mission'
 
-        filepath, _ = QFileDialog.getSaveFileName(
-            self, 'Export Mission KMZ',
-            mission.replace(' ', '_') + '.kmz',
-            'DJI Mission File (*.kmz)'
-        )
+        # ── Try auto-replace on RC if path is configured ──────────────────
+        rc_dir   = self.rcPathEdit.text().strip()
+        filepath = None
+        if rc_dir and os.path.isdir(rc_dir):
+            kmz = self._latest_mission_kmz(rc_dir)
+            if kmz:
+                uuid_name = os.path.basename(os.path.dirname(kmz))
+                reply = QMessageBox.question(
+                    self, 'Replace RC Mission?',
+                    f'Replace the latest mission on the RC?\n\n'
+                    f'UUID: {uuid_name}\n'
+                    f'File: {kmz}',
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes,
+                )
+                if reply == QMessageBox.Yes:
+                    filepath = kmz
+            else:
+                QMessageBox.warning(
+                    self, 'No Mission Found',
+                    'No existing mission found in the RC waypoint folder.\n\n'
+                    'Create a dummy mission on the RC first, then export again.'
+                )
+                return
+
+        # ── Fall back to standard save dialog ─────────────────────────────
+        if not filepath:
+            filepath, _ = QFileDialog.getSaveFileName(
+                self, 'Export Mission KMZ',
+                mission.replace(' ', '_') + '.kmz',
+                'DJI Mission File (*.kmz)'
+            )
         if not filepath:
             return
 
@@ -1397,15 +1490,10 @@ class FlyPathDialog(QWidget):
             )
             QMessageBox.information(
                 self, 'Export Complete',
-                f'Mission: {mission}\n\n'
-                f'Turn waypoints: {len(waypoints):,}\n'
-                f'Photo interval: {shot_spacing_m:.1f} m\n\n'
-                f'Saved to:\n{filepath}\n\n'
-                'To load on RC2:\n'
-                '1. Create a dummy mission on the RC in DJI Fly\n'
-                '2. Note its UUID folder name\n'
-                '3. Rename this .kmz to <UUID>.kmz\n'
-                '4. Replace the original .kmz inside the UUID folder on the RC'
+                f'Mission: {mission}\n'
+                f'Waypoints: {len(waypoints):,}  ·  '
+                f'Interval: {shot_spacing_m:.1f} m\n\n'
+                f'Saved to:\n{filepath}'
             )
         except Exception as exc:
             QMessageBox.critical(self, 'Export Failed', str(exc))
