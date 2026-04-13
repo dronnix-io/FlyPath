@@ -7,8 +7,8 @@ KMZ structure
 -------------
   mission.kmz
   └── wpmz/
-      ├── template.kml   — mission-level settings (drone model, speed, finish action)
-      └── waylines.wpml  — turn-point waypoints with distance-based photo trigger
+      ├── template.kml   — mission config + full waypoint list (required by spec)
+      └── waylines.wpml  — compiled waypoints with distance-based photo trigger
 
 Photo triggering strategy
 -------------------------
@@ -33,7 +33,6 @@ _DRONE_ENUM = {
     'DJI Mini 3':     97,
     'DJI Mini 3 Pro': 97,
     'DJI Mini 4 Pro': 144,
-    'DJI Mini 5':     144,   # placeholder — update when officially documented
 }
 
 # ── Finish action mapping ──────────────────────────────────────────────────
@@ -87,8 +86,9 @@ def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
     duration_s   = int(total_dist_m / speed_ms) if speed_ms > 0 else 0
 
     template_kml = _build_template_kml(
-        drone_enum, finish_action, height_mode,
-        speed_ms, total_dist_m, duration_s, ts_ms, mission_name
+        waypoints, drone_enum, finish_action, height_mode,
+        altitude_m, speed_ms, shot_spacing_m,
+        total_dist_m, duration_s, ts_ms, mission_name
     )
     waylines_wpml = _build_waylines_wpml(
         waypoints, altitude_m, speed_ms, height_mode, shot_spacing_m
@@ -105,9 +105,33 @@ def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
 
 # ── XML builders ───────────────────────────────────────────────────────────
 
-def _build_template_kml(drone_enum, finish_action, height_mode,
-                         speed_ms, distance_m, duration_s, ts_ms, mission_name):
+def _build_template_kml(waypoints, drone_enum, finish_action, height_mode,
+                         altitude_m, speed_ms, shot_spacing_m,
+                         distance_m, duration_s, ts_ms, mission_name):
+    """
+    template.kml — mission config + full Placemark list.
+    The WPML spec requires waypoints here as well as in waylines.wpml.
+    """
     transitional_speed = min(speed_ms, 5.0)
+
+    last_idx = len(waypoints) - 1
+    placemark_blocks = []
+    for idx, (lon, lat) in enumerate(waypoints):
+        if idx == 0:
+            action_groups = (
+                _gimbal_action_group(group_id=0) +
+                _distance_photo_group(group_id=1,
+                                      start_idx=0,
+                                      end_idx=last_idx,
+                                      spacing_m=shot_spacing_m)
+            )
+        else:
+            action_groups = ''
+        placemark_blocks.append(
+            _placemark(idx, lon, lat, altitude_m, speed_ms, action_groups)
+        )
+    placemarks = '\n'.join(placemark_blocks)
+
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2"
      xmlns:wpml="http://www.dji.com/wpmz/1.0.6">
@@ -127,12 +151,18 @@ def _build_template_kml(drone_enum, finish_action, height_mode,
       </wpml:droneInfo>
     </wpml:missionConfig>
     <Folder>
+      <wpml:templateType>waypoint</wpml:templateType>
       <wpml:templateId>0</wpml:templateId>
+      <wpml:waylineCoordinateSysParam>
+        <wpml:coordinateMode>WGS84</wpml:coordinateMode>
+        <wpml:heightMode>{height_mode}</wpml:heightMode>
+      </wpml:waylineCoordinateSysParam>
       <wpml:executeHeightMode>{height_mode}</wpml:executeHeightMode>
       <wpml:waylineId>0</wpml:waylineId>
       <wpml:distance>{distance_m:.1f}</wpml:distance>
       <wpml:duration>{duration_s}</wpml:duration>
       <wpml:autoFlightSpeed>{speed_ms:.1f}</wpml:autoFlightSpeed>
+{placemarks}
     </Folder>
   </Document>
 </kml>
@@ -145,7 +175,6 @@ def _build_waylines_wpml(waypoints, altitude_m, speed_ms, height_mode, shot_spac
 
     for idx, (lon, lat) in enumerate(waypoints):
         if idx == 0:
-            # Waypoint 0: gimbal-rotate action + distance-based photo trigger
             action_groups = (
                 _gimbal_action_group(group_id=0) +
                 _distance_photo_group(group_id=1,

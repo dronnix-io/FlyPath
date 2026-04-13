@@ -8,7 +8,7 @@ from qgis.PyQt.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QSizePolicy,
     QMessageBox, QFileDialog,
 )
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, QObject, QEvent
 from qgis.PyQt.QtGui import QColor
 
 from qgis.core import (
@@ -65,16 +65,6 @@ DRONE_SPECS = {
         'image_height_px':  3000,
         'max_speed_ms':     16.0,
         'battery_time_min': 34,
-        'info': '1/1.3" CMOS  ·  12 MP  ·  24 mm equiv',
-    },
-    'DJI Mini 5': {
-        'sensor_width_mm':  9.6,
-        'sensor_height_mm': 7.2,
-        'focal_length_mm':  6.9,
-        'image_width_px':   4000,
-        'image_height_px':  3000,
-        'max_speed_ms':     18.0,
-        'battery_time_min': 35,
         'info': '1/1.3" CMOS  ·  12 MP  ·  24 mm equiv',
     },
 }
@@ -135,6 +125,12 @@ QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover,
 QSpinBox::up-button:hover,       QSpinBox::down-button:hover {
     background-color: #4A4D55;
 }
+QDoubleSpinBox::up-arrow, QSpinBox::up-arrow {
+    image: url(ARROW_UP_PATH); width: 8px; height: 5px;
+}
+QDoubleSpinBox::down-arrow, QSpinBox::down-arrow {
+    image: url(ARROW_DOWN_PATH); width: 8px; height: 5px;
+}
 QPushButton {
     background-color: #2D6DB5;
     color: white; border: none; border-radius: 4px;
@@ -170,6 +166,12 @@ QPushButton#removePolygonBtn {
     font-weight: bold; padding: 3px 6px;
 }
 QPushButton#removePolygonBtn:hover { background-color: #7A2525; color: #FFAAAA; }
+QPushButton#useSelectionBtn {
+    background-color: #2A3A2A; color: #80C880;
+    border: 1px solid #3A5A3A; border-radius: 3px;
+    font-weight: normal; padding: 4px 8px;
+}
+QPushButton#useSelectionBtn:hover { background-color: #354535; color: #AAFAAA; }
 QScrollArea { border: none; background-color: transparent; }
 QScrollBar:vertical {
     background-color: #2A2D35; width: 7px; border-radius: 3px;
@@ -188,7 +190,49 @@ QLabel#cameraInfoLabel { color: #7FB3E8; font-size: 10px; }
 QWidget#actionBar {
     border-top: 1px solid #3A3D45; background-color: #181B22;
 }
+QLabel#infoBar {
+    color: #7FB3E8;
+    font-size: 10px;
+    padding: 4px 8px 4px 10px;
+    background-color: #1A1D24;
+    border-top: 1px solid #2A2D35;
+    border-left: 3px solid #2D6DB5;
+}
+QLabel#infoBarIdle {
+    color: #4A5568;
+    font-size: 10px;
+    padding: 4px 8px 4px 10px;
+    background-color: #1A1D24;
+    border-top: 1px solid #2A2D35;
+    border-left: 3px solid #3A3D45;
+}
 """
+
+
+_INFO_IDLE = 'ⓘ  Hover over any field to see what it does.'
+
+class _HoverFilter(QObject):
+    """Event filter that writes a hint to a shared info label on mouse enter/leave."""
+
+    def __init__(self, label, text, parent=None):
+        super().__init__(parent)
+        self._label = label
+        self._text  = text
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Enter:
+            self._label.setObjectName('infoBar')
+            self._label.setStyleSheet('')   # re-apply via object name
+            self._label.setText('ⓘ  ' + self._text)
+            self._label.style().unpolish(self._label)
+            self._label.style().polish(self._label)
+        elif event.type() == QEvent.Leave:
+            self._label.setObjectName('infoBarIdle')
+            self._label.setStyleSheet('')
+            self._label.setText(_INFO_IDLE)
+            self._label.style().unpolish(self._label)
+            self._label.style().polish(self._label)
+        return False   # never consume the event
 
 
 class FlyPathDialog(QWidget):
@@ -204,8 +248,7 @@ class FlyPathDialog(QWidget):
         self._selected_layer_id  = None   # layer carrying the current map selection
         self._monitored_layer_id = None   # layer whose edit signals we're connected to
         self._prev_map_tool      = None
-        self._selection_handlers = {}     # {layer_id: (layer, handler)} for selectionChanged
-        self._syncing_selection  = False  # guard against feedback loops
+        self._syncing_selection  = False  # guard: prevent selectByIds re-entrance
         self._survey_area_layer_id = None  # temporary drawn-polygon layer
         self._preview_layer_ids  = []     # [path_line_id, waypoints_id]
         self._waypoints          = []
@@ -218,13 +261,25 @@ class FlyPathDialog(QWidget):
         self._update_gsd()
         self._update_interval()
 
+    # ── Hover-hint helper ─────────────────────────────────────────────────
+
+    def _tip(self, widget, text):
+        """Attach a hover hint to widget — shown in the info bar, not as a tooltip."""
+        widget.setToolTip('')   # disable floating tooltip
+        f = _HoverFilter(self.infoBar, text, parent=widget)
+        widget.installEventFilter(f)
+
     # ── UI construction ───────────────────────────────────────────────────
 
     def _build_ui(self):
-        arrow_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), 'arrow_down.svg'
-        ).replace('\\', '/')
-        self.setStyleSheet(STYLESHEET.replace('ARROW_DOWN_PATH', arrow_path))
+        plugin_dir = os.path.dirname(os.path.abspath(__file__))
+        arrow_down = os.path.join(plugin_dir, 'arrow_down.svg').replace('\\', '/')
+        arrow_up   = os.path.join(plugin_dir, 'arrow_up.svg').replace('\\', '/')
+        self.setStyleSheet(
+            STYLESHEET
+            .replace('ARROW_DOWN_PATH', arrow_down)
+            .replace('ARROW_UP_PATH',   arrow_up)
+        )
 
         outer = QVBoxLayout(self)
         outer.setSpacing(0)
@@ -240,6 +295,12 @@ class FlyPathDialog(QWidget):
         scroll_layout.setSpacing(8)
         scroll_layout.setContentsMargins(8, 8, 8, 8)
 
+        # Info bar must exist before group builders call self._tip()
+        self.infoBar = QLabel(_INFO_IDLE)
+        self.infoBar.setObjectName('infoBarIdle')
+        self.infoBar.setWordWrap(True)
+        self.infoBar.setMinimumHeight(32)
+
         scroll_layout.addWidget(self._build_mission_group())
         scroll_layout.addWidget(self._build_area_group())
         scroll_layout.addWidget(self._build_flight_group())
@@ -250,6 +311,7 @@ class FlyPathDialog(QWidget):
 
         scroll.setWidget(content)
         outer.addWidget(scroll, 1)
+        outer.addWidget(self.infoBar)
         outer.addWidget(self._build_action_bar())
 
     def _build_mission_group(self):
@@ -260,16 +322,28 @@ class FlyPathDialog(QWidget):
 
         self.missionNameEdit = QLineEdit()
         self.missionNameEdit.setPlaceholderText('My Mission')
+        self._tip(self.missionNameEdit,
+            'Mission name — used as the default KMZ filename '
+            'and embedded as metadata inside the exported file.')
         form.addRow('Name', self.missionNameEdit)
 
         self.missionTypeCombo = QComboBox()
+        self._tip(self.missionTypeCombo,
+            'Type of survey to fly. '
+            '2D Grid (Orthomosaic): parallel flight lines for aerial photo mapping.')
         form.addRow('Mission Type', self.missionTypeCombo)
 
         self.droneModelCombo = QComboBox()
+        self._tip(self.droneModelCombo,
+            'Your drone model — determines camera sensor specs, '
+            'maximum speed, and battery endurance used in all calculations.')
         form.addRow('Drone', self.droneModelCombo)
 
         self.cameraInfoLabel = QLabel('—')
         self.cameraInfoLabel.setObjectName('cameraInfoLabel')
+        self._tip(self.cameraInfoLabel,
+            'Camera sensor summary for the selected drone. '
+            'Used to calculate GSD, footprint size, and photo interval.')
         form.addRow('Camera', self.cameraInfoLabel)
 
         return group
@@ -281,12 +355,26 @@ class FlyPathDialog(QWidget):
         form.setSpacing(6)
 
         self.layerCombo = QComboBox()
+        self._tip(self.layerCombo,
+            'Select a polygon layer from the QGIS project. '
+            'Only polygon layers are listed. '
+            'For multi-feature layers a Feature selector will appear below.')
         form.addRow('Layer', self.layerCombo)
 
         self.featureCombo = QComboBox()
         self.featureCombo.setVisible(False)
+        self._tip(self.featureCombo,
+            'Select which polygon feature to use as the survey area '
+            'when the chosen layer contains more than one feature.')
         self._featureComboRow = form.rowCount()
         form.addRow('Feature', self.featureCombo)
+
+        self.useSelectionBtn = QPushButton('Use QGIS Selection')
+        self.useSelectionBtn.setObjectName('useSelectionBtn')
+        self._tip(self.useSelectionBtn,
+            'Adopt the polygon currently selected with the QGIS selection tool. '
+            'Exactly one polygon must be selected across all layers.')
+        form.addRow(self.useSelectionBtn)
 
         draw_row = QWidget()
         draw_layout = QHBoxLayout(draw_row)
@@ -296,10 +384,15 @@ class FlyPathDialog(QWidget):
         self.drawPolygonBtn = QPushButton('Draw Polygon on Map')
         self.drawPolygonBtn.setObjectName('drawPolygonBtn')
         self.drawPolygonBtn.setCheckable(True)
+        self._tip(self.drawPolygonBtn,
+            'Activate the polygon drawing tool. '
+            'Left-click to place vertices, right-click or double-click to finish, '
+            'Backspace to undo the last vertex, Escape to cancel.')
 
         self.removePolygonBtn = QPushButton('✕ Remove')
         self.removePolygonBtn.setObjectName('removePolygonBtn')
-        self.removePolygonBtn.setToolTip('Remove drawn polygon and start over')
+        self._tip(self.removePolygonBtn,
+            'Remove the drawn polygon and reset the survey area.')
         self.removePolygonBtn.setVisible(False)
 
         draw_layout.addWidget(self.drawPolygonBtn)
@@ -308,6 +401,7 @@ class FlyPathDialog(QWidget):
 
         self.areaLabel = QLabel('—')
         self.areaLabel.setObjectName('areaLabel')
+        self._tip(self.areaLabel, 'Total area of the survey polygon in hectares.')
         form.addRow('Area', self.areaLabel)
 
         return group
@@ -324,22 +418,37 @@ class FlyPathDialog(QWidget):
         self.altitudeSpin.setSingleStep(5.0)
         self.altitudeSpin.setDecimals(1)
         self.altitudeSpin.setSuffix(' m')
+        self._tip(self.altitudeSpin,
+            'Flight altitude above ground level (AGL). '
+            'Higher altitude → wider coverage per photo but lower resolution (larger GSD). '
+            'Lower altitude → sharper images but more flight lines and longer mission time.')
         form.addRow('Altitude', self.altitudeSpin)
 
         self.gsdLabel = QLabel('—')
         self.gsdLabel.setObjectName('gsdLabel')
+        self._tip(self.gsdLabel,
+            'Ground Sampling Distance — the real-world size of one pixel in your photos. '
+            'Smaller GSD = higher resolution. Calculated from altitude, sensor size and focal length.')
         form.addRow('GSD', self.gsdLabel)
 
         self.frontOverlapSpin = QSpinBox()
         self.frontOverlapSpin.setRange(50, 95)
         self.frontOverlapSpin.setValue(80)
         self.frontOverlapSpin.setSuffix(' %')
+        self._tip(self.frontOverlapSpin,
+            'How much consecutive photos along a flight line overlap. '
+            'Higher → better quality, fewer gaps, but more photos. '
+            'Recommended: 75–85% for mapping, 85–90% for 3D models.')
         form.addRow('Front Overlap', self.frontOverlapSpin)
 
         self.sideOverlapSpin = QSpinBox()
         self.sideOverlapSpin.setRange(50, 95)
         self.sideOverlapSpin.setValue(70)
         self.sideOverlapSpin.setSuffix(' %')
+        self._tip(self.sideOverlapSpin,
+            'How much adjacent flight lines overlap each other. '
+            'Higher → fewer gaps, better stitching, but more flight lines. '
+            'Recommended: 60–75% for flat terrain, 70–80% for hilly terrain.')
         form.addRow('Side Overlap', self.sideOverlapSpin)
 
         self.speedSpin = QDoubleSpinBox()
@@ -348,6 +457,10 @@ class FlyPathDialog(QWidget):
         self.speedSpin.setSingleStep(0.5)
         self.speedSpin.setDecimals(1)
         self.speedSpin.setSuffix(' m/s')
+        self._tip(self.speedSpin,
+            'Drone flight speed during the mission. '
+            'Higher speed → shorter mission time but may cause motion blur. '
+            'Keep speed low enough for your shutter speed at the chosen altitude.')
         form.addRow('Speed', self.speedSpin)
 
         # Direction row: spinbox + Auto button side by side
@@ -363,10 +476,17 @@ class FlyPathDialog(QWidget):
         self.directionSpin.setDecimals(1)
         self.directionSpin.setSuffix(' °')
         self.directionSpin.setWrapping(True)
+        self._tip(self.directionSpin,
+            'Flight line direction in degrees clockwise from North. '
+            '0° = North–South lines, 90° = East–West lines. '
+            'Align with the longest axis of the polygon to minimise turns.')
 
         self.autoDirectionBtn = QPushButton('Auto')
         self.autoDirectionBtn.setObjectName('autoDirectionBtn')
         self.autoDirectionBtn.setFixedWidth(52)
+        self._tip(self.autoDirectionBtn,
+            'Automatically find the optimal flight direction '
+            'that minimises the number of flight lines for this polygon.')
 
         dir_layout.addWidget(self.directionSpin)
         dir_layout.addWidget(self.autoDirectionBtn)
@@ -378,6 +498,10 @@ class FlyPathDialog(QWidget):
         self.marginSpin.setSingleStep(5.0)
         self.marginSpin.setDecimals(1)
         self.marginSpin.setSuffix(' m')
+        self._tip(self.marginSpin,
+            'Buffer distance added around the survey polygon boundary. '
+            'Ensures full photo coverage at the edges. '
+            'Typically 0–50 m depending on altitude and terrain.')
         form.addRow('Margin', self.marginSpin)
 
         return group
@@ -389,13 +513,23 @@ class FlyPathDialog(QWidget):
         form.setSpacing(6)
 
         self.cameraAngleLabel = QLabel('90°  (Nadir — fixed for mapping)')
+        self._tip(self.cameraAngleLabel,
+            'Camera tilt angle. Fixed at 90° (pointing straight down) '
+            'for 2D orthomosaic mapping to ensure vertical photos.')
         form.addRow('Angle', self.cameraAngleLabel)
 
         self.triggerModeCombo = QComboBox()
+        self._tip(self.triggerModeCombo,
+            'How the camera shutter is triggered. '
+            'Distance (m): fires every X metres — recommended for mapping. '
+            'Time (s): fires every X seconds — useful for slower flights.')
         form.addRow('Trigger', self.triggerModeCombo)
 
         self.intervalLabel = QLabel('—')
         self.intervalLabel.setObjectName('intervalLabel')
+        self._tip(self.intervalLabel,
+            'Calculated distance (or time) between consecutive photos, '
+            'based on altitude, drone sensor, and front overlap setting.')
         form.addRow('Interval', self.intervalLabel)
 
         return group
@@ -407,12 +541,23 @@ class FlyPathDialog(QWidget):
         form.setSpacing(6)
 
         self.altitudeModeCombo = QComboBox()
+        self._tip(self.altitudeModeCombo,
+            'AGL: altitude measured from the takeoff point — simplest and most common. '
+            'MSL: altitude measured from sea level — use over varying terrain with an accurate DEM.')
         form.addRow('Altitude Mode', self.altitudeModeCombo)
 
         self.startPointCombo = QComboBox()
+        self._tip(self.startPointCombo,
+            'First waypoint: drone flies to the first grid point regardless of takeoff location. '
+            'Closest to takeoff: starts from the grid waypoint nearest the takeoff point.')
         form.addRow('Start Point', self.startPointCombo)
 
         self.finishActionCombo = QComboBox()
+        self._tip(self.finishActionCombo,
+            'What the drone does after the last waypoint. '
+            'Return to Home: flies back and lands at takeoff. '
+            'Hover: holds position at the last waypoint. '
+            'Land: lands immediately at the last waypoint.')
         form.addRow('Finish Action', self.finishActionCombo)
 
         return group
@@ -424,16 +569,25 @@ class FlyPathDialog(QWidget):
         form.setSpacing(6)
 
         stats = [
-            ('flightTimeLabel', 'Flight Time'),
-            ('distanceLabel',   'Distance'),
-            ('photosLabel',     'Photos'),
-            ('linesLabel',      'Flight Lines'),
-            ('batteriesLabel',  'Batteries'),
-            ('coverageLabel',   'Coverage'),
+            ('flightTimeLabel', 'Flight Time',
+             'Estimated total flight duration based on path length and speed. '
+             'Does not include takeoff, landing, or battery swap time.'),
+            ('distanceLabel',   'Distance',
+             'Total distance the drone will fly along all flight lines.'),
+            ('photosLabel',     'Photos',
+             'Estimated number of photos the camera will take during the mission.'),
+            ('linesLabel',      'Flight Lines',
+             'Number of parallel flight lines needed to cover the survey area.'),
+            ('batteriesLabel',  'Batteries',
+             'Estimated number of battery charges needed to complete the mission, '
+             'based on the drone\'s rated endurance at the selected speed.'),
+            ('coverageLabel',   'Coverage',
+             'Total survey area in hectares as calculated from the polygon.'),
         ]
-        for attr, caption in stats:
+        for attr, caption, tip in stats:
             lbl = QLabel('—')
             lbl.setObjectName(attr)
+            self._tip(lbl, tip)
             setattr(self, attr, lbl)
             form.addRow(caption, lbl)
 
@@ -448,14 +602,23 @@ class FlyPathDialog(QWidget):
 
         self.previewBtn = QPushButton('Preview on Map')
         self.previewBtn.setMinimumHeight(30)
+        self._tip(self.previewBtn,
+            'Generate the flight grid and display the waypoint path '
+            'on the QGIS map canvas for review before exporting.')
 
         self.clearPreviewBtn = QPushButton('Clear Preview')
         self.clearPreviewBtn.setObjectName('clearPreviewBtn')
         self.clearPreviewBtn.setMinimumHeight(26)
+        self._tip(self.clearPreviewBtn,
+            'Remove the flight path preview layers from the map '
+            'and reset the survey area selection.')
 
         self.exportBtn = QPushButton('Export KMZ')
         self.exportBtn.setObjectName('exportBtn')
         self.exportBtn.setMinimumHeight(36)
+        self._tip(self.exportBtn,
+            'Export the mission as a DJI WPML KMZ file. '
+            'Load the file in the DJI Fly app to fly the mission.')
 
         layout.addWidget(self.previewBtn)
         layout.addWidget(self.clearPreviewBtn)
@@ -509,13 +672,9 @@ class FlyPathDialog(QWidget):
     # ── Signal wiring ─────────────────────────────────────────────────────
 
     def _connect_signals(self):
-        # Refresh layer combo and selection connections when layers change
+        # Refresh layer combo when layers are added/removed
         QgsProject.instance().layersAdded.connect(self._refresh_layer_combo)
-        QgsProject.instance().layersAdded.connect(self._update_selection_connections)
         QgsProject.instance().layersRemoved.connect(self._refresh_layer_combo)
-        QgsProject.instance().layersRemoved.connect(self._update_selection_connections)
-        # Connect to existing layers on startup
-        self._update_selection_connections()
 
         self.droneModelCombo.currentIndexChanged.connect(self._on_drone_changed)
         self.altitudeSpin.valueChanged.connect(self._on_param_changed)
@@ -526,6 +685,7 @@ class FlyPathDialog(QWidget):
         self.triggerModeCombo.currentIndexChanged.connect(self._update_interval)
         self.layerCombo.currentIndexChanged.connect(self._on_layer_changed)
         self.featureCombo.currentIndexChanged.connect(self._on_feature_changed)
+        self.useSelectionBtn.clicked.connect(self._on_use_qgis_selection)
         self.drawPolygonBtn.clicked.connect(self._on_draw_polygon)
         self.removePolygonBtn.clicked.connect(self._on_remove_drawn_polygon)
         self.autoDirectionBtn.clicked.connect(self._on_auto_direction)
@@ -592,85 +752,64 @@ class FlyPathDialog(QWidget):
 
     # ── QGIS selection sync ───────────────────────────────────────────────
 
-    def _update_selection_connections(self, _=None):
-        """Connect selectionChanged to every non-internal polygon layer."""
-        current_ids = set(QgsProject.instance().mapLayers().keys())
+    def _on_use_qgis_selection(self):
+        """
+        Inspect the current QGIS selection across all non-internal polygon
+        layers and adopt it as the FlyPath survey polygon.
 
-        # Drop stale entries (layer was removed)
-        for lid in list(self._selection_handlers.keys()):
-            if lid not in current_ids:
-                del self._selection_handlers[lid]
-
-        # Connect to new polygon layers
-        for lid, layer in QgsProject.instance().mapLayers().items():
-            if (lid in self._selection_handlers or
+        Rules:
+          0 selected features total → error
+          > 1 selected features total → error
+          exactly 1 selected feature  → sync Layer/Feature combos + survey polygon
+        """
+        candidates = []
+        for layer in QgsProject.instance().mapLayers().values():
+            if (not hasattr(layer, 'wkbType') or
                     layer.customProperty('flypath_internal') or
-                    not hasattr(layer, 'wkbType') or
                     QgsWkbTypes.geometryType(layer.wkbType()) !=
                     QgsWkbTypes.PolygonGeometry):
                 continue
+            for fid in layer.selectedFeatureIds():
+                candidates.append((layer, fid))
 
-            def _make_handler(lyr):
-                def _handler(*_args):
-                    self._on_qgis_selection_changed(lyr)
-                return _handler
-
-            handler = _make_handler(layer)
-            layer.selectionChanged.connect(handler)
-            self._selection_handlers[lid] = (layer, handler)
-
-    def _disconnect_all_selection_signals(self):
-        for lid, (layer, handler) in self._selection_handlers.items():
-            if QgsProject.instance().mapLayer(lid):
-                try:
-                    layer.selectionChanged.disconnect(handler)
-                except Exception:
-                    pass
-        self._selection_handlers = {}
-
-    def _on_qgis_selection_changed(self, layer):
-        """Sync the plugin when the user selects a polygon with QGIS tools."""
-        if self._syncing_selection:
-            return
-        if layer.customProperty('flypath_internal'):
-            return
-
-        selected_ids = layer.selectedFeatureIds()
-
-        if len(selected_ids) == 0:
-            return   # deselect — don't clear the plugin state
-
-        if len(selected_ids) > 1:
-            QMessageBox.warning(
-                self, 'Multiple Polygons Selected',
-                f'{len(selected_ids)} polygons are selected.\n\n'
-                'FlyPath supports one survey polygon at a time.\n'
-                'Please select a single polygon and try again.'
+        if len(candidates) == 0:
+            QMessageBox.information(
+                self, 'Nothing Selected',
+                'No polygon is selected in QGIS.\n\n'
+                'Select a single polygon with the QGIS selection tool and try again.'
             )
             return
 
-        fid  = selected_ids[0]
+        if len(candidates) > 1:
+            QMessageBox.warning(
+                self, 'Multiple Polygons Selected',
+                f'{len(candidates)} polygons are selected across one or more layers.\n\n'
+                'FlyPath supports one survey polygon at a time.\n'
+                'Select exactly one polygon and try again.'
+            )
+            return
+
+        layer, fid = candidates[0]
         feat = next(layer.getFeatures([fid]))
 
-        # If a drawn polygon is active, remove it first
+        # Remove any active drawn polygon
         if self._survey_area_layer_id:
             self._on_remove_drawn_polygon()
 
-        # Sync the Layer combo without re-triggering _on_layer_changed
+        # Sync Layer combo
         layer_idx = self.layerCombo.findData(layer.id())
         if layer_idx < 0:
-            return  # not in combo (shouldn't happen for non-internal layers)
-
+            return
         self.layerCombo.blockSignals(True)
         self.layerCombo.setCurrentIndex(layer_idx)
         self.layerCombo.blockSignals(False)
 
-        # Ensure layer edit signals are connected
+        # Connect layer edit signals if not already done
         if self._monitored_layer_id != layer.id():
             self._disconnect_layer_signals()
             self._connect_layer_signals(layer)
 
-        # Populate / refresh the feature combo for multi-feature layers
+        # Sync Feature combo for multi-feature layers
         if layer.featureCount() > 1:
             self._populate_feature_combo(layer)
             feat_idx = self.featureCombo.findData(fid)
@@ -681,7 +820,6 @@ class FlyPathDialog(QWidget):
         else:
             self.featureCombo.setVisible(False)
 
-        # Set the survey polygon (guard prevents looping back into this handler)
         self._set_survey_polygon(feat.geometry(), layer.crs(),
                                  layer_id=layer.id(), fid=fid)
 
@@ -707,6 +845,13 @@ class FlyPathDialog(QWidget):
         layer = QgsProject.instance().mapLayer(layer_id)
         if not layer:
             return
+
+        # A layer-based polygon replaces any drawn polygon
+        if self._survey_area_layer_id:
+            self._remove_survey_area_layer()
+            self._on_clear_preview(reset_area=False)
+            self._survey_polygon     = None
+            self._survey_polygon_crs = None
 
         self._connect_layer_signals(layer)
         self._populate_feature_combo(layer)
@@ -862,13 +1007,30 @@ class FlyPathDialog(QWidget):
     def _on_draw_polygon(self, checked):
         if checked:
             if self._survey_polygon is not None:
-                QMessageBox.warning(
-                    self, 'Survey Area Already Defined',
-                    'A survey polygon is already set.\n\n'
-                    'Clear it first using the Clear Preview button before drawing a new one.'
+                reply = QMessageBox.question(
+                    self, 'Replace Survey Area?',
+                    'A survey area is already defined.\n\n'
+                    'Do you want to discard it and draw a new polygon?',
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
                 )
-                self.drawPolygonBtn.setChecked(False)
-                return
+                if reply != QMessageBox.Yes:
+                    self.drawPolygonBtn.setChecked(False)
+                    return
+                # User confirmed — clear everything before drawing
+                self._on_clear_preview(reset_area=True)
+
+            # Reset layer / feature selection — drawn polygon is standalone
+            self._disconnect_layer_signals()
+            self._clear_layer_selection()
+            self.layerCombo.blockSignals(True)
+            self.layerCombo.setCurrentIndex(0)
+            self.layerCombo.blockSignals(False)
+            self.featureCombo.blockSignals(True)
+            self.featureCombo.clear()
+            self.featureCombo.setVisible(False)
+            self.featureCombo.blockSignals(False)
+
             canvas = self.iface.mapCanvas()
             self._prev_map_tool = canvas.mapTool()
             self._draw_tool = PolygonDrawTool(canvas)
@@ -1073,8 +1235,10 @@ class FlyPathDialog(QWidget):
                      'linesLabel', 'batteriesLabel', 'coverageLabel'):
             getattr(self, attr).setText('—')
         self.areaLabel.setText('—')
-        self.gsdLabel.setText('—')
-        self.intervalLabel.setText('—')
+        # GSD and Interval depend only on drone + altitude, not on a survey
+        # polygon — always recompute them rather than blanking them out.
+        self._update_gsd()
+        self._update_interval()
 
     # ── Map preview ───────────────────────────────────────────────────────
 
@@ -1242,18 +1406,27 @@ class FlyPathDialog(QWidget):
 
     # ── Helpers ───────────────────────────────────────────────────────────
 
-    def closeEvent(self, event):
+    def cleanup(self):
+        """Remove all FlyPath-owned QGIS layers. Called on plugin unload."""
         self._disconnect_layer_signals()
-        self._disconnect_all_selection_signals()
         self._remove_survey_area_layer()
         self._on_clear_preview(reset_area=False)
+        # Belt-and-suspenders: remove any remaining flypath_internal layers
+        # (e.g. if the user moved the panel or state got out of sync)
+        to_remove = [
+            lid for lid, layer in QgsProject.instance().mapLayers().items()
+            if layer.customProperty('flypath_internal')
+        ]
+        for lid in to_remove:
+            QgsProject.instance().removeMapLayer(lid)
         try:
             QgsProject.instance().layersAdded.disconnect(self._refresh_layer_combo)
-            QgsProject.instance().layersAdded.disconnect(self._update_selection_connections)
             QgsProject.instance().layersRemoved.disconnect(self._refresh_layer_combo)
-            QgsProject.instance().layersRemoved.disconnect(self._update_selection_connections)
         except Exception:
             pass
+
+    def closeEvent(self, event):
+        self.cleanup()
         super().closeEvent(event)
 
     def _has_survey_area(self, silent=False):

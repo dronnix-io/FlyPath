@@ -46,6 +46,8 @@ class FlyPath:
         self.iface.removeToolBarIcon(self.action)
         self.iface.removePluginMenu('FlyPath', self.action)
         if self.dock_widget:
+            if self.panel:
+                self.panel.cleanup()
             self.iface.mainWindow().removeDockWidget(self.dock_widget)
             self.dock_widget.deleteLater()
             self.dock_widget = None
