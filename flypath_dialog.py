@@ -20,6 +20,7 @@ from qgis.core import (
     QgsPointXY,
     QgsLineSymbol,
     QgsMarkerSymbol,
+    QgsFillSymbol,
     QgsRuleBasedRenderer,
     QgsPalLayerSettings,
     QgsTextFormat,
@@ -197,6 +198,7 @@ class FlyPathDialog(QWidget):
         self._selected_layer_id  = None   # layer carrying the current map selection
         self._monitored_layer_id = None   # layer whose edit signals we're connected to
         self._prev_map_tool      = None
+        self._survey_area_layer_id = None  # temporary drawn-polygon layer
         self._preview_layer_ids  = []     # [path_line_id, waypoints_id]
         self._waypoints          = []
         self._shot_spacing_m     = 0.0
@@ -690,7 +692,7 @@ class FlyPathDialog(QWidget):
                                  layer_id=layer_id, fid=fid)
 
     def _set_survey_polygon(self, geom, crs, layer_id=None, fid=None):
-        self._on_clear_preview(reset_area=False)
+        self._on_clear_preview(reset_area=False)   # clear old flight path
         self._clear_layer_selection()
         self._survey_polygon     = geom
         self._survey_polygon_crs = crs
@@ -759,9 +761,45 @@ class FlyPathDialog(QWidget):
         if self._prev_map_tool:
             self.iface.mapCanvas().setMapTool(self._prev_map_tool)
             self._prev_map_tool = None
-        self._set_survey_polygon(
-            geom, self.iface.mapCanvas().mapSettings().destinationCrs()
-        )
+        crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+        self._show_drawn_polygon(geom, crs)
+        self._set_survey_polygon(geom, crs)
+
+    def _show_drawn_polygon(self, geom, crs):
+        """Add the drawn survey boundary as a styled temporary layer."""
+        # Remove any previous drawn-polygon layer
+        self._remove_survey_area_layer()
+
+        # Reproject to WGS84 for consistency with other preview layers
+        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
+        xform = QgsCoordinateTransform(crs, wgs84, QgsProject.instance())
+        g = QgsGeometry(geom)
+        g.transform(xform)
+
+        layer = QgsVectorLayer('Polygon?crs=EPSG:4326',
+                               'FlyPath — Survey Area', 'memory')
+        feat = QgsFeature()
+        feat.setGeometry(g)
+        layer.dataProvider().addFeatures([feat])
+
+        symbol = QgsFillSymbol.createSimple({
+            'color': '45,109,181,50',       # blue, ~20 % opacity fill
+            'outline_color': '#2D6DB5',
+            'outline_width': '0.8',
+            'outline_style': 'dash',
+        })
+        layer.renderer().setSymbol(symbol)
+
+        QgsProject.instance().addMapLayer(layer)
+        self._survey_area_layer_id = layer.id()
+        self.iface.mapCanvas().refresh()
+
+    def _remove_survey_area_layer(self):
+        """Remove the temporary drawn-polygon layer if it exists."""
+        if self._survey_area_layer_id:
+            if QgsProject.instance().mapLayer(self._survey_area_layer_id):
+                QgsProject.instance().removeMapLayer(self._survey_area_layer_id)
+            self._survey_area_layer_id = None
 
     def _on_drawing_cancelled(self):
         self.drawPolygonBtn.setChecked(False)
@@ -952,11 +990,15 @@ class FlyPathDialog(QWidget):
         self.iface.mapCanvas().refresh()
 
     def _on_clear_preview(self, reset_area=True):
+        # Always remove the flight-path preview layers
         for lid in self._preview_layer_ids:
             if QgsProject.instance().mapLayer(lid):
                 QgsProject.instance().removeMapLayer(lid)
         self._preview_layer_ids = []
+
         if reset_area:
+            # Full reset — also remove the survey boundary layer
+            self._remove_survey_area_layer()
             self._clear_layer_selection()
             self._survey_polygon     = None
             self._survey_polygon_crs = None
@@ -967,6 +1009,7 @@ class FlyPathDialog(QWidget):
             self.featureCombo.clear()
             self.featureCombo.setVisible(False)
             self._clear_stats()
+
         self.iface.mapCanvas().refresh()
 
     # ── Export ────────────────────────────────────────────────────────────
@@ -1020,6 +1063,8 @@ class FlyPathDialog(QWidget):
 
     def closeEvent(self, event):
         self._disconnect_layer_signals()
+        self._remove_survey_area_layer()
+        self._on_clear_preview(reset_area=False)
         try:
             QgsProject.instance().layersAdded.disconnect(self._refresh_layer_combo)
             QgsProject.instance().layersRemoved.disconnect(self._refresh_layer_combo)
