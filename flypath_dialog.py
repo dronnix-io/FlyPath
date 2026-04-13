@@ -204,6 +204,8 @@ class FlyPathDialog(QWidget):
         self._selected_layer_id  = None   # layer carrying the current map selection
         self._monitored_layer_id = None   # layer whose edit signals we're connected to
         self._prev_map_tool      = None
+        self._selection_handlers = {}     # {layer_id: (layer, handler)} for selectionChanged
+        self._syncing_selection  = False  # guard against feedback loops
         self._survey_area_layer_id = None  # temporary drawn-polygon layer
         self._preview_layer_ids  = []     # [path_line_id, waypoints_id]
         self._waypoints          = []
@@ -507,9 +509,13 @@ class FlyPathDialog(QWidget):
     # ── Signal wiring ─────────────────────────────────────────────────────
 
     def _connect_signals(self):
-        # Refresh layer combo whenever layers are added or removed in the project
+        # Refresh layer combo and selection connections when layers change
         QgsProject.instance().layersAdded.connect(self._refresh_layer_combo)
+        QgsProject.instance().layersAdded.connect(self._update_selection_connections)
         QgsProject.instance().layersRemoved.connect(self._refresh_layer_combo)
+        QgsProject.instance().layersRemoved.connect(self._update_selection_connections)
+        # Connect to existing layers on startup
+        self._update_selection_connections()
 
         self.droneModelCombo.currentIndexChanged.connect(self._on_drone_changed)
         self.altitudeSpin.valueChanged.connect(self._on_param_changed)
@@ -583,6 +589,101 @@ class FlyPathDialog(QWidget):
         else:
             spd = self.speedSpin.value()
             self.intervalLabel.setText(f'{dist / spd:.1f} s' if spd > 0 else '—')
+
+    # ── QGIS selection sync ───────────────────────────────────────────────
+
+    def _update_selection_connections(self, _=None):
+        """Connect selectionChanged to every non-internal polygon layer."""
+        current_ids = set(QgsProject.instance().mapLayers().keys())
+
+        # Drop stale entries (layer was removed)
+        for lid in list(self._selection_handlers.keys()):
+            if lid not in current_ids:
+                del self._selection_handlers[lid]
+
+        # Connect to new polygon layers
+        for lid, layer in QgsProject.instance().mapLayers().items():
+            if (lid in self._selection_handlers or
+                    layer.customProperty('flypath_internal') or
+                    not hasattr(layer, 'wkbType') or
+                    QgsWkbTypes.geometryType(layer.wkbType()) !=
+                    QgsWkbTypes.PolygonGeometry):
+                continue
+
+            def _make_handler(lyr):
+                def _handler(*_args):
+                    self._on_qgis_selection_changed(lyr)
+                return _handler
+
+            handler = _make_handler(layer)
+            layer.selectionChanged.connect(handler)
+            self._selection_handlers[lid] = (layer, handler)
+
+    def _disconnect_all_selection_signals(self):
+        for lid, (layer, handler) in self._selection_handlers.items():
+            if QgsProject.instance().mapLayer(lid):
+                try:
+                    layer.selectionChanged.disconnect(handler)
+                except Exception:
+                    pass
+        self._selection_handlers = {}
+
+    def _on_qgis_selection_changed(self, layer):
+        """Sync the plugin when the user selects a polygon with QGIS tools."""
+        if self._syncing_selection:
+            return
+        if layer.customProperty('flypath_internal'):
+            return
+
+        selected_ids = layer.selectedFeatureIds()
+
+        if len(selected_ids) == 0:
+            return   # deselect — don't clear the plugin state
+
+        if len(selected_ids) > 1:
+            QMessageBox.warning(
+                self, 'Multiple Polygons Selected',
+                f'{len(selected_ids)} polygons are selected.\n\n'
+                'FlyPath supports one survey polygon at a time.\n'
+                'Please select a single polygon and try again.'
+            )
+            return
+
+        fid  = selected_ids[0]
+        feat = next(layer.getFeatures([fid]))
+
+        # If a drawn polygon is active, remove it first
+        if self._survey_area_layer_id:
+            self._on_remove_drawn_polygon()
+
+        # Sync the Layer combo without re-triggering _on_layer_changed
+        layer_idx = self.layerCombo.findData(layer.id())
+        if layer_idx < 0:
+            return  # not in combo (shouldn't happen for non-internal layers)
+
+        self.layerCombo.blockSignals(True)
+        self.layerCombo.setCurrentIndex(layer_idx)
+        self.layerCombo.blockSignals(False)
+
+        # Ensure layer edit signals are connected
+        if self._monitored_layer_id != layer.id():
+            self._disconnect_layer_signals()
+            self._connect_layer_signals(layer)
+
+        # Populate / refresh the feature combo for multi-feature layers
+        if layer.featureCount() > 1:
+            self._populate_feature_combo(layer)
+            feat_idx = self.featureCombo.findData(fid)
+            if feat_idx >= 0:
+                self.featureCombo.blockSignals(True)
+                self.featureCombo.setCurrentIndex(feat_idx)
+                self.featureCombo.blockSignals(False)
+        else:
+            self.featureCombo.setVisible(False)
+
+        # Set the survey polygon (guard prevents looping back into this handler)
+        self._set_survey_polygon(feat.geometry(), layer.crs(),
+                                 layer_id=layer.id(), fid=fid)
 
     # ── Survey area ───────────────────────────────────────────────────────
 
@@ -721,7 +822,9 @@ class FlyPathDialog(QWidget):
         if layer_id and fid is not None:
             layer = QgsProject.instance().mapLayer(layer_id)
             if layer:
+                self._syncing_selection = True
                 layer.selectByIds([fid])
+                self._syncing_selection = False
                 self._selected_layer_id = layer_id
                 self.iface.mapCanvas().refresh()
         area_ha = self._area_ha()
@@ -1141,11 +1244,14 @@ class FlyPathDialog(QWidget):
 
     def closeEvent(self, event):
         self._disconnect_layer_signals()
+        self._disconnect_all_selection_signals()
         self._remove_survey_area_layer()
         self._on_clear_preview(reset_area=False)
         try:
             QgsProject.instance().layersAdded.disconnect(self._refresh_layer_combo)
+            QgsProject.instance().layersAdded.disconnect(self._update_selection_connections)
             QgsProject.instance().layersRemoved.disconnect(self._refresh_layer_combo)
+            QgsProject.instance().layersRemoved.disconnect(self._update_selection_connections)
         except Exception:
             pass
         super().closeEvent(event)
