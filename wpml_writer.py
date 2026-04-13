@@ -7,8 +7,8 @@ KMZ structure
 -------------
   mission.kmz
   └── wpmz/
-      ├── template.kml   — mission config + full waypoint list (required by spec)
-      └── waylines.wpml  — compiled waypoints with distance-based photo trigger
+      ├── template.kml    — mission config + full waypoint list (required by spec)
+      └── waypoints.wpml  — compiled waypoints with distance-based photo trigger
 
 Photo triggering strategy
 -------------------------
@@ -25,6 +25,7 @@ Tested against : DJI Mini 3, Mini 3 Pro, Mini 4 Pro
 import io
 import math
 import time
+import uuid
 import zipfile
 
 
@@ -81,6 +82,7 @@ def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
     finish_action = _FINISH_ACTION.get(finish_action_label, 'goHome')
     height_mode   = _HEIGHT_MODE.get(altitude_mode_label, 'relativeToStartPoint')
     ts_ms         = int(time.time() * 1000)
+    mission_uuid  = str(uuid.uuid4())
 
     total_dist_m = _path_length(waypoints)
     duration_s   = int(total_dist_m / speed_ms) if speed_ms > 0 else 0
@@ -88,7 +90,7 @@ def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
     template_kml = _build_template_kml(
         waypoints, drone_enum, finish_action, height_mode,
         altitude_m, speed_ms, shot_spacing_m,
-        total_dist_m, duration_s, ts_ms, mission_name
+        total_dist_m, duration_s, ts_ms, mission_name, mission_uuid
     )
     waylines_wpml = _build_waylines_wpml(
         waypoints, altitude_m, speed_ms, height_mode, shot_spacing_m
@@ -96,18 +98,20 @@ def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr('wpmz/template.kml',  template_kml)
-        zf.writestr('wpmz/waylines.wpml', waylines_wpml)
+        zf.writestr('wpmz/template.kml',   template_kml)
+        zf.writestr('wpmz/waypoints.wpml', waylines_wpml)
 
     with open(filepath, 'wb') as f:
         f.write(buf.getvalue())
+
+    return mission_uuid
 
 
 # ── XML builders ───────────────────────────────────────────────────────────
 
 def _build_template_kml(waypoints, drone_enum, finish_action, height_mode,
                          altitude_m, speed_ms, shot_spacing_m,
-                         distance_m, duration_s, ts_ms, mission_name):
+                         distance_m, duration_s, ts_ms, mission_name, mission_uuid):
     """
     template.kml — mission config + full Placemark list.
     The WPML spec requires waypoints here as well as in waylines.wpml.
@@ -139,6 +143,7 @@ def _build_template_kml(waypoints, drone_enum, finish_action, height_mode,
     <wpml:author>{_esc(mission_name)}</wpml:author>
     <wpml:createTime>{ts_ms}</wpml:createTime>
     <wpml:updateTime>{ts_ms}</wpml:updateTime>
+    <wpml:missionId>{mission_uuid}</wpml:missionId>
     <wpml:missionConfig>
       <wpml:flyToWaylineMode>safely</wpml:flyToWaylineMode>
       <wpml:finishAction>{finish_action}</wpml:finishAction>

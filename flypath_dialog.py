@@ -1360,12 +1360,14 @@ class FlyPathDialog(QWidget):
     # ── Export ────────────────────────────────────────────────────────────
 
     def _on_export(self):
+        import uuid as _uuid
         if not self._has_survey_area():
             return
-        mission = self.missionNameEdit.text().strip() or 'FlyPath Mission'
+        mission      = self.missionNameEdit.text().strip() or 'FlyPath Mission'
+        mission_uuid = str(_uuid.uuid4())
         filepath, _ = QFileDialog.getSaveFileName(
             self, 'Save KMZ Mission File',
-            mission.replace(' ', '_') + '.kmz',
+            mission_uuid + '.kmz',
             'DJI Mission File (*.kmz)'
         )
         if not filepath:
@@ -1396,7 +1398,8 @@ class FlyPathDialog(QWidget):
             )
             QMessageBox.information(
                 self, 'Export Complete',
-                f'Saved to:\n{filepath}\n\n'
+                f'Mission: {mission}\n'
+                f'File: {mission_uuid}.kmz\n\n'
                 f'Turn waypoints: {len(waypoints):,}\n'
                 f'Photo interval: {shot_spacing_m:.1f} m\n\n'
                 'Load the .kmz in the DJI Fly app to fly the mission.'
