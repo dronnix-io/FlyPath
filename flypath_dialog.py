@@ -508,6 +508,7 @@ class FlyPathDialog(QWidget):
         self._update_gsd()
         self._update_interval()
         self._update_stats()
+        self._on_clear_preview(reset_area=False)
 
     # ── Drone / camera ────────────────────────────────────────────────────
 
@@ -689,6 +690,7 @@ class FlyPathDialog(QWidget):
                                  layer_id=layer_id, fid=fid)
 
     def _set_survey_polygon(self, geom, crs, layer_id=None, fid=None):
+        self._on_clear_preview(reset_area=False)
         self._clear_layer_selection()
         self._survey_polygon     = geom
         self._survey_polygon_crs = crs
