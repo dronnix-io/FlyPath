@@ -164,6 +164,12 @@ QPushButton#autoDirectionBtn {
     font-weight: normal; font-size: 10px; padding: 3px 6px;
 }
 QPushButton#autoDirectionBtn:hover { background-color: #4A4D55; }
+QPushButton#removePolygonBtn {
+    background-color: #5A2020; color: #FF8888;
+    border: 1px solid #7A3030; border-radius: 3px;
+    font-weight: bold; padding: 3px 6px;
+}
+QPushButton#removePolygonBtn:hover { background-color: #7A2525; color: #FFAAAA; }
 QScrollArea { border: none; background-color: transparent; }
 QScrollBar:vertical {
     background-color: #2A2D35; width: 7px; border-radius: 3px;
@@ -280,10 +286,23 @@ class FlyPathDialog(QWidget):
         self._featureComboRow = form.rowCount()
         form.addRow('Feature', self.featureCombo)
 
+        draw_row = QWidget()
+        draw_layout = QHBoxLayout(draw_row)
+        draw_layout.setContentsMargins(0, 0, 0, 0)
+        draw_layout.setSpacing(4)
+
         self.drawPolygonBtn = QPushButton('Draw Polygon on Map')
         self.drawPolygonBtn.setObjectName('drawPolygonBtn')
         self.drawPolygonBtn.setCheckable(True)
-        form.addRow(self.drawPolygonBtn)
+
+        self.removePolygonBtn = QPushButton('✕ Remove')
+        self.removePolygonBtn.setObjectName('removePolygonBtn')
+        self.removePolygonBtn.setToolTip('Remove drawn polygon and start over')
+        self.removePolygonBtn.setVisible(False)
+
+        draw_layout.addWidget(self.drawPolygonBtn)
+        draw_layout.addWidget(self.removePolygonBtn)
+        form.addRow(draw_row)
 
         self.areaLabel = QLabel('—')
         self.areaLabel.setObjectName('areaLabel')
@@ -501,6 +520,7 @@ class FlyPathDialog(QWidget):
         self.layerCombo.currentIndexChanged.connect(self._on_layer_changed)
         self.featureCombo.currentIndexChanged.connect(self._on_feature_changed)
         self.drawPolygonBtn.clicked.connect(self._on_draw_polygon)
+        self.removePolygonBtn.clicked.connect(self._on_remove_drawn_polygon)
         self.autoDirectionBtn.clicked.connect(self._on_auto_direction)
         self.previewBtn.clicked.connect(self._on_preview)
         self.clearPreviewBtn.clicked.connect(self._on_clear_preview)
@@ -767,7 +787,6 @@ class FlyPathDialog(QWidget):
 
     def _show_drawn_polygon(self, geom, crs):
         """Add the drawn survey boundary as a styled temporary layer."""
-        # Remove any previous drawn-polygon layer
         self._remove_survey_area_layer()
 
         # Reproject to WGS84 for consistency with other preview layers
@@ -783,23 +802,76 @@ class FlyPathDialog(QWidget):
         layer.dataProvider().addFeatures([feat])
 
         symbol = QgsFillSymbol.createSimple({
-            'color': '45,109,181,50',       # blue, ~20 % opacity fill
+            'color': '45,109,181,50',
             'outline_color': '#2D6DB5',
             'outline_width': '0.8',
             'outline_style': 'dash',
         })
         layer.renderer().setSymbol(symbol)
 
+        # Track geometry edits made via QGIS tools
+        layer.editingStopped.connect(self._on_survey_area_edited)
+        layer.geometryChanged.connect(self._on_survey_area_geometry_changed)
+
         QgsProject.instance().addMapLayer(layer)
         self._survey_area_layer_id = layer.id()
+        self.removePolygonBtn.setVisible(True)
+        self.iface.mapCanvas().refresh()
+
+    def _on_survey_area_edited(self):
+        """Called after the user commits edits to the survey area layer."""
+        if not self._survey_area_layer_id:
+            return
+        layer = QgsProject.instance().mapLayer(self._survey_area_layer_id)
+        if not layer or layer.featureCount() == 0:
+            return
+        feat = next(layer.getFeatures())
+        self._survey_polygon     = feat.geometry()
+        self._survey_polygon_crs = layer.crs()
+        self._on_clear_preview(reset_area=False)
+        area_ha = self._area_ha()
+        self.areaLabel.setText(f'{area_ha:.2f} ha')
+        self._update_stats()
+
+    def _on_survey_area_geometry_changed(self, _fid, geom):
+        """Update the stored polygon in real-time as the geometry is being edited."""
+        if not self._survey_area_layer_id:
+            return
+        layer = QgsProject.instance().mapLayer(self._survey_area_layer_id)
+        if not layer:
+            return
+        self._survey_polygon     = geom
+        self._survey_polygon_crs = layer.crs()
+        self._on_clear_preview(reset_area=False)
+        self.areaLabel.setText(f'{self._area_ha():.2f} ha')
+        self._update_stats()
+
+    def _on_remove_drawn_polygon(self):
+        """Remove the drawn polygon and reset the survey area."""
+        self._remove_survey_area_layer()
+        self._on_clear_preview(reset_area=False)
+        self._survey_polygon     = None
+        self._survey_polygon_crs = None
+        self._waypoints          = []
+        self._shot_spacing_m     = 0.0
+        self.areaLabel.setText('—')
+        self.removePolygonBtn.setVisible(False)
+        self._clear_stats()
         self.iface.mapCanvas().refresh()
 
     def _remove_survey_area_layer(self):
         """Remove the temporary drawn-polygon layer if it exists."""
         if self._survey_area_layer_id:
-            if QgsProject.instance().mapLayer(self._survey_area_layer_id):
+            layer = QgsProject.instance().mapLayer(self._survey_area_layer_id)
+            if layer:
+                try:
+                    layer.editingStopped.disconnect(self._on_survey_area_edited)
+                    layer.geometryChanged.disconnect(self._on_survey_area_geometry_changed)
+                except Exception:
+                    pass
                 QgsProject.instance().removeMapLayer(self._survey_area_layer_id)
             self._survey_area_layer_id = None
+        self.removePolygonBtn.setVisible(False)
 
     def _on_drawing_cancelled(self):
         self.drawPolygonBtn.setChecked(False)
