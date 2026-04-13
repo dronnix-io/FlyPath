@@ -195,6 +195,7 @@ class FlyPathDialog(QWidget):
         self._survey_polygon_crs = None
         self._draw_tool          = None
         self._selected_layer_id  = None   # layer carrying the current map selection
+        self._monitored_layer_id = None   # layer whose edit signals we're connected to
         self._prev_map_tool      = None
         self._preview_layer_ids  = []     # [path_line_id, waypoints_id]
         self._waypoints          = []
@@ -563,6 +564,7 @@ class FlyPathDialog(QWidget):
 
     def _on_layer_changed(self):
         layer_id = self.layerCombo.currentData()
+        self._disconnect_layer_signals()
 
         # Reset feature combo
         self.featureCombo.blockSignals(True)
@@ -578,32 +580,94 @@ class FlyPathDialog(QWidget):
             return
 
         layer = QgsProject.instance().mapLayer(layer_id)
-        if not layer or layer.featureCount() == 0:
+        if not layer:
             return
 
-        if layer.featureCount() == 1:
-            # Single feature — use it directly
-            feat = next(layer.getFeatures())
-            self._set_survey_polygon(feat.geometry(), layer.crs(),
-                                     layer_id=layer_id, fid=feat.id())
-        else:
-            # Multiple features — populate the feature selector
-            self.featureCombo.blockSignals(True)
-            self.featureCombo.clear()
-            self.featureCombo.addItem('— select a feature —', None)
-            name_field = self._guess_name_field(layer)
-            for feat in layer.getFeatures():
-                fid = feat.id()
-                label = (f'FID {fid}  —  {feat[name_field]}'
-                         if name_field else f'FID {fid}')
-                self.featureCombo.addItem(label, fid)
-            self.featureCombo.setVisible(True)
+        self._connect_layer_signals(layer)
+        self._populate_feature_combo(layer)
+
+    def _populate_feature_combo(self, layer):
+        """Populate (or refresh) the feature combo for the given layer."""
+        layer_id = layer.id()
+
+        # Remember current selection to restore it after refresh
+        prev_fid = self.featureCombo.currentData()
+
+        self.featureCombo.blockSignals(True)
+        self.featureCombo.clear()
+
+        count = layer.featureCount()
+
+        if count == 0:
+            self.featureCombo.setVisible(False)
             self.featureCombo.blockSignals(False)
-            # Clear any previous polygon until the user picks a feature
             self._survey_polygon     = None
             self._survey_polygon_crs = None
             self.areaLabel.setText('—')
             self._clear_stats()
+            return
+
+        if count == 1:
+            self.featureCombo.setVisible(False)
+            self.featureCombo.blockSignals(False)
+            feat = next(layer.getFeatures())
+            self._set_survey_polygon(feat.geometry(), layer.crs(),
+                                     layer_id=layer_id, fid=feat.id())
+        else:
+            self.featureCombo.addItem('— select a feature —', None)
+            name_field = self._guess_name_field(layer)
+            for feat in layer.getFeatures():
+                fid   = feat.id()
+                label = (f'FID {fid}  —  {feat[name_field]}'
+                         if name_field else f'FID {fid}')
+                self.featureCombo.addItem(label, fid)
+            self.featureCombo.setVisible(True)
+
+            # Restore previous selection if the feature still exists
+            idx = self.featureCombo.findData(prev_fid)
+            if idx >= 0:
+                self.featureCombo.setCurrentIndex(idx)
+            else:
+                # Previously selected feature was deleted — reset survey area
+                self.featureCombo.setCurrentIndex(0)
+                self._survey_polygon     = None
+                self._survey_polygon_crs = None
+                self.areaLabel.setText('—')
+                self._clear_stats()
+
+            self.featureCombo.blockSignals(False)
+
+    def _connect_layer_signals(self, layer):
+        """Connect to a layer's edit signals to keep the feature combo in sync."""
+        layer.featureAdded.connect(self._on_layer_features_changed)
+        layer.featuresDeleted.connect(self._on_layer_features_changed)
+        layer.editingStopped.connect(self._on_layer_features_changed)
+        layer.attributeValueChanged.connect(self._on_layer_features_changed)
+        self._monitored_layer_id = layer.id()
+
+    def _disconnect_layer_signals(self):
+        """Disconnect from the previously monitored layer's edit signals."""
+        if not self._monitored_layer_id:
+            return
+        layer = QgsProject.instance().mapLayer(self._monitored_layer_id)
+        if layer:
+            try:
+                layer.featureAdded.disconnect(self._on_layer_features_changed)
+                layer.featuresDeleted.disconnect(self._on_layer_features_changed)
+                layer.editingStopped.disconnect(self._on_layer_features_changed)
+                layer.attributeValueChanged.disconnect(self._on_layer_features_changed)
+            except Exception:
+                pass
+        self._monitored_layer_id = None
+
+    def _on_layer_features_changed(self, *_args):
+        """Refresh the feature combo whenever features are added, deleted, or edited."""
+        layer_id = self.layerCombo.currentData()
+        if not layer_id:
+            return
+        layer = QgsProject.instance().mapLayer(layer_id)
+        if layer:
+            self._populate_feature_combo(layer)
 
     def _on_feature_changed(self):
         fid = self.featureCombo.currentData()
@@ -953,6 +1017,7 @@ class FlyPathDialog(QWidget):
     # ── Helpers ───────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
+        self._disconnect_layer_signals()
         try:
             QgsProject.instance().layersAdded.disconnect(self._refresh_layer_combo)
             QgsProject.instance().layersRemoved.disconnect(self._refresh_layer_combo)
