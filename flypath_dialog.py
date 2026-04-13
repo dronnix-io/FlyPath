@@ -496,7 +496,8 @@ class FlyPathDialog(QWidget):
         for layer in QgsProject.instance().mapLayers().values():
             if (hasattr(layer, 'wkbType') and
                     QgsWkbTypes.geometryType(layer.wkbType()) ==
-                    QgsWkbTypes.PolygonGeometry):
+                    QgsWkbTypes.PolygonGeometry and
+                    not layer.customProperty('flypath_internal')):
                 self.layerCombo.addItem(layer.name(), layer.id())
         # Restore previous selection if the layer still exists
         idx = self.layerCombo.findData(previously_selected)
@@ -598,7 +599,7 @@ class FlyPathDialog(QWidget):
         if not layer_id:
             self._survey_polygon     = None
             self._survey_polygon_crs = None
-            self.areaLabel.setText('—')
+            self._on_clear_preview(reset_area=False)
             self._clear_stats()
             return
 
@@ -698,7 +699,7 @@ class FlyPathDialog(QWidget):
             self._clear_layer_selection()
             self._survey_polygon     = None
             self._survey_polygon_crs = None
-            self.areaLabel.setText('—')
+            self._on_clear_preview(reset_area=False)
             self._clear_stats()
             return
         layer_id = self.layerCombo.currentData()
@@ -797,6 +798,7 @@ class FlyPathDialog(QWidget):
 
         layer = QgsVectorLayer('Polygon?crs=EPSG:4326',
                                'FlyPath — Survey Area', 'memory')
+        layer.setCustomProperty('flypath_internal', True)
         feat = QgsFeature()
         feat.setGeometry(g)
         layer.dataProvider().addFeatures([feat])
@@ -854,7 +856,6 @@ class FlyPathDialog(QWidget):
         self._survey_polygon_crs = None
         self._waypoints          = []
         self._shot_spacing_m     = 0.0
-        self.areaLabel.setText('—')
         self.removePolygonBtn.setVisible(False)
         self._clear_stats()
         self.iface.mapCanvas().refresh()
@@ -968,6 +969,9 @@ class FlyPathDialog(QWidget):
         for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
                      'linesLabel', 'batteriesLabel', 'coverageLabel'):
             getattr(self, attr).setText('—')
+        self.areaLabel.setText('—')
+        self.gsdLabel.setText('—')
+        self.intervalLabel.setText('—')
 
     # ── Map preview ───────────────────────────────────────────────────────
 
@@ -992,6 +996,7 @@ class FlyPathDialog(QWidget):
             'LineString?crs=EPSG:4326&field=id:integer',
             'FlyPath — Path', 'memory'
         )
+        line_layer.setCustomProperty('flypath_internal', True)
         dp   = line_layer.dataProvider()
         feat = QgsFeature()
         feat.setGeometry(QgsGeometry.fromPolylineXY(
@@ -1012,6 +1017,7 @@ class FlyPathDialog(QWidget):
             'Point?crs=EPSG:4326&field=seq:integer&field=wp_type:string(10)',
             'FlyPath — Waypoints', 'memory'
         )
+        wp_layer.setCustomProperty('flypath_internal', True)
         dp2      = wp_layer.dataProvider()
         last_idx = len(waypoints) - 1
         wp_feats = []
