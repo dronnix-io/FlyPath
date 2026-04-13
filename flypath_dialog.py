@@ -32,7 +32,7 @@ from qgis.PyQt.QtGui import QColor, QFont
 
 from .map_tools import PolygonDrawTool
 from .grid_planner import generate_flight_grid, find_optimal_direction
-from .wpml_writer import write_kmz
+from .wpml_writer import write_mission
 
 
 # ── Drone / camera specifications ─────────────────────────────────────────
@@ -1360,17 +1360,18 @@ class FlyPathDialog(QWidget):
     # ── Export ────────────────────────────────────────────────────────────
 
     def _on_export(self):
-        import uuid as _uuid
         if not self._has_survey_area():
             return
-        mission      = self.missionNameEdit.text().strip() or 'FlyPath Mission'
-        mission_uuid = str(_uuid.uuid4())
-        filepath, _ = QFileDialog.getSaveFileName(
-            self, 'Save KMZ Mission File',
-            mission_uuid + '.kmz',
-            'DJI Mission File (*.kmz)'
+        mission = self.missionNameEdit.text().strip() or 'FlyPath Mission'
+
+        output_dir = QFileDialog.getExistingDirectory(
+            self,
+            'Select destination folder  '
+            '(e.g. the waypoint folder on your DJI RC)',
+            '',
+            QFileDialog.ShowDirsOnly,
         )
-        if not filepath:
+        if not output_dir:
             return
 
         if self._waypoints and self._shot_spacing_m:
@@ -1385,8 +1386,8 @@ class FlyPathDialog(QWidget):
             waypoints, shot_spacing_m = result
 
         try:
-            write_kmz(
-                filepath=filepath,
+            mission_uuid, mission_folder = write_mission(
+                output_dir=output_dir,
                 waypoints=waypoints,
                 drone_name=self.droneModelCombo.currentText(),
                 altitude_m=self.altitudeSpin.value(),
@@ -1399,10 +1400,10 @@ class FlyPathDialog(QWidget):
             QMessageBox.information(
                 self, 'Export Complete',
                 f'Mission: {mission}\n'
-                f'File: {mission_uuid}.kmz\n\n'
+                f'UUID: {mission_uuid}\n\n'
                 f'Turn waypoints: {len(waypoints):,}\n'
                 f'Photo interval: {shot_spacing_m:.1f} m\n\n'
-                'Load the .kmz in the DJI Fly app to fly the mission.'
+                f'Saved to:\n{mission_folder}'
             )
         except Exception as exc:
             QMessageBox.critical(self, 'Export Failed', str(exc))
