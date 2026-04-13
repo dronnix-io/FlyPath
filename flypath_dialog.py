@@ -32,7 +32,7 @@ from qgis.PyQt.QtGui import QColor, QFont
 
 from .map_tools import PolygonDrawTool
 from .grid_planner import generate_flight_grid, find_optimal_direction
-from .wpml_writer import write_mission
+from .wpml_writer import write_kmz
 
 
 # ── Drone / camera specifications ─────────────────────────────────────────
@@ -1364,14 +1364,12 @@ class FlyPathDialog(QWidget):
             return
         mission = self.missionNameEdit.text().strip() or 'FlyPath Mission'
 
-        output_dir = QFileDialog.getExistingDirectory(
-            self,
-            'Select destination folder  '
-            '(e.g. the waypoint folder on your DJI RC)',
-            '',
-            QFileDialog.ShowDirsOnly,
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, 'Export Mission KMZ',
+            mission.replace(' ', '_') + '.kmz',
+            'DJI Mission File (*.kmz)'
         )
-        if not output_dir:
+        if not filepath:
             return
 
         if self._waypoints and self._shot_spacing_m:
@@ -1386,8 +1384,8 @@ class FlyPathDialog(QWidget):
             waypoints, shot_spacing_m = result
 
         try:
-            mission_uuid, mission_folder = write_mission(
-                output_dir=output_dir,
+            write_kmz(
+                filepath=filepath,
                 waypoints=waypoints,
                 drone_name=self.droneModelCombo.currentText(),
                 altitude_m=self.altitudeSpin.value(),
@@ -1399,11 +1397,15 @@ class FlyPathDialog(QWidget):
             )
             QMessageBox.information(
                 self, 'Export Complete',
-                f'Mission: {mission}\n'
-                f'UUID: {mission_uuid}\n\n'
+                f'Mission: {mission}\n\n'
                 f'Turn waypoints: {len(waypoints):,}\n'
                 f'Photo interval: {shot_spacing_m:.1f} m\n\n'
-                f'Saved to:\n{mission_folder}'
+                f'Saved to:\n{filepath}\n\n'
+                'To load on RC2:\n'
+                '1. Create a dummy mission on the RC in DJI Fly\n'
+                '2. Note its UUID folder name\n'
+                '3. Rename this .kmz to <UUID>.kmz\n'
+                '4. Replace the original .kmz inside the UUID folder on the RC'
             )
         except Exception as exc:
             QMessageBox.critical(self, 'Export Failed', str(exc))

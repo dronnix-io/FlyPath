@@ -19,11 +19,8 @@ Verified against : DJI Mini 4 Pro + DJI RC2 (native mission dump)
 """
 
 import io
-import json
 import math
-import os
 import time
-import uuid
 import zipfile
 
 
@@ -53,19 +50,21 @@ _NS = 'http://www.uav.com/wpmz/1.0.2'
 
 # ── Public API ─────────────────────────────────────────────────────────────
 
-def write_mission(output_dir, waypoints, drone_name, altitude_m, speed_ms,
-                  finish_action_label, altitude_mode_label, shot_spacing_m,
-                  mission_name='FlyPath Mission'):
+def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
+              finish_action_label, altitude_mode_label, shot_spacing_m,
+              mission_name='FlyPath Mission'):
     """
-    Write a DJI-compatible waypoint mission folder to output_dir.
+    Write a single DJI-compatible KMZ file.
 
-    Creates:
-        output_dir/<uuid>/<uuid>.kmz
-        output_dir/<uuid>/image/ShotSnap.json
+    To use on the RC2:
+      1. Create a dummy waypoint mission on the RC in DJI Fly and note its UUID.
+      2. Export from FlyPath — save the .kmz anywhere on your PC.
+      3. Rename the exported file to <UUID>.kmz (matching the RC mission UUID).
+      4. Copy it into the RC's waypoint/<UUID>/ folder, replacing the original.
 
     Parameters
     ----------
-    output_dir          : str   — destination directory (e.g. RC waypoint folder)
+    filepath            : str   — destination .kmz path
     waypoints           : list of (lon, lat) float tuples in WGS84
     drone_name          : str   — key from DRONE_SPECS
     altitude_m          : float — AGL flight altitude in metres
@@ -75,14 +74,10 @@ def write_mission(output_dir, waypoints, drone_name, altitude_m, speed_ms,
     shot_spacing_m      : float — along-track distance between photos in metres
     mission_name        : str   — embedded in mission metadata
 
-    Returns
-    -------
-    (mission_uuid, mission_folder_path)
-
     Raises
     ------
     ValueError  if waypoints is empty
-    IOError     if the folder cannot be written
+    IOError     if the file cannot be written
     """
     if not waypoints:
         raise ValueError('No waypoints provided — define a survey area first.')
@@ -91,7 +86,6 @@ def write_mission(output_dir, waypoints, drone_name, altitude_m, speed_ms,
     finish_action = _FINISH_ACTION.get(finish_action_label, 'goHome')
     height_mode   = _HEIGHT_MODE.get(altitude_mode_label, 'relativeToStartPoint')
     ts_ms         = int(time.time() * 1000)
-    mission_uuid  = str(uuid.uuid4()).upper()
 
     mission_config = _mission_config_xml(drone_enum, finish_action, speed_ms)
     template_kml   = _build_template_kml(mission_config, ts_ms, mission_name)
@@ -100,26 +94,13 @@ def write_mission(output_dir, waypoints, drone_name, altitude_m, speed_ms,
         shot_spacing_m, mission_config
     )
 
-    # ── Build KMZ in memory ───────────────────────────────────────────────
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
         zf.writestr('wpmz/template.kml',  template_kml)
         zf.writestr('wpmz/waylines.wpml', waylines_wpml)
 
-    # ── Write folder structure ────────────────────────────────────────────
-    mission_folder = os.path.join(output_dir, mission_uuid)
-    image_folder   = os.path.join(mission_folder, 'image')
-    os.makedirs(image_folder, exist_ok=True)
-
-    kmz_path = os.path.join(mission_folder, mission_uuid + '.kmz')
-    with open(kmz_path, 'wb') as f:
+    with open(filepath, 'wb') as f:
         f.write(buf.getvalue())
-
-    shot_snap_path = os.path.join(image_folder, 'ShotSnap.json')
-    with open(shot_snap_path, 'w') as f:
-        json.dump({'POI_POINT': {}, 'WAY_POINT': {}}, f, separators=(',', ':'))
-
-    return mission_uuid, mission_folder
 
 
 # ── Shared mission config block ────────────────────────────────────────────
