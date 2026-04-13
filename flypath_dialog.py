@@ -251,6 +251,9 @@ class FlyPathDialog(QWidget):
         self.missionNameEdit.setPlaceholderText('My Mission')
         form.addRow('Name', self.missionNameEdit)
 
+        self.missionTypeCombo = QComboBox()
+        form.addRow('Mission Type', self.missionTypeCombo)
+
         self.droneModelCombo = QComboBox()
         form.addRow('Drone', self.droneModelCombo)
 
@@ -439,6 +442,10 @@ class FlyPathDialog(QWidget):
     # ── Combo population ──────────────────────────────────────────────────
 
     def _setup_combos(self):
+        self.missionTypeCombo.addItems([
+            '2D Grid (Orthomosaic)',
+        ])
+
         self.droneModelCombo.addItems(list(DRONE_SPECS.keys()))
         self.droneModelCombo.setCurrentText('DJI Mini 4 Pro')
 
