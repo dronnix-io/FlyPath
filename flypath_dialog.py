@@ -19,9 +19,15 @@ from qgis.core import (
     QgsGeometry,
     QgsPointXY,
     QgsLineSymbol,
+    QgsMarkerSymbol,
+    QgsRuleBasedRenderer,
+    QgsPalLayerSettings,
+    QgsTextFormat,
+    QgsVectorLayerSimpleLabeling,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
 )
+from qgis.PyQt.QtGui import QColor, QFont
 
 from .map_tools import PolygonDrawTool
 from .grid_planner import generate_flight_grid, find_optimal_direction
@@ -190,8 +196,9 @@ class FlyPathDialog(QWidget):
         self._draw_tool          = None
         self._selected_layer_id  = None   # layer carrying the current map selection
         self._prev_map_tool      = None
-        self._preview_layer_id   = None
+        self._preview_layer_ids  = []     # [path_line_id, waypoints_id]
         self._waypoints          = []
+        self._shot_spacing_m     = 0.0
 
         self._build_ui()
         self._setup_combos()
@@ -784,22 +791,25 @@ class FlyPathDialog(QWidget):
     def _on_preview(self):
         if not self._has_survey_area():
             return
-        waypoints = self._generate_waypoints()
-        if not waypoints:
+        result = self._generate_waypoints()
+        if not result:
             QMessageBox.warning(
                 self, 'No Waypoints',
                 'The grid produced no waypoints.\n'
                 'Try increasing the survey area or reducing overlap values.'
             )
             return
-        self._waypoints = waypoints
-        self._on_clear_preview()
+        waypoints, shot_spacing_m = result
+        self._waypoints      = waypoints
+        self._shot_spacing_m = shot_spacing_m
+        self._on_clear_preview(reset_area=False)
 
-        layer = QgsVectorLayer(
+        # ── 1. Flight path line ───────────────────────────────────────────
+        line_layer = QgsVectorLayer(
             'LineString?crs=EPSG:4326&field=id:integer',
-            'FlyPath — Preview', 'memory'
+            'FlyPath — Path', 'memory'
         )
-        dp   = layer.dataProvider()
+        dp   = line_layer.dataProvider()
         feat = QgsFeature()
         feat.setGeometry(QgsGeometry.fromPolylineXY(
             [QgsPointXY(lon, lat) for lon, lat in waypoints]
@@ -807,29 +817,83 @@ class FlyPathDialog(QWidget):
         feat.setAttributes([0])
         dp.addFeatures([feat])
 
-        symbol = QgsLineSymbol.createSimple({
-            'color': '#2D6DB5', 'width': '0.6',
+        line_sym = QgsLineSymbol.createSimple({
+            'color': '#2D6DB5', 'width': '0.7',
             'capstyle': 'round', 'joinstyle': 'round',
         })
-        layer.renderer().setSymbol(symbol)
+        line_layer.renderer().setSymbol(line_sym)
+        QgsProject.instance().addMapLayer(line_layer)
 
-        QgsProject.instance().addMapLayer(layer)
-        self._preview_layer_id = layer.id()
+        # ── 2. Waypoint markers ───────────────────────────────────────────
+        wp_layer = QgsVectorLayer(
+            'Point?crs=EPSG:4326&field=seq:integer&field=wp_type:string(10)',
+            'FlyPath — Waypoints', 'memory'
+        )
+        dp2      = wp_layer.dataProvider()
+        last_idx = len(waypoints) - 1
+        wp_feats = []
+        for i, (lon, lat) in enumerate(waypoints):
+            f = QgsFeature()
+            f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(lon, lat)))
+            if i == 0:
+                wp_type = 'start'
+            elif i == last_idx:
+                wp_type = 'end'
+            else:
+                wp_type = 'mid'
+            f.setAttributes([i + 1, wp_type])
+            wp_feats.append(f)
+        dp2.addFeatures(wp_feats)
+
+        # Rule-based renderer: start=green, end=amber, mid=white/blue
+        root = QgsRuleBasedRenderer.Rule(None)
+        for expr, color, border, size, label in [
+            ('"wp_type" = \'start\'', '#40C040', 'white',   '4.0', 'Start'),
+            ('"wp_type" = \'end\'',   '#F0A500', 'white',   '4.0', 'End'),
+            ('"wp_type" = \'mid\'',   'white',   '#2D6DB5', '2.8', 'Waypoint'),
+        ]:
+            sym = QgsMarkerSymbol.createSimple({
+                'name': 'circle', 'color': color,
+                'outline_color': border, 'outline_width': '0.4',
+                'size': size,
+            })
+            rule = QgsRuleBasedRenderer.Rule(sym, filterExp=expr, label=label)
+            root.appendChild(rule)
+        wp_layer.setRenderer(QgsRuleBasedRenderer(root))
+
+        # Labels: sequence number centred on each marker
+        lbl = QgsPalLayerSettings()
+        lbl.fieldName  = 'seq'
+        lbl.placement  = QgsPalLayerSettings.OverPoint
+        lbl.priority   = 10
+        fmt = QgsTextFormat()
+        fmt.setFont(QFont('Segoe UI', 7, QFont.Bold))
+        fmt.setColor(QColor('#1E2128'))
+        fmt.setSize(7)
+        lbl.setFormat(fmt)
+        wp_layer.setLabeling(QgsVectorLayerSimpleLabeling(lbl))
+        wp_layer.setLabelsEnabled(True)
+
+        QgsProject.instance().addMapLayer(wp_layer)
+        self._preview_layer_ids = [line_layer.id(), wp_layer.id()]
         self.iface.mapCanvas().refresh()
 
-    def _on_clear_preview(self):
-        if self._preview_layer_id:
-            QgsProject.instance().removeMapLayer(self._preview_layer_id)
-            self._preview_layer_id = None
-        self._clear_layer_selection()
-        self._survey_polygon     = None
-        self._survey_polygon_crs = None
-        self._waypoints          = []
-        self.areaLabel.setText('—')
-        self.layerCombo.setCurrentIndex(0)
-        self.featureCombo.clear()
-        self.featureCombo.setVisible(False)
-        self._clear_stats()
+    def _on_clear_preview(self, reset_area=True):
+        for lid in self._preview_layer_ids:
+            if QgsProject.instance().mapLayer(lid):
+                QgsProject.instance().removeMapLayer(lid)
+        self._preview_layer_ids = []
+        if reset_area:
+            self._clear_layer_selection()
+            self._survey_polygon     = None
+            self._survey_polygon_crs = None
+            self._waypoints          = []
+            self._shot_spacing_m     = 0.0
+            self.areaLabel.setText('—')
+            self.layerCombo.setCurrentIndex(0)
+            self.featureCombo.clear()
+            self.featureCombo.setVisible(False)
+            self._clear_stats()
         self.iface.mapCanvas().refresh()
 
     # ── Export ────────────────────────────────────────────────────────────
@@ -846,11 +910,17 @@ class FlyPathDialog(QWidget):
         if not filepath:
             return
 
-        waypoints = self._waypoints or self._generate_waypoints()
-        if not waypoints:
-            QMessageBox.warning(self, 'No Waypoints',
-                                'The grid produced no waypoints.')
-            return
+        if self._waypoints and self._shot_spacing_m:
+            waypoints      = self._waypoints
+            shot_spacing_m = self._shot_spacing_m
+        else:
+            result = self._generate_waypoints()
+            if not result:
+                QMessageBox.warning(self, 'No Waypoints',
+                                    'The grid produced no waypoints.')
+                return
+            waypoints, shot_spacing_m = result
+
         try:
             write_kmz(
                 filepath=filepath,
@@ -860,12 +930,14 @@ class FlyPathDialog(QWidget):
                 speed_ms=self.speedSpin.value(),
                 finish_action_label=self.finishActionCombo.currentText(),
                 altitude_mode_label=self.altitudeModeCombo.currentText(),
+                shot_spacing_m=shot_spacing_m,
                 mission_name=mission,
             )
             QMessageBox.information(
                 self, 'Export Complete',
                 f'Saved to:\n{filepath}\n\n'
-                f'Waypoints: {len(waypoints):,}\n\n'
+                f'Turn waypoints: {len(waypoints):,}\n'
+                f'Photo interval: {shot_spacing_m:.1f} m\n\n'
                 'Load the .kmz in the DJI Fly app to fly the mission.'
             )
         except Exception as exc:
@@ -892,10 +964,14 @@ class FlyPathDialog(QWidget):
         return True
 
     def _generate_waypoints(self):
+        """
+        Returns (waypoints, shot_spacing_m) or None on failure.
+        waypoints is a list of (lon, lat) turn points only.
+        """
         drone = self.droneModelCombo.currentText()
         if drone not in DRONE_SPECS:
-            return []
-        return generate_flight_grid(
+            return None
+        waypoints, shot_spacing_m = generate_flight_grid(
             polygon_geom=self._survey_polygon,
             polygon_crs=self._survey_polygon_crs,
             altitude_m=self.altitudeSpin.value(),
@@ -905,3 +981,6 @@ class FlyPathDialog(QWidget):
             margin_m=self.marginSpin.value(),
             drone_specs=DRONE_SPECS[drone],
         )
+        if not waypoints:
+            return None
+        return waypoints, shot_spacing_m

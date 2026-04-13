@@ -5,7 +5,10 @@ Lawnmower flight-grid generator for 2D orthomosaic mapping.
 
 Public API
 ----------
-generate_flight_grid(...)  -> list of (lon, lat) in WGS84
+generate_flight_grid(...)  -> (waypoints, shot_spacing_m)
+    waypoints      : list of (lon, lat) — turn points only (line endpoints)
+    shot_spacing_m : float — camera trigger interval in metres for multipleDistance
+
 find_optimal_direction(...) -> float degrees
 """
 
@@ -29,6 +32,10 @@ def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
     """
     Generate a lawnmower (boustrophedon) flight grid for 2D mapping.
 
+    Returns only the turn points (start and end of each flight line),
+    not every photo-trigger position. The camera is fired by a
+    multipleDistance trigger in the WPML file at shot_spacing_m intervals.
+
     Parameters
     ----------
     polygon_geom  : QgsGeometry  — survey area polygon (any CRS)
@@ -36,14 +43,16 @@ def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
     altitude_m    : float        — AGL flight altitude in metres
     front_overlap : float        — 0.0–1.0  (e.g. 0.80 for 80 %)
     side_overlap  : float        — 0.0–1.0
-    direction_deg : float        — flight-line direction, degrees clockwise from North
+    direction_deg : float        — flight-line direction, degrees CW from North
     margin_m      : float        — buffer to add around polygon (metres)
     drone_specs   : dict         — entry from DRONE_SPECS in flypath_dialog.py
 
     Returns
     -------
-    list of (longitude, latitude) tuples in WGS84, ordered as a snake path.
-    Returns an empty list on failure.
+    (waypoints, shot_spacing_m)
+    waypoints      : list of (longitude, latitude) tuples in WGS84 — turn points only
+    shot_spacing_m : float — along-track photo interval in metres
+    Returns ([], 0.0) on failure.
     """
     wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
 
@@ -66,7 +75,7 @@ def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
         poly_utm = poly_utm.buffer(margin_m, 8)
 
     if poly_utm.isEmpty() or poly_utm.isNull():
-        return []
+        return [], 0.0
 
     # 5 ── Camera footprint and spacing (all in metres)
     fl = drone_specs['focal_length_mm']
@@ -86,7 +95,7 @@ def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
 
     exterior = _exterior_ring(poly_utm)
     if not exterior:
-        return []
+        return [], 0.0
 
     rot_pts = [_rotate(pt.x(), pt.y(), cx, cy, -angle_rad) for pt in exterior]
     rotated_poly = QgsGeometry.fromPolygonXY(
@@ -99,8 +108,8 @@ def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
     y_lo    = bbox.yMinimum() - shot_spacing
     y_hi    = bbox.yMaximum() + shot_spacing
 
-    # 7 ── Sweep scan lines, clip to polygon, collect waypoints
-    waypoints_rot = []
+    # 7 ── Sweep scan lines — collect only the turn points (line endpoints)
+    turn_pts_rot = []
     line_idx = 0
     x = x_start
 
@@ -113,20 +122,22 @@ def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
 
         if not clipped.isEmpty() and not clipped.isNull():
             segments = _line_segments(clipped)
+            # Collect only the start and end of each segment (turn points)
+            line_turns = []
             for (x1, y1), (x2, y2) in segments:
-                pts = _sample_segment(x1, y1, x2, y2, shot_spacing)
-                if line_idx % 2 == 1:
-                    pts = pts[::-1]            # reverse alternate lines → snake
-                waypoints_rot.extend(pts)
+                line_turns.extend([(x1, y1), (x2, y2)])
+            if line_idx % 2 == 1:
+                line_turns = line_turns[::-1]   # reverse alternate lines → snake
+            turn_pts_rot.extend(line_turns)
 
         x += line_spacing
         line_idx += 1
 
-    if not waypoints_rot:
-        return []
+    if not turn_pts_rot:
+        return [], 0.0
 
-    # 8 ── Rotate waypoints back to UTM orientation
-    waypoints_utm = [_rotate(px, py, cx, cy, angle_rad) for px, py in waypoints_rot]
+    # 8 ── Rotate turn points back to UTM orientation
+    waypoints_utm = [_rotate(px, py, cx, cy, angle_rad) for px, py in turn_pts_rot]
 
     # 9 ── Transform UTM → WGS84
     from_utm = QgsCoordinateTransform(utm_crs, wgs84, QgsProject.instance())
@@ -135,7 +146,7 @@ def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
         pt = from_utm.transform(QgsPointXY(px, py))
         result.append((pt.x(), pt.y()))        # (lon, lat)
 
-    return result
+    return result, shot_spacing
 
 
 def find_optimal_direction(polygon_geom, polygon_crs, line_spacing_m):
@@ -156,18 +167,18 @@ def find_optimal_direction(polygon_geom, polygon_crs, line_spacing_m):
     -------
     float : best direction in degrees
     """
-    wgs84   = QgsCoordinateReferenceSystem('EPSG:4326')
+    wgs84    = QgsCoordinateReferenceSystem('EPSG:4326')
     to_wgs84 = QgsCoordinateTransform(polygon_crs, wgs84, QgsProject.instance())
     poly_wgs84 = QgsGeometry(polygon_geom)
     poly_wgs84.transform(to_wgs84)
     centroid = poly_wgs84.centroid().asPoint()
 
-    utm_crs = _utm_crs_for(centroid.x(), centroid.y())
+    utm_crs  = _utm_crs_for(centroid.x(), centroid.y())
     to_utm   = QgsCoordinateTransform(polygon_crs, utm_crs, QgsProject.instance())
     poly_utm = QgsGeometry(polygon_geom)
     poly_utm.transform(to_utm)
 
-    hull = poly_utm.convexHull()
+    hull     = poly_utm.convexHull()
     exterior = _exterior_ring(hull) or _exterior_ring(poly_utm)
     if not exterior:
         return 0.0
@@ -182,7 +193,6 @@ def find_optimal_direction(polygon_geom, polygon_crs, line_spacing_m):
         rad   = math.radians(deg)
         cos_a = math.cos(rad)
         sin_a = math.sin(rad)
-        # Project each vertex onto the axis perpendicular to the flight direction
         projections = [-x * sin_a + y * cos_a for x, y in zip(xs, ys)]
         span = max(projections) - min(projections)
         if span < best_span:
@@ -246,28 +256,3 @@ def _line_segments(geom):
                  (part[-1].x(), part[-1].y()))
             )
     return result
-
-
-def _sample_segment(x1, y1, x2, y2, spacing):
-    """
-    Return a list of (x, y) points sampled along (x1,y1)→(x2,y2) at `spacing` intervals.
-    Always includes the start and end points.
-    """
-    length = math.hypot(x2 - x1, y2 - y1)
-    if length < 1e-6:
-        return [(x1, y1)]
-
-    dx = (x2 - x1) / length
-    dy = (y2 - y1) / length
-
-    pts = []
-    d = 0.0
-    while d < length - spacing * 0.01:
-        pts.append((x1 + dx * d, y1 + dy * d))
-        d += spacing
-
-    # Always close with the actual endpoint
-    if not pts or math.hypot(pts[-1][0] - x2, pts[-1][1] - y2) > spacing * 0.05:
-        pts.append((x2, y2))
-
-    return pts

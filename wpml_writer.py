@@ -8,7 +8,15 @@ KMZ structure
   mission.kmz
   └── wpmz/
       ├── template.kml   — mission-level settings (drone model, speed, finish action)
-      └── waylines.wpml  — ordered waypoints with photo-capture actions
+      └── waylines.wpml  — turn-point waypoints with distance-based photo trigger
+
+Photo triggering strategy
+-------------------------
+Waypoints are placed only at flight-line turn points (line endpoints).
+The camera is fired automatically every `shot_spacing_m` metres along the
+entire route via a single multipleDistance action group spanning all waypoints.
+A gimbalRotate action at waypoint 0 sets the camera to nadir (-90°) before
+the mission begins.
 
 WPML namespace : http://www.dji.com/wpmz/1.0.6
 Tested against : DJI Mini 3, Mini 3 Pro, Mini 4 Pro
@@ -45,19 +53,21 @@ _HEIGHT_MODE = {
 # ── Public API ─────────────────────────────────────────────────────────────
 
 def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
-              finish_action_label, altitude_mode_label, mission_name='FlyPath Mission'):
+              finish_action_label, altitude_mode_label, shot_spacing_m,
+              mission_name='FlyPath Mission'):
     """
-    Write a DJI WPML KMZ file from the provided waypoints.
+    Write a DJI WPML KMZ file from the provided turn-point waypoints.
 
     Parameters
     ----------
     filepath            : str   — destination .kmz path (will be overwritten)
-    waypoints           : list of (lon, lat) float tuples in WGS84
+    waypoints           : list of (lon, lat) float tuples in WGS84 — turn points only
     drone_name          : str   — key from DRONE_SPECS, e.g. 'DJI Mini 4 Pro'
     altitude_m          : float — AGL flight altitude in metres
     speed_ms            : float — waypoint flight speed in m/s
     finish_action_label : str   — human-readable label from finishActionCombo
     altitude_mode_label : str   — human-readable label from altitudeModeCombo
+    shot_spacing_m      : float — along-track distance between photos in metres
     mission_name        : str   — used in the author/title fields
 
     Raises
@@ -68,10 +78,10 @@ def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
     if not waypoints:
         raise ValueError('No waypoints provided — define a survey area first.')
 
-    drone_enum   = _DRONE_ENUM.get(drone_name, 144)
+    drone_enum    = _DRONE_ENUM.get(drone_name, 144)
     finish_action = _FINISH_ACTION.get(finish_action_label, 'goHome')
-    height_mode  = _HEIGHT_MODE.get(altitude_mode_label, 'relativeToStartPoint')
-    ts_ms        = int(time.time() * 1000)
+    height_mode   = _HEIGHT_MODE.get(altitude_mode_label, 'relativeToStartPoint')
+    ts_ms         = int(time.time() * 1000)
 
     total_dist_m = _path_length(waypoints)
     duration_s   = int(total_dist_m / speed_ms) if speed_ms > 0 else 0
@@ -81,7 +91,7 @@ def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
         speed_ms, total_dist_m, duration_s, ts_ms, mission_name
     )
     waylines_wpml = _build_waylines_wpml(
-        waypoints, altitude_m, speed_ms, height_mode
+        waypoints, altitude_m, speed_ms, height_mode, shot_spacing_m
     )
 
     buf = io.BytesIO()
@@ -129,21 +139,25 @@ def _build_template_kml(drone_enum, finish_action, height_mode,
 '''
 
 
-def _build_waylines_wpml(waypoints, altitude_m, speed_ms, height_mode):
+def _build_waylines_wpml(waypoints, altitude_m, speed_ms, height_mode, shot_spacing_m):
+    last_idx = len(waypoints) - 1
     placemark_blocks = []
 
     for idx, (lon, lat) in enumerate(waypoints):
-        actions = []
-
-        # First waypoint: set gimbal to nadir (-90°) before starting
         if idx == 0:
-            actions.append(_gimbal_action(action_id=0))
-            actions.append(_photo_action(action_id=1))
+            # Waypoint 0: gimbal-rotate action + distance-based photo trigger
+            action_groups = (
+                _gimbal_action_group(group_id=0) +
+                _distance_photo_group(group_id=1,
+                                      start_idx=0,
+                                      end_idx=last_idx,
+                                      spacing_m=shot_spacing_m)
+            )
         else:
-            actions.append(_photo_action(action_id=0))
+            action_groups = ''
 
         placemark_blocks.append(
-            _placemark(idx, lon, lat, altitude_m, speed_ms, actions)
+            _placemark(idx, lon, lat, altitude_m, speed_ms, action_groups)
         )
 
     placemarks = '\n'.join(placemark_blocks)
@@ -166,9 +180,7 @@ def _build_waylines_wpml(waypoints, altitude_m, speed_ms, height_mode):
 
 # ── Element helpers ────────────────────────────────────────────────────────
 
-def _placemark(idx, lon, lat, altitude_m, speed_ms, action_xml_list):
-    action_group_id = idx
-    action_xml = '\n'.join(action_xml_list)
+def _placemark(idx, lon, lat, altitude_m, speed_ms, action_groups_xml):
     return f'''      <Placemark>
         <Point>
           <coordinates>{lon:.8f},{lat:.8f},0</coordinates>
@@ -183,34 +195,21 @@ def _placemark(idx, lon, lat, altitude_m, speed_ms, action_xml_list):
           <wpml:waypointTurnMode>toPointAndStopWithContinuityCurvature</wpml:waypointTurnMode>
           <wpml:waypointTurnDampingDist>0</wpml:waypointTurnDampingDist>
         </wpml:waypointTurnParam>
-        <wpml:actionGroup>
-          <wpml:actionGroupId>{action_group_id}</wpml:actionGroupId>
-          <wpml:actionGroupStartIndex>{idx}</wpml:actionGroupStartIndex>
-          <wpml:actionGroupEndIndex>{idx}</wpml:actionGroupEndIndex>
+{action_groups_xml}      </Placemark>'''
+
+
+def _gimbal_action_group(group_id):
+    """Action group: set gimbal to nadir at waypoint 0 (reachPoint trigger)."""
+    return f'''        <wpml:actionGroup>
+          <wpml:actionGroupId>{group_id}</wpml:actionGroupId>
+          <wpml:actionGroupStartIndex>0</wpml:actionGroupStartIndex>
+          <wpml:actionGroupEndIndex>0</wpml:actionGroupEndIndex>
           <wpml:actionGroupMode>sequence</wpml:actionGroupMode>
           <wpml:actionTrigger>
             <wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>
           </wpml:actionTrigger>
-{action_xml}
-        </wpml:actionGroup>
-      </Placemark>'''
-
-
-def _photo_action(action_id):
-    return f'''          <wpml:action>
-            <wpml:actionId>{action_id}</wpml:actionId>
-            <wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>
-            <wpml:actionActuatorFuncParam>
-              <wpml:fileSuffix>flypath</wpml:fileSuffix>
-              <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
-            </wpml:actionActuatorFuncParam>
-          </wpml:action>'''
-
-
-def _gimbal_action(action_id):
-    """Set camera gimbal to nadir (straight down, -90°)."""
-    return f'''          <wpml:action>
-            <wpml:actionId>{action_id}</wpml:actionId>
+          <wpml:action>
+            <wpml:actionId>0</wpml:actionId>
             <wpml:actionActuatorFunc>gimbalRotate</wpml:actionActuatorFunc>
             <wpml:actionActuatorFuncParam>
               <wpml:gimbalHeadingYawBase>aircraft</wpml:gimbalHeadingYawBase>
@@ -225,17 +224,42 @@ def _gimbal_action(action_id):
               <wpml:gimbalRotateTime>0</wpml:gimbalRotateTime>
               <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
             </wpml:actionActuatorFuncParam>
-          </wpml:action>'''
+          </wpml:action>
+        </wpml:actionGroup>
+'''
+
+
+def _distance_photo_group(group_id, start_idx, end_idx, spacing_m):
+    """Action group: fire camera every spacing_m metres along the entire route."""
+    return f'''        <wpml:actionGroup>
+          <wpml:actionGroupId>{group_id}</wpml:actionGroupId>
+          <wpml:actionGroupStartIndex>{start_idx}</wpml:actionGroupStartIndex>
+          <wpml:actionGroupEndIndex>{end_idx}</wpml:actionGroupEndIndex>
+          <wpml:actionGroupMode>sequence</wpml:actionGroupMode>
+          <wpml:actionTrigger>
+            <wpml:actionTriggerType>multipleDistance</wpml:actionTriggerType>
+            <wpml:actionTriggerParam>{spacing_m:.2f}</wpml:actionTriggerParam>
+          </wpml:actionTrigger>
+          <wpml:action>
+            <wpml:actionId>0</wpml:actionId>
+            <wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>
+            <wpml:actionActuatorFuncParam>
+              <wpml:fileSuffix>flypath</wpml:fileSuffix>
+              <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
+            </wpml:actionActuatorFuncParam>
+          </wpml:action>
+        </wpml:actionGroup>
+'''
 
 
 # ── Utilities ──────────────────────────────────────────────────────────────
 
 def _path_length(waypoints):
-    """Total great-circle path length in metres (approximated as flat for short paths)."""
+    """Total great-circle path length in metres."""
     if len(waypoints) < 2:
         return 0.0
     total = 0.0
-    R = 6_371_000.0   # Earth radius in metres
+    R = 6_371_000.0
     for (lon1, lat1), (lon2, lat2) in zip(waypoints, waypoints[1:]):
         dlat = math.radians(lat2 - lat1)
         dlon = math.radians(lon2 - lon1)
