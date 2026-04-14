@@ -39,11 +39,13 @@ Developed and maintained by [Dronnix](https://www.dronnix.com) — a drone mappi
 
 | Requirement | Details |
 |---|---|
-| Operating System | Windows 10 / 11 |
+| Operating System | ✅ Windows 10 / 11 |
 | QGIS | 3.16 or later |
 | Python | 3.9+ (bundled with QGIS) |
 | Drone | DJI Mini 3 Pro or DJI Mini 4 Pro |
 | Controller | DJI RC2 (for direct USB export) |
+
+> 🐧 Linux and macOS support is planned for a future release.
 
 ---
 
@@ -197,7 +199,7 @@ FlyPath/
 
 ## Known Limitations
 
-- Windows only — direct RC export uses PowerShell Shell.Application for MTP device access
+- ⚠️ Tested and verified on Windows 10 / 11 only — Linux and macOS support is planned for a future release
 - Direct RC export requires a DJI RC2 connected via USB with at least one existing mission
 - DJI Mini 3 Pro droneEnumValue (`97`) is community-verified — not confirmed from a native mission file
 - 2D grid missions only — no terrain following, 3D facade, or orbit missions
