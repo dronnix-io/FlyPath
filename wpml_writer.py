@@ -26,7 +26,6 @@ import zipfile
 
 # ── DJI drone enum values (verified from native RC2 mission files) ─────────
 _DRONE_ENUM = {
-    'DJI Mini 3':     97,   # community-verified
     'DJI Mini 3 Pro': 97,   # community-verified
     'DJI Mini 4 Pro': 68,   # verified from native RC2 mission dump
 }
