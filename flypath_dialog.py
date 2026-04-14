@@ -1,5 +1,6 @@
 import math
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -8,11 +9,11 @@ from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QGroupBox, QScrollArea, QFrame,
     QLabel, QLineEdit, QPushButton, QComboBox,
-    QSpinBox, QDoubleSpinBox, QSizePolicy,
+    QSpinBox, QDoubleSpinBox,
     QMessageBox, QFileDialog,
 )
-from qgis.PyQt.QtCore import Qt, QObject, QEvent, QSettings
-from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtCore import Qt, QObject, QEvent, QSettings, QVariant
+from qgis.PyQt.QtGui import QColor, QFont
 
 from qgis.core import (
     QgsProject,
@@ -31,8 +32,6 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
 )
-from qgis.PyQt.QtGui import QColor, QFont
-
 from .map_tools import PolygonDrawTool
 from .grid_planner import generate_flight_grid, find_optimal_direction
 from .wpml_writer import write_kmz
@@ -332,12 +331,6 @@ class FlyPathDialog(QWidget):
             'and embedded as metadata inside the exported file.')
         form.addRow('Name', self.missionNameEdit)
 
-        self.missionTypeCombo = QComboBox()
-        self._tip(self.missionTypeCombo,
-            'Type of survey to fly. '
-            '2D Grid (Orthomosaic): parallel flight lines for aerial photo mapping.')
-        form.addRow('Mission Type', self.missionTypeCombo)
-
         self.droneModelCombo = QComboBox()
         self._tip(self.droneModelCombo,
             'Your drone model — determines camera sensor specs, '
@@ -551,12 +544,6 @@ class FlyPathDialog(QWidget):
             'MSL: altitude measured from sea level — use over varying terrain with an accurate DEM.')
         form.addRow('Altitude Mode', self.altitudeModeCombo)
 
-        self.startPointCombo = QComboBox()
-        self._tip(self.startPointCombo,
-            'First waypoint: drone flies to the first grid point regardless of takeoff location. '
-            'Closest to takeoff: starts from the grid waypoint nearest the takeoff point.')
-        form.addRow('Start Point', self.startPointCombo)
-
         self.finishActionCombo = QComboBox()
         self._tip(self.finishActionCombo,
             'What the drone does after the last waypoint. '
@@ -666,10 +653,6 @@ class FlyPathDialog(QWidget):
     # ── Combo population ──────────────────────────────────────────────────
 
     def _setup_combos(self):
-        self.missionTypeCombo.addItems([
-            '2D Grid (Orthomosaic)',
-        ])
-
         self.droneModelCombo.addItems(list(DRONE_SPECS.keys()))
         self.droneModelCombo.setCurrentText('DJI Mini 4 Pro')
 
@@ -678,10 +661,6 @@ class FlyPathDialog(QWidget):
         self.altitudeModeCombo.addItems([
             'AGL  (Relative to takeoff)',
             'MSL  (Absolute)',
-        ])
-        self.startPointCombo.addItems([
-            'First waypoint',
-            'Closest to takeoff point',
         ])
         self.finishActionCombo.addItems([
             'Return to Home',
@@ -1037,7 +1016,6 @@ class FlyPathDialog(QWidget):
     @staticmethod
     def _guess_name_field(layer):
         """Return the first text-like field name, or None."""
-        from qgis.PyQt.QtCore import QVariant
         for field in layer.fields():
             if field.type() in (QVariant.String,):
                 return field.name()
@@ -1453,16 +1431,24 @@ class FlyPathDialog(QWidget):
                                     'FlyPath will save a KMZ to your PC and remind '
                                     'you to copy it to the RC manually.')
 
+    # DJI mission UUID folder format: 8-4-4-4-12 hex characters
+    _UUID_RE = re.compile(
+        r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}'
+        r'-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    )
+
     def _latest_mission_kmz(self, rc_waypoint_dir):
         """
         Find the KMZ file inside the most recently modified UUID folder
         in the RC waypoint directory.  Returns the KMZ filepath or None.
+        Only considers folders whose names match the DJI UUID format.
         """
         try:
             folders = [
                 os.path.join(rc_waypoint_dir, d)
                 for d in os.listdir(rc_waypoint_dir)
-                if os.path.isdir(os.path.join(rc_waypoint_dir, d))
+                if (os.path.isdir(os.path.join(rc_waypoint_dir, d)) and
+                    self._UUID_RE.match(d))
             ]
             if not folders:
                 return None
