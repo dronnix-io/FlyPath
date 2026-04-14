@@ -6,11 +6,11 @@
   <text x="64" y="52"
         font-family="'Segoe UI', Arial, sans-serif"
         font-size="42" font-weight="bold"
-        fill="#27AE60" text-anchor="middle">Fly</text>
+        fill="#2D6DB5" text-anchor="middle">Fly</text>
 
   <!-- Solid green underline -->
   <line x1="14" y1="62" x2="114" y2="62"
-        stroke="#27AE60" stroke-width="3" stroke-linecap="round"/>
+        stroke="#2D6DB5" stroke-width="3" stroke-linecap="round"/>
 
   <!-- "Path" in orange -->
   <text x="64" y="104"
