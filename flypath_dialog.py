@@ -1620,9 +1620,11 @@ class FlyPathDialog(QWidget):
                 fh.write(
                     _NAV +
                     '# $folder is now the waypoint folder\n'
+                    '# Only consider folders whose name matches the DJI UUID format\n'
+                    '$uuidPattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"\n'
                     '$latest = $null; $latestDate = [DateTime]::MinValue\n'
                     'foreach ($item in $folder.Items()) {\n'
-                    '    if ($item.IsFolder -and $item.ModifyDate -gt $latestDate) {\n'
+                    '    if ($item.IsFolder -and $item.Name -match $uuidPattern -and $item.ModifyDate -gt $latestDate) {\n'
                     '        $latestDate = $item.ModifyDate; $latest = $item\n'
                     '    }\n'
                     '}\n'
@@ -1650,9 +1652,10 @@ class FlyPathDialog(QWidget):
                 )
             if r.returncode == 2 or not r.stdout.strip():
                 return False, (
-                    'No mission folders found on the RC.\n\n'
-                    'Open DJI Fly on the RC, create any waypoint mission '
-                    '(even a 3-point dummy), then export again.'
+                    'No valid mission folder found on the RC.\n\n'
+                    'Open DJI Fly on the RC, create a waypoint mission '
+                    '(even a 3-point dummy), then export again.\n\n'
+                    'FlyPath only replaces folders with a valid DJI UUID name.'
                 )
             uuid_name = r.stdout.strip().splitlines()[0].strip()
 
