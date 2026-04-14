@@ -20,5 +20,5 @@ tags=drone, UAV, mapping, orthomosaic, DJI, mission planning, WPML, KMZ
 homepage=https://github.com/dronnix-io/FlyPath
 category=Plugins
 icon=icon.png
-experimental=True
+experimental=False
 deprecated=False
