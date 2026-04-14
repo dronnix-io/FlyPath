@@ -1108,8 +1108,8 @@ class FlyPathDialog(QWidget):
         layer.dataProvider().addFeatures([feat])
 
         symbol = QgsFillSymbol.createSimple({
-            'color': '45,109,181,50',
-            'outline_color': '#2D6DB5',
+            'color': '240,165,0,50',
+            'outline_color': '#F0A500',
             'outline_width': '0.8',
             'outline_style': 'dash',
         })
@@ -1312,7 +1312,7 @@ class FlyPathDialog(QWidget):
         dp.addFeatures([feat])
 
         line_sym = QgsLineSymbol.createSimple({
-            'color': '#2D6DB5', 'width': '0.7',
+            'color': '#27AE60', 'width': '0.8',
             'capstyle': 'round', 'joinstyle': 'round',
         })
         line_layer.renderer().setSymbol(line_sym)
@@ -1343,9 +1343,9 @@ class FlyPathDialog(QWidget):
         # Rule-based renderer: start=green, end=amber, mid=white/blue
         root = QgsRuleBasedRenderer.Rule(None)
         for expr, color, border, size, label in [
-            ('"wp_type" = \'start\'', '#40C040', 'white',   '4.0', 'Start'),
-            ('"wp_type" = \'end\'',   '#F0A500', 'white',   '4.0', 'End'),
-            ('"wp_type" = \'mid\'',   'white',   '#2D6DB5', '2.8', 'Waypoint'),
+            ('"wp_type" = \'start\'', '#27AE60', 'white',   '5.5', 'Start'),
+            ('"wp_type" = \'end\'',   '#F0A500', 'white',   '5.5', 'End'),
+            ('"wp_type" = \'mid\'',   'white',   '#27AE60', '4.0', 'Waypoint'),
         ]:
             sym = QgsMarkerSymbol.createSimple({
                 'name': 'circle', 'color': color,

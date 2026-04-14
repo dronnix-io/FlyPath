@@ -34,8 +34,8 @@ class PolygonDrawTool(QgsMapTool):
 
         # Single polygon rubber band — Qt auto-closes it back to the first point
         self._band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
-        self._band.setColor(QColor(45, 109, 181, 50))       # blue semi-fill
-        self._band.setStrokeColor(QColor(45, 109, 181, 220))
+        self._band.setColor(QColor(240, 165, 0, 50))        # orange semi-fill
+        self._band.setStrokeColor(QColor(240, 165, 0, 220))
         self._band.setWidth(2)
         self._band.setLineStyle(Qt.DashLine)
 
