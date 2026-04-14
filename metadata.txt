@@ -12,12 +12,12 @@ about=FlyPath is a QGIS plugin for planning autonomous drone mapping missions an
     Draw your survey area on the map, set flight altitude and overlap, preview
     the flight path, and export a ready-to-fly mission file.
 
-tracker=https://github.com/salar/FlyPath/issues
-repository=https://github.com/salar/FlyPath
+tracker=https://github.com/dronnix-io/FlyPath/issues
+repository=https://github.com/dronnix-io/FlyPath
 
 tags=drone, UAV, mapping, orthomosaic, DJI, mission planning, WPML, KMZ
 
-homepage=https://github.com/salar/FlyPath
+homepage=https://github.com/dronnix-io/FlyPath
 category=Plugins
 icon=icon.png
 experimental=True
