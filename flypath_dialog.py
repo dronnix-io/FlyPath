@@ -1,5 +1,8 @@
 import math
 import os
+import shutil
+import subprocess
+import tempfile
 
 from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
@@ -37,16 +40,6 @@ from .wpml_writer import write_kmz
 
 # ── Drone / camera specifications ─────────────────────────────────────────
 DRONE_SPECS = {
-    'DJI Mini 3': {
-        'sensor_width_mm':  9.6,
-        'sensor_height_mm': 7.2,
-        'focal_length_mm':  6.9,
-        'image_width_px':   4000,
-        'image_height_px':  3000,
-        'max_speed_ms':     16.0,
-        'battery_time_min': 38,
-        'info': '1/1.3" CMOS  ·  12 MP  ·  24 mm equiv',
-    },
     'DJI Mini 3 Pro': {
         'sensor_width_mm':  9.6,
         'sensor_height_mm': 7.2,
@@ -196,6 +189,12 @@ QPushButton#rcPathBtn {
     border-radius: 3px;
 }
 QPushButton#rcPathBtn:hover { background-color: #4A4D55; }
+QPushButton#rcBrowseBtn {
+    background-color: #2A3A4A; color: #7FB3E8;
+    font-weight: normal; font-size: 10px; padding: 3px 6px;
+    border-radius: 3px; border: 1px solid #3A5A7A;
+}
+QPushButton#rcBrowseBtn:hover { background-color: #354A5E; }
 QLabel#infoBar {
     color: #7FB3E8;
     font-size: 10px;
@@ -621,12 +620,20 @@ class FlyPathDialog(QWidget):
             'Path to the waypoint folder on your DJI RC. '
             'Paste it here once — FlyPath will auto-replace the latest mission on export.')
 
+        self.rcBrowseBtn = QPushButton('Browse…')
+        self.rcBrowseBtn.setObjectName('rcBrowseBtn')
+        self.rcBrowseBtn.setFixedWidth(58)
+        self._tip(self.rcBrowseBtn,
+            'Open File Explorer at "This PC" so you can navigate to the DJI RC, '
+            'copy the waypoint folder path from the address bar, and paste it here.')
+
         self.rcPathBtn = QPushButton('Set')
         self.rcPathBtn.setObjectName('rcPathBtn')
         self.rcPathBtn.setFixedWidth(36)
         self._tip(self.rcPathBtn, 'Save the RC waypoint folder path.')
 
         rc_layout.addWidget(self.rcPathEdit)
+        rc_layout.addWidget(self.rcBrowseBtn)
         rc_layout.addWidget(self.rcPathBtn)
         layout.addWidget(rc_row)
 
@@ -716,6 +723,7 @@ class FlyPathDialog(QWidget):
         self.layerCombo.currentIndexChanged.connect(self._on_layer_changed)
         self.featureCombo.currentIndexChanged.connect(self._on_feature_changed)
         self.useSelectionBtn.clicked.connect(self._on_use_qgis_selection)
+        self.rcBrowseBtn.clicked.connect(self._on_browse_rc_path)
         self.rcPathBtn.clicked.connect(self._on_save_rc_path)
         self.drawPolygonBtn.clicked.connect(self._on_draw_polygon)
         self.removePolygonBtn.clicked.connect(self._on_remove_drawn_polygon)
@@ -1390,20 +1398,60 @@ class FlyPathDialog(QWidget):
 
     # ── Export ────────────────────────────────────────────────────────────
 
+    # Standard DJI waypoint subpath on the RC internal storage
+    _DJI_WAYPOINT_SUBPATH = 'Android/data/dji.go.v5/files/waypoint'
+
+    def _on_browse_rc_path(self):
+        """
+        Open File Explorer at 'This PC' so the user can navigate to the DJI RC,
+        copy the waypoint folder path from the address bar, and paste it here.
+        MTP devices like DJI RC 2 only appear in Windows Explorer — they cannot
+        be accessed via a standard file dialog.
+        """
+        # ::{20D04FE0-3AEA-1069-A2D8-08002B30309D} is the CLSID for "This PC"
+        explorer_exe = os.path.join(
+            os.environ.get('SystemRoot', r'C:\Windows'), 'explorer.exe'
+        )
+        try:
+            subprocess.Popen(
+                [explorer_exe, '::{20D04FE0-3AEA-1069-A2D8-08002B30309D}']
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, 'Could Not Open Explorer',
+                                f'Failed to open File Explorer:\n{exc}')
+            return
+
+        QMessageBox.information(
+            self, 'Open File Explorer',
+            'File Explorer has been opened at "This PC".\n\n'
+            'Steps:\n'
+            '  1. Navigate to your DJI RC:\n'
+            '     DJI RC 2 \u203a Internal shared storage\n'
+            '     \u203a Android \u203a data \u203a dji.go.v5 \u203a files \u203a waypoint\n\n'
+            '  2. Click the address bar at the top of Explorer\n'
+            '     to reveal and select the full path.\n\n'
+            '  3. Copy it (Ctrl+C) and paste it into the\n'
+            '     RC path field, then click Set.'
+        )
+
     def _on_save_rc_path(self):
         path = self.rcPathEdit.text().strip()
         QSettings('FlyPath', 'FlyPath').setValue('rc_waypoint_dir', path)
-        if path and os.path.isdir(path):
-            QMessageBox.information(self, 'RC Path Saved',
-                                    f'RC waypoint folder set to:\n{path}')
-        elif path:
-            QMessageBox.warning(self, 'Path Not Found',
-                                f'The folder was not found:\n{path}\n\n'
-                                'Make sure the RC is connected via USB '
-                                'and the path is correct.')
-        else:
+        if not path:
             QMessageBox.information(self, 'RC Path Cleared',
                                     'RC waypoint folder path has been cleared.')
+        elif os.path.isdir(path):
+            QMessageBox.information(self, 'RC Path Saved',
+                                    f'RC waypoint folder set to:\n{path}\n\n'
+                                    'FlyPath will auto-replace the latest mission on export.')
+        else:
+            # MTP/shell paths (e.g. "This PC\DJI RC 2\...") are not accessible
+            # via Python file I/O — save as reference only.
+            QMessageBox.information(self, 'RC Path Saved',
+                                    f'Path saved as reference:\n{path}\n\n'
+                                    'This looks like an MTP device path. On export, '
+                                    'FlyPath will save a KMZ to your PC and remind '
+                                    'you to copy it to the RC manually.')
 
     def _latest_mission_kmz(self, rc_waypoint_dir):
         """
@@ -1430,8 +1478,37 @@ class FlyPathDialog(QWidget):
             return
         mission = self.missionNameEdit.text().strip() or 'FlyPath Mission'
 
-        # ── Try auto-replace on RC if path is configured ──────────────────
-        rc_dir   = self.rcPathEdit.text().strip()
+        # ── Resolve waypoints first (needed for all export paths) ─────────
+        if self._waypoints and self._shot_spacing_m:
+            waypoints      = self._waypoints
+            shot_spacing_m = self._shot_spacing_m
+        else:
+            result = self._generate_waypoints()
+            if not result:
+                QMessageBox.warning(self, 'No Waypoints',
+                                    'The grid produced no waypoints.')
+                return
+            waypoints, shot_spacing_m = result
+
+        rc_dir = self.rcPathEdit.text().strip()
+
+        # ── MTP device path (e.g. "This PC\DJI RC 2\...") ─────────────────
+        if rc_dir and not os.path.isdir(rc_dir):
+            ok, detail = self._export_to_mtp_rc(rc_dir, mission,
+                                                 waypoints, shot_spacing_m)
+            if ok:
+                QMessageBox.information(
+                    self, 'Exported to RC',
+                    f'Mission: {mission}\n'
+                    f'Waypoints: {len(waypoints):,}  ·  '
+                    f'Interval: {shot_spacing_m:.1f} m\n\n'
+                    f'Replaced mission on RC:\n{detail}'
+                )
+            else:
+                QMessageBox.critical(self, 'RC Export Failed', detail)
+            return
+
+        # ── Real filesystem path — auto-replace on RC ──────────────────────
         filepath = None
         if rc_dir and os.path.isdir(rc_dir):
             kmz = self._latest_mission_kmz(rc_dir)
@@ -1465,17 +1542,6 @@ class FlyPathDialog(QWidget):
         if not filepath:
             return
 
-        if self._waypoints and self._shot_spacing_m:
-            waypoints      = self._waypoints
-            shot_spacing_m = self._shot_spacing_m
-        else:
-            result = self._generate_waypoints()
-            if not result:
-                QMessageBox.warning(self, 'No Waypoints',
-                                    'The grid produced no waypoints.')
-                return
-            waypoints, shot_spacing_m = result
-
         try:
             write_kmz(
                 filepath=filepath,
@@ -1497,6 +1563,162 @@ class FlyPathDialog(QWidget):
             )
         except Exception as exc:
             QMessageBox.critical(self, 'Export Failed', str(exc))
+
+    def _export_to_mtp_rc(self, rc_dir, mission, waypoints, shot_spacing_m):
+        """
+        Export the KMZ directly to a DJI RC connected as an MTP device.
+
+        Shell.Namespace() cannot resolve 'This PC\\...' paths directly.
+        Instead we navigate step-by-step from the 'This PC' CLSID using
+        GetFolder, which works with MTP virtual filesystem items.
+
+        Returns (success: bool, detail: str)
+          success=True  → detail is the UUID that was replaced
+          success=False → detail is a human-readable error message
+        """
+        ps_exe = os.path.join(
+            os.environ.get('SystemRoot', r'C:\Windows'),
+            r'System32\WindowsPowerShell\v1.0\powershell.exe'
+        )
+
+        # Parse path components, stripping 'This PC\' prefix if present
+        rc_norm = rc_dir.replace('/', '\\')
+        if rc_norm.lower().startswith('this pc\\'):
+            rc_norm = rc_norm[len('this pc\\'):]
+        parts = [p for p in rc_norm.split('\\') if p]
+        # PowerShell array literal, e.g. @('DJI RC 2', 'Internal shared storage', ...)
+        ps_parts = ', '.join("'" + p.replace("'", "''") + "'" for p in parts)
+
+        # Navigation helper embedded in every script — walks the shell tree
+        # via GetFolder instead of Namespace(path), which MTP requires.
+        _NAV = (
+            '$shell = New-Object -ComObject Shell.Application\n'
+            "$folder = $shell.Namespace('::{20D04FE0-3AEA-1069-A2D8-08002B30309D}')\n"
+            '$parts = @(' + ps_parts + ')\n'
+            'foreach ($part in $parts) {\n'
+            '    $found = $null\n'
+            '    foreach ($item in $folder.Items()) {\n'
+            '        if ($item.Name -eq $part) { $found = $item; break }\n'
+            '    }\n'
+            '    if (-not $found) {\n'
+            '        foreach ($item in $folder.Items()) {\n'
+            '            if ($item.Name -like ("*" + $part + "*")) { $found = $item; break }\n'
+            '        }\n'
+            '    }\n'
+            '    if (-not $found) { Write-Error ("Not found: " + $part); exit 1 }\n'
+            '    $next = $found.GetFolder\n'
+            '    if (-not $next) { Write-Error ("Cannot open: " + $part); exit 1 }\n'
+            '    $folder = $next\n'
+            '}\n'
+        )
+
+        tmp_dir = tempfile.mkdtemp(prefix='flypath_')
+        try:
+            # ── Script 1: navigate to waypoint folder, return UUID ─────────
+            find_ps = os.path.join(tmp_dir, 'find_uuid.ps1')
+            with open(find_ps, 'w', encoding='utf-8') as fh:
+                fh.write(
+                    _NAV +
+                    '# $folder is now the waypoint folder\n'
+                    '$latest = $null; $latestDate = [DateTime]::MinValue\n'
+                    'foreach ($item in $folder.Items()) {\n'
+                    '    if ($item.IsFolder -and $item.ModifyDate -gt $latestDate) {\n'
+                    '        $latestDate = $item.ModifyDate; $latest = $item\n'
+                    '    }\n'
+                    '}\n'
+                    'if (-not $latest) { exit 2 }\n'
+                    'Write-Output $latest.Name\n'
+                )
+
+            try:
+                r = subprocess.run(
+                    [ps_exe, '-NoProfile', '-NonInteractive',
+                     '-ExecutionPolicy', 'Bypass', '-File', find_ps],
+                    capture_output=True, text=True, timeout=30
+                )
+            except subprocess.TimeoutExpired:
+                return False, 'Timed out reading the RC waypoint folder.\nCheck the RC is connected via USB.'
+            except Exception as exc:
+                return False, f'PowerShell error: {exc}'
+
+            if r.returncode == 1:
+                return False, (
+                    'Could not navigate to the RC waypoint folder.\n\n'
+                    f'Path used:\n{rc_dir}\n\n'
+                    'Check that the RC is connected via USB and the path is correct.\n\n'
+                    f'Details:\n{r.stderr.strip()}'
+                )
+            if r.returncode == 2 or not r.stdout.strip():
+                return False, (
+                    'No mission folders found on the RC.\n\n'
+                    'Open DJI Fly on the RC, create any waypoint mission '
+                    '(even a 3-point dummy), then export again.'
+                )
+            uuid_name = r.stdout.strip().splitlines()[0].strip()
+
+            # ── Write KMZ to temp file named <UUID>.kmz ───────────────────
+            tmp_kmz = os.path.join(tmp_dir, uuid_name + '.kmz')
+            try:
+                write_kmz(
+                    filepath=tmp_kmz,
+                    waypoints=waypoints,
+                    drone_name=self.droneModelCombo.currentText(),
+                    altitude_m=self.altitudeSpin.value(),
+                    speed_ms=self.speedSpin.value(),
+                    finish_action_label=self.finishActionCombo.currentText(),
+                    altitude_mode_label=self.altitudeModeCombo.currentText(),
+                    shot_spacing_m=shot_spacing_m,
+                    mission_name=mission,
+                )
+            except Exception as exc:
+                return False, f'Could not write KMZ: {exc}'
+
+            # ── Script 2: copy KMZ into UUID subfolder on RC, wait ────────
+            tmp_kmz_ps = tmp_kmz.replace('/', '\\')
+            copy_ps = os.path.join(tmp_dir, 'copy_kmz.ps1')
+            with open(copy_ps, 'w', encoding='utf-8') as fh:
+                fh.write(
+                    _NAV +
+                    '# Navigate into the UUID subfolder\n'
+                    "$uuid = '" + uuid_name.replace("'", "''") + "'\n"
+                    '$uuidItem = $null\n'
+                    'foreach ($item in $folder.Items()) {\n'
+                    '    if ($item.Name -eq $uuid) { $uuidItem = $item; break }\n'
+                    '}\n'
+                    'if (-not $uuidItem) { Write-Error "UUID folder not found on RC"; exit 3 }\n'
+                    '$uuidFolder = $uuidItem.GetFolder\n'
+                    'if (-not $uuidFolder) { Write-Error "Cannot open UUID folder"; exit 4 }\n'
+                    '# Copy with 0x10 (no confirm only — keep progress UI so Windows\n'
+                    '# Shell actually drives the MTP transfer to completion).\n'
+                    "$uuidFolder.CopyHere('" + tmp_kmz_ps.replace("'", "''") + "', 0x10)\n"
+                    '# CopyHere is async — sleep to let the transfer finish before\n'
+                    '# PowerShell exits and tears down the COM apartment.\n'
+                    'Start-Sleep -Seconds 8\n'
+                    'Write-Output "OK"\n'
+                )
+
+            try:
+                r2 = subprocess.run(
+                    [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
+                     '-ExecutionPolicy', 'Bypass', '-File', copy_ps],
+                    capture_output=True, text=True, timeout=60
+                )
+            except subprocess.TimeoutExpired:
+                return False, 'Copy to RC timed out. Check the RC is still connected.'
+            except Exception as exc:
+                return False, f'Copy error: {exc}'
+
+            if r2.returncode == 0 and 'OK' in r2.stdout:
+                return True, uuid_name
+            if 'TIMEOUT' in r2.stdout:
+                return False, 'Copy to RC timed out waiting for the file to appear.'
+            return False, (
+                f'Copy to RC failed (exit {r2.returncode}).\n'
+                f'{r2.stderr.strip() or r2.stdout.strip()}'
+            )
+
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # ── Helpers ───────────────────────────────────────────────────────────
 
