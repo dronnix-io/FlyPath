@@ -618,27 +618,29 @@ class FlyPathDialog(QWidget):
 
         scroll_layout.addWidget(self._build_mission_group())
         scroll_layout.addWidget(self._build_area_group())
-        scroll_layout.addWidget(self._build_flight_group())
 
-        # Camera Settings + Safety Actions (short) sit side by side with
-        # Statistics, instead of stacking under it, to save vertical space.
-        two_col = QHBoxLayout()
-        two_col.setSpacing(8)
+        # Flight Parameters (left) beside Camera Settings + Safety Actions
+        # (right), which together are about the same height.
+        params_row = QHBoxLayout()
+        params_row.setSpacing(8)
 
-        left_col = QVBoxLayout()
-        left_col.setSpacing(8)
-        left_col.addWidget(self._build_camera_group())
-        left_col.addWidget(self._build_advanced_group())
-        left_col.addStretch()
+        flight_col = QVBoxLayout()
+        flight_col.setSpacing(8)
+        flight_col.addWidget(self._build_flight_group())
+        flight_col.addStretch()
 
-        right_col = QVBoxLayout()
-        right_col.setSpacing(8)
-        right_col.addWidget(self._build_stats_group())
-        right_col.addStretch()
+        cam_col = QVBoxLayout()
+        cam_col.setSpacing(8)
+        cam_col.addWidget(self._build_camera_group())
+        cam_col.addWidget(self._build_advanced_group())
+        cam_col.addStretch()
 
-        two_col.addLayout(left_col, 1)
-        two_col.addLayout(right_col, 1)
-        scroll_layout.addLayout(two_col)
+        params_row.addLayout(flight_col, 1)
+        params_row.addLayout(cam_col, 1)
+        scroll_layout.addLayout(params_row)
+
+        # Statistics full width below, itself split into two columns.
+        scroll_layout.addWidget(self._build_stats_group())
         scroll_layout.addStretch()
 
         scroll.setWidget(content)
@@ -888,32 +890,38 @@ class FlyPathDialog(QWidget):
 
     def _build_stats_group(self):
         group = QGroupBox('Statistics')
-        form  = QFormLayout(group)
-        form.setLabelAlignment(_AlignLeft | _AlignVCenter)
-        form.setSpacing(6)
+        outer = QHBoxLayout(group)
+        outer.setSpacing(14)
 
-        stats = [
+        left_stats = [
             ('flightTimeLabel', 'Flight Time',
              'Estimated total flight duration based on path length and speed. '
              'Does not include takeoff, landing, or battery swap time.'),
             ('distanceLabel',   'Distance',
              'Total distance the drone will fly along all flight lines.'),
-            ('photosLabel',     'Photos',
-             'Estimated number of photos the camera will take during the mission.'),
+            ('coverageLabel',   'Coverage',
+             'Total survey area in hectares as calculated from the polygon.'),
+        ]
+        right_stats = [
             ('linesLabel',      'Flight Lines',
              'Number of parallel flight lines needed to cover the survey area.'),
             ('batteriesLabel',  'Batteries',
              'Estimated number of battery charges needed to complete the mission, '
              'based on the drone\'s rated endurance at the selected speed.'),
-            ('coverageLabel',   'Coverage',
-             'Total survey area in hectares as calculated from the polygon.'),
+            ('photosLabel',     'Photos',
+             'Estimated number of photos the camera will take during the mission.'),
         ]
-        for attr, caption, tip in stats:
-            lbl = QLabel('—')
-            lbl.setObjectName(attr)
-            self._tip(lbl, tip)
-            setattr(self, attr, lbl)
-            form.addRow(caption, lbl)
+        for stats in (left_stats, right_stats):
+            form = QFormLayout()
+            form.setLabelAlignment(_AlignLeft | _AlignVCenter)
+            form.setSpacing(6)
+            for attr, caption, tip in stats:
+                lbl = QLabel('—')
+                lbl.setObjectName(attr)
+                self._tip(lbl, tip)
+                setattr(self, attr, lbl)
+                form.addRow(caption, lbl)
+            outer.addLayout(form, 1)
 
         return group
 
