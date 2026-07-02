@@ -54,7 +54,8 @@ _NS = 'http://www.uav.com/wpmz/1.0.2'
 
 def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
               finish_action_label, rc_lost_action_label,
-              gimbal_pitch=-90, mission_name='FlyPath Mission'):
+              gimbal_pitch=-90, mission_name='FlyPath Mission',
+              create_time_ms=None):
     """
     Write a single DJI-compatible KMZ file at filepath.
 
@@ -73,6 +74,9 @@ def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
     rc_lost_action_label  : str   — human-readable RC lost action label
     gimbal_pitch          : float — gimbal pitch angle in degrees (default -90)
     mission_name          : str   — embedded in mission metadata
+    create_time_ms        : int   — preserve this createTime when replacing an
+                                    existing mission, so its date keeps matching
+                                    DJI Fly (None = use the current time)
 
     Raises
     ------
@@ -88,7 +92,7 @@ def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
     exit_on_rc_lost, rc_lost_action = _RC_LOST_ACTION.get(
         rc_lost_action_label, ('executeLostAction', 'goBack')
     )
-    ts_ms         = int(time.time() * 1000)
+    ts_ms         = int(create_time_ms) if create_time_ms else int(time.time() * 1000)
 
     mission_config = _mission_config_xml(drone_enum, finish_action, speed_ms,
                                          exit_on_rc_lost, rc_lost_action)

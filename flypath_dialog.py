@@ -2496,7 +2496,7 @@ class FlyPathDialog(QWidget):
         except Exception:
             pass
 
-    def _write_mission_kmz(self, filepath, waypoints, mission):
+    def _write_mission_kmz(self, filepath, waypoints, mission, create_time_ms=None):
         """Write the KMZ file using current UI parameter values."""
         write_kmz(
             filepath=filepath,
@@ -2508,6 +2508,7 @@ class FlyPathDialog(QWidget):
             rc_lost_action_label=self.rcLostActionCombo.currentText(),
             gimbal_pitch=self.gimbalAngleSpin.value(),
             mission_name=mission,
+            create_time_ms=create_time_ms,
         )
 
     @staticmethod
@@ -2595,12 +2596,15 @@ class FlyPathDialog(QWidget):
         # No extra confirmation dialog: the mission was already chosen in the
         # picker and the Export button names it ("Replace ... on RC").
         label = self._mission_display(target)
+        # Keep the mission's original createTime so its date still matches
+        # DJI Fly (DJI keeps the name; only the waypoints change).
+        create_ms = target.get('create_ms') or None
 
         if os.path.isdir(self._rc_waypoint_path):
             # Manually located folder (SD card / mapped drive / local copy):
             # a plain file write, no MTP transfer needed.
             ok, detail = self._export_to_folder_rc(target['uuid'], mission,
-                                                   waypoints)
+                                                   waypoints, create_ms)
         else:
             # Auto-detected MTP device path: copy over USB via Windows Shell.
             QApplication.setOverrideCursor(_WaitCursor)
@@ -2609,24 +2613,29 @@ class FlyPathDialog(QWidget):
             try:
                 ok, detail = self._export_to_mtp_rc(
                     self._rc_waypoint_path, mission, waypoints, shot_spacing_m,
-                    target_uuid=target['uuid'],
+                    target_uuid=target['uuid'], create_time_ms=create_ms,
                 )
             finally:
                 QApplication.restoreOverrideCursor()
                 self.infoBar.setText(_INFO_IDLE)
 
         if ok:
-            # The mission now holds our new waypoints. Render the preview
-            # straight from them (not via the combo's stored dict) and cache
-            # it under the UUID so the panel updates immediately.
+            # The mission now holds our new waypoints (same date). Update the
+            # dropdown label and preview immediately, keyed by UUID, so nothing
+            # depends on the combo's stored dict or a fresh Auto Detect.
             uuid = target['uuid']
             target['waypoints'] = waypoints
+            target['n_wp'] = len(waypoints)
+            idx = self.rcMissionCombo.currentIndex()
+            if idx >= 0:
+                self.rcMissionCombo.setItemText(idx, self._mission_label(target))
             rendered = self._render_mission_preview(waypoints, uuid)
             if rendered:
                 self._render_cache[uuid] = rendered
             else:
                 self._render_cache.pop(uuid, None)
             self._load_selected_thumbnail()
+            self._update_export_button()
             QMessageBox.information(
                 self, 'Exported to RC',
                 f'Replaced "{label}" on the DJI RC.\n\n'
@@ -2639,7 +2648,7 @@ class FlyPathDialog(QWidget):
         else:
             QMessageBox.critical(self, 'RC Export Failed', detail)
 
-    def _export_to_folder_rc(self, uuid, mission, waypoints):
+    def _export_to_folder_rc(self, uuid, mission, waypoints, create_time_ms=None):
         """Replace a mission inside a real filesystem waypoint folder.
 
         Returns (success: bool, detail: str) matching _export_to_mtp_rc.
@@ -2649,13 +2658,13 @@ class FlyPathDialog(QWidget):
             return False, f'Mission folder not found:\n{folder}'
         kmz = os.path.join(folder, uuid + '.kmz')
         try:
-            self._write_mission_kmz(kmz, waypoints, mission)
+            self._write_mission_kmz(kmz, waypoints, mission, create_time_ms)
         except Exception as exc:
             return False, str(exc)
         return True, uuid
 
     def _export_to_mtp_rc(self, rc_dir, mission, waypoints, shot_spacing_m,
-                          target_uuid=None):
+                          target_uuid=None, create_time_ms=None):
         """
         Export the KMZ directly to a DJI RC connected as an MTP device.
 
@@ -2693,7 +2702,7 @@ class FlyPathDialog(QWidget):
 
             tmp_kmz = os.path.join(tmp_dir, uuid_name + '.kmz')
             try:
-                self._write_mission_kmz(tmp_kmz, waypoints, mission)
+                self._write_mission_kmz(tmp_kmz, waypoints, mission, create_time_ms)
             except Exception as exc:
                 return False, f'Could not write KMZ: {exc}'
 
