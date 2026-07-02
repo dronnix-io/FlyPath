@@ -566,8 +566,8 @@ class FlyPathDialog(QWidget):
         self._shot_spacing_m     = 0.0
         self._rc_waypoint_path   = None   # detected RC waypoint folder display path
         self._thumb_dir          = None   # session cache for pulled RC mission thumbnails
-        self._current_thumb_full = None   # full-res thumbnail path for the zoom viewer
-        self._fresh_preview      = {}     # uuid -> locally rendered preview after a replace
+        self._current_thumb_full = None   # full-res preview path for the zoom viewer
+        self._render_cache       = {}     # uuid -> rendered waypoint preview path
 
         self._build_ui()
         self._setup_combos()
@@ -1066,8 +1066,8 @@ class FlyPathDialog(QWidget):
         self.rcThumbLabel.setMinimumHeight(120)
         self.rcThumbLabel.setWordWrap(True)
         self._tip(self.rcThumbLabel,
-            'Preview of the selected mission, as captured by DJI Fly on the RC. '
-            'Click it to open a larger view you can zoom and pan.')
+            'Flight path of the selected mission, drawn from its waypoints so it '
+            'always matches the RC. Click it to open a larger, zoomable view.')
         v.addWidget(self.rcThumbLabel)
 
         self.rcNote = QLabel(
@@ -1898,68 +1898,46 @@ class FlyPathDialog(QWidget):
         return self._thumb_dir
 
     def _load_selected_thumbnail(self):
-        """Show DJI's map snapshot for the currently selected RC mission."""
+        """Draw a preview of the selected RC mission from its waypoints."""
         self._current_thumb_full = None
         mission = self.rcMissionCombo.currentData()
         if not mission:
             self.rcThumbLabel.setPixmap(QPixmap())
             self.rcThumbLabel.setText('')
             return
-
-        uuid = mission['uuid']
-
-        # After a replace, DJI's on-device thumbnail is stale, so show the
-        # locally rendered preview of the mission we just uploaded instead.
-        rendered = self._fresh_preview.get(uuid)
-        if rendered and os.path.isfile(rendered):
-            self._current_thumb_full = rendered
-            display = rendered
-        else:
-            self.rcThumbLabel.setPixmap(QPixmap())
-            self.rcThumbLabel.setText('Loading preview…')
-            QApplication.setOverrideCursor(_WaitCursor)
-            QApplication.processEvents()
-            try:
-                full = self._pull_thumbnail(uuid)
-            finally:
-                QApplication.restoreOverrideCursor()
-            if not full:
-                self.rcThumbLabel.setPixmap(QPixmap())
-                self.rcThumbLabel.setText('No preview available for this mission')
-                return
-            self._current_thumb_full = full          # full image for the viewer
-            display = self._crop_to_mission(full, uuid)  # centred crop for the panel
-
-        pix = QPixmap(display)
-        if pix.isNull():
-            pix = QPixmap(self._current_thumb_full)
+        path = self._mission_preview_path(mission)
+        self._current_thumb_full = path
+        pix = QPixmap(path) if path else QPixmap()
         if not pix.isNull():
             self.rcThumbLabel.setText('')
             self.rcThumbLabel.setPixmap(
                 pix.scaled(QSize(240, 135), _KeepAspect, _SmoothTrans)
             )
         else:
-            self.rcThumbLabel.setText('No preview available for this mission')
+            self.rcThumbLabel.setPixmap(QPixmap())
+            self.rcThumbLabel.setText('No waypoints to preview')
 
-    def _invalidate_thumb_cache(self, uuid):
-        """Drop cached DJI thumbnails for a mission (they go stale after a replace)."""
-        if not self._thumb_dir:
-            return
-        for name in (uuid + '.jpg', uuid + '.jpeg', uuid + '.png', uuid + '_crop.jpg'):
-            try:
-                os.remove(os.path.join(self._thumb_dir, name))
-            except OSError:
-                pass
+    def _mission_preview_path(self, mission):
+        """Rendered preview of the mission's waypoints, cached per mission UUID."""
+        uuid = mission['uuid']
+        cached = self._render_cache.get(uuid)
+        if cached and os.path.isfile(cached):
+            return cached
+        path = self._render_mission_preview(mission.get('waypoints') or [], uuid)
+        if path:
+            self._render_cache[uuid] = path
+        return path
 
     def _render_mission_preview(self, waypoints, uuid):
         """
-        Draw a preview of the just-uploaded mission from its waypoints, so the
-        picker reflects the new mission immediately (DJI regenerates its own
-        thumbnail only when the mission is reopened in DJI Fly). Returns a path.
+        Draw the mission's flight path from its waypoints. Rendered from the KMZ
+        (the source of truth), so it always matches what is on the RC — unlike
+        DJI's static thumbnail, which is not regenerated after a replace.
+        Returns a local image path, or None when there are no waypoints.
         """
         if not waypoints:
             return None
-        W, H, pad = 800, 450, 34
+        W, H, pad = 1200, 675, 48
         pix = QPixmap(W, H)
         pix.fill(QColor('#EDEAE2'))
         painter = QPainter(pix)
@@ -1981,72 +1959,23 @@ class FlyPathDialog(QWidget):
 
             pts = [to_px(lon, lat) for lon, lat in waypoints]
             pen = QPen(QColor('#2ECC71'))
-            pen.setWidth(3)
+            pen.setWidth(4)
             painter.setPen(pen)
             painter.drawPolyline(QPolygonF(pts))
+            painter.setPen(QColor('#25A05A'))
             painter.setBrush(QColor('#2ECC71'))
             for pt in pts:
-                painter.drawEllipse(pt, 3.5, 3.5)
+                painter.drawEllipse(pt, 5, 5)
             painter.setBrush(QColor(_COLOR_START_MARKER))
-            painter.drawEllipse(pts[0], 6, 6)
+            painter.drawEllipse(pts[0], 8, 8)
             painter.setBrush(QColor(_COLOR_END_MARKER))
-            painter.drawEllipse(pts[-1], 6, 6)
-            painter.setPen(QColor('#5A6270'))
-            painter.drawText(10, H - 12,
-                             f'FlyPath mission just uploaded  ·  {len(waypoints)} waypoints')
+            painter.drawEllipse(pts[-1], 8, 8)
         finally:
             painter.end()
 
-        path = os.path.join(self._thumb_cache_dir(), uuid + '_new.jpg')
+        path = os.path.join(self._thumb_cache_dir(), uuid + '_wp.jpg')
         pix.save(path, 'JPG', 90)
         return path
-
-    def _crop_to_mission(self, path, uuid):
-        """
-        Crop the thumbnail to the flight-path region so the mission fills the
-        preview. Returns the cropped path, or the original if it cannot crop
-        (e.g. Pillow unavailable, or no mission pixels detected).
-        """
-        try:
-            import numpy as np
-            from PIL import Image
-        except Exception:
-            return path
-        dst = os.path.join(self._thumb_cache_dir(), uuid + '_crop.jpg')
-        if os.path.isfile(dst):
-            return dst
-        try:
-            im  = Image.open(path).convert('RGB')
-            arr = np.asarray(im)
-            r = arr[:, :, 0].astype(int)
-            g = arr[:, :, 1].astype(int)
-            b = arr[:, :, 2].astype(int)
-            # Vivid mission green (waypoint markers) and near-black flight lines
-            green = (g > 110) & (g > r + 40) & (g > b + 40)
-            mask  = green | ((r < 60) & (g < 60) & (b < 60))
-            ys, xs = np.where(mask)
-            if len(xs) < 30:
-                ys, xs = np.where(green)
-                if len(xs) < 10:
-                    return path
-            H, W = arr.shape[:2]
-            x0, y0, x1, y1 = int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
-            px = int((x1 - x0) * 0.18) + 5
-            py = int((y1 - y0) * 0.18) + 5
-            x0 -= px; x1 += px; y0 -= py; y1 += py
-            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
-            cw, ch = x1 - x0, y1 - y0
-            aspect = 16.0 / 9.0
-            if cw / ch < aspect:
-                cw = ch * aspect
-            else:
-                ch = cw / aspect
-            nx0 = int(max(0, cx - cw / 2)); ny0 = int(max(0, cy - ch / 2))
-            nx1 = int(min(W, cx + cw / 2)); ny1 = int(min(H, cy + ch / 2))
-            im.crop((nx0, ny0, nx1, ny1)).save(dst, quality=88)
-            return dst
-        except Exception:
-            return path
 
     def _open_thumbnail_viewer(self):
         """Open the full-size, zoomable/pannable view of the selected mission."""
@@ -2057,93 +1986,6 @@ class FlyPathDialog(QWidget):
         if mission:
             title = 'Mission  ' + (mission.get('date_str') or mission['uuid'])
         _ThumbnailViewer(self._current_thumb_full, title, self).exec()
-
-    def _pull_thumbnail(self, uuid):
-        """
-        Return a local path to the mission's DJI map thumbnail
-        (waypoint/map_preview/<uuid>/<uuid>.jpg), or None. Cached per session.
-        """
-        wp = self._rc_waypoint_path
-        if not wp:
-            return None
-        cache = self._thumb_cache_dir()
-        for ext in ('.jpg', '.jpeg', '.png'):
-            cached = os.path.join(cache, uuid + ext)
-            if os.path.isfile(cached):
-                return cached
-
-        # Real filesystem folder (SD card / drive / local copy): read in place.
-        if os.path.isdir(wp):
-            mp = os.path.join(wp, 'map_preview', uuid)
-            if os.path.isdir(mp):
-                for f in os.listdir(mp):
-                    if f.lower().endswith(('.jpg', '.jpeg', '.png')):
-                        return os.path.join(mp, f)
-                cand = os.path.join(mp, uuid)
-                if os.path.isfile(cand):
-                    return cand
-            return None
-
-        # MTP device: copy the thumbnail off silently.
-        ps_exe = os.path.join(
-            os.environ.get('SystemRoot', r'C:\Windows'),
-            r'System32\WindowsPowerShell\v1.0\powershell.exe'
-        )
-        parts = [p for p in wp.replace('/', '\\').split('\\') if p]
-        parts += ['map_preview', uuid]
-        tmp = tempfile.mkdtemp(prefix='flypath_thumb_')
-        try:
-            sp = os.path.join(tmp, 'thumb.ps1')
-            with open(sp, 'w', encoding='utf-8') as fh:
-                fh.write(self._thumb_pull_script(parts, tmp))
-            try:
-                subprocess.run(
-                    [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
-                     '-ExecutionPolicy', 'Bypass', '-File', sp],
-                    capture_output=True, text=True, timeout=30,
-                    creationflags=_NO_WINDOW, startupinfo=_STARTUPINFO
-                )
-            except Exception:
-                return None
-            for f in os.listdir(tmp):
-                if f.lower().endswith(('.jpg', '.jpeg', '.png')):
-                    ext = os.path.splitext(f)[1]
-                    dst = os.path.join(cache, uuid + ext)
-                    shutil.copyfile(os.path.join(tmp, f), dst)
-                    return dst
-            cand = os.path.join(tmp, uuid)
-            if os.path.isfile(cand):
-                dst = os.path.join(cache, uuid + '.jpg')
-                shutil.copyfile(cand, dst)
-                return dst
-            return None
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-
-    @staticmethod
-    def _thumb_pull_script(parts, dest):
-        """PowerShell: navigate to a map_preview/<uuid> folder and copy its image to dest."""
-        arr = ', '.join("'" + p.replace("'", "''") + "'" for p in parts)
-        d = dest.replace("'", "''")
-        return (
-            "$ErrorActionPreference = 'SilentlyContinue'\n"
-            '$shell = New-Object -ComObject Shell.Application\n'
-            "$folder = $shell.Namespace('::{20D04FE0-3AEA-1069-A2D8-08002B30309D}')\n"
-            "$dest = $shell.Namespace('" + d + "')\n"
-            '$parts = @(' + arr + ')\n'
-            'foreach ($p in $parts) {\n'
-            '    $hit = $null\n'
-            '    foreach ($i in $folder.Items()) { if ($i.Name -eq $p) { $hit = $i; break } }\n'
-            '    if (-not $hit) { exit 1 }\n'
-            '    $folder = $hit.GetFolder\n'
-            '    if (-not $folder) { exit 1 }\n'
-            '}\n'
-            # 0x14 = FOF_SILENT | FOF_NOCONFIRMATION (device->local copy is silent)
-            'foreach ($f in $folder.Items()) {\n'
-            '    if (-not $f.IsFolder) { $dest.CopyHere($f, 0x14); Start-Sleep -Milliseconds 2500 }\n'
-            '}\n'
-            'exit 0\n'
-        )
 
     def _set_rc_target(self, path):
         """Record the chosen waypoint folder and show it in the panel."""
@@ -2365,10 +2207,12 @@ class FlyPathDialog(QWidget):
                      for ln in r.stdout.splitlines() if ln.startswith('UUID=')]
             missions = []
             for u in uuids:
-                create_ms, n_wp = self._read_kmz_meta(os.path.join(tmp_dir, u + '.kmz'))
+                create_ms, n_wp, wpts = self._read_kmz_meta(
+                    os.path.join(tmp_dir, u + '.kmz'))
                 missions.append({
                     'uuid': u, 'create_ms': create_ms,
                     'date_str': self._fmt_ms(create_ms), 'n_wp': n_wp,
+                    'waypoints': wpts,
                 })
             missions.sort(key=lambda m: m['create_ms'] or 0, reverse=True)
             return ('ok' if missions else 'no_mission', missions)
@@ -2442,11 +2286,12 @@ class FlyPathDialog(QWidget):
                 if has_mp and d not in preview:
                     continue
                 kmz = os.path.join(full, d + '.kmz')
-                create_ms, n_wp = (self._read_kmz_meta(kmz)
-                                   if os.path.exists(kmz) else (0, 0))
+                create_ms, n_wp, wpts = (self._read_kmz_meta(kmz)
+                                         if os.path.exists(kmz) else (0, 0, []))
                 missions.append({
                     'uuid': d, 'create_ms': create_ms,
                     'date_str': self._fmt_ms(create_ms), 'n_wp': n_wp,
+                    'waypoints': wpts,
                 })
             missions.sort(key=lambda m: m['create_ms'] or 0, reverse=True)
             return ('ok' if missions else 'no_mission', missions)
@@ -2505,12 +2350,13 @@ class FlyPathDialog(QWidget):
             missions = []
             for u in uuids:
                 kmz = os.path.join(tmp_dir, u + '.kmz')
-                create_ms, n_wp = self._read_kmz_meta(kmz)
+                create_ms, n_wp, wpts = self._read_kmz_meta(kmz)
                 missions.append({
                     'uuid': u,
                     'create_ms': create_ms,
                     'date_str': self._fmt_ms(create_ms),
                     'n_wp': n_wp,
+                    'waypoints': wpts,
                 })
             missions.sort(key=lambda m: m['create_ms'] or 0, reverse=True)
             if not missions:
@@ -2605,7 +2451,11 @@ class FlyPathDialog(QWidget):
 
     @staticmethod
     def _read_kmz_meta(kmz_path):
-        """Read (createTime_ms, waypoint_count) from a mission KMZ. Returns (0, 0) on failure."""
+        """
+        Read (createTime_ms, waypoint_count, waypoints) from a mission KMZ.
+        waypoints is a list of (lon, lat) parsed from the wayline Placemarks.
+        Returns (0, 0, []) on failure.
+        """
         try:
             with zipfile.ZipFile(kmz_path) as z:
                 template = z.read('wpmz/template.kml').decode('utf-8', 'replace')
@@ -2616,9 +2466,16 @@ class FlyPathDialog(QWidget):
             m = re.search(r'<wpml:createTime>(\d+)</wpml:createTime>', template)
             create_ms = int(m.group(1)) if m else 0
             n_wp = len(re.findall(r'<wpml:index>', waylines))
-            return create_ms, n_wp
+            waypoints = []
+            for lon, lat in re.findall(
+                    r'<coordinates>\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)', waylines):
+                try:
+                    waypoints.append((float(lon), float(lat)))
+                except ValueError:
+                    pass
+            return create_ms, n_wp, waypoints
         except Exception:
-            return 0, 0
+            return 0, 0, []
 
     @staticmethod
     def _fmt_ms(create_ms):
@@ -2759,12 +2616,9 @@ class FlyPathDialog(QWidget):
                 self.infoBar.setText(_INFO_IDLE)
 
         if ok:
-            # DJI's own thumbnail is now stale; show a fresh preview of the
-            # mission we just uploaded and drop the cached DJI image.
-            self._invalidate_thumb_cache(target['uuid'])
-            self._fresh_preview[target['uuid']] = self._render_mission_preview(
-                waypoints, target['uuid']
-            )
+            # The mission now holds our new waypoints; update its preview.
+            target['waypoints'] = waypoints
+            self._render_cache.pop(target['uuid'], None)
             self._load_selected_thumbnail()
             QMessageBox.information(
                 self, 'Exported to RC',
