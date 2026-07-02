@@ -2616,9 +2616,16 @@ class FlyPathDialog(QWidget):
                 self.infoBar.setText(_INFO_IDLE)
 
         if ok:
-            # The mission now holds our new waypoints; update its preview.
+            # The mission now holds our new waypoints. Render the preview
+            # straight from them (not via the combo's stored dict) and cache
+            # it under the UUID so the panel updates immediately.
+            uuid = target['uuid']
             target['waypoints'] = waypoints
-            self._render_cache.pop(target['uuid'], None)
+            rendered = self._render_mission_preview(waypoints, uuid)
+            if rendered:
+                self._render_cache[uuid] = rendered
+            else:
+                self._render_cache.pop(uuid, None)
             self._load_selected_thumbnail()
             QMessageBox.information(
                 self, 'Exported to RC',
