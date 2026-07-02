@@ -17,9 +17,9 @@ from qgis.PyQt.QtWidgets import (
     QGraphicsView, QGraphicsScene,
 )
 from qgis.PyQt.QtCore import (
-    Qt, QObject, QEvent, QSettings, QVariant, QSize, pyqtSignal,
+    Qt, QObject, QEvent, QSettings, QVariant, QSize, QPointF, pyqtSignal,
 )
-from qgis.PyQt.QtGui import QColor, QFont, QPixmap
+from qgis.PyQt.QtGui import QColor, QFont, QPixmap, QPainter, QPen, QPolygonF
 
 try:
     _AlignLeft    = Qt.AlignmentFlag.AlignLeft
@@ -34,6 +34,7 @@ try:
     _SmoothTrans  = Qt.TransformationMode.SmoothTransformation
     _ScrollHandDrag  = QGraphicsView.DragMode.ScrollHandDrag
     _AnchorUnderMouse = QGraphicsView.ViewportAnchor.AnchorUnderMouse
+    _Antialias    = QPainter.RenderHint.Antialiasing
     _MB_YES       = QMessageBox.StandardButton.Yes
     _MB_NO        = QMessageBox.StandardButton.No
     _DBB_OK       = QDialogButtonBox.StandardButton.Ok
@@ -51,6 +52,7 @@ except AttributeError:
     _SmoothTrans  = Qt.SmoothTransformation
     _ScrollHandDrag  = QGraphicsView.ScrollHandDrag
     _AnchorUnderMouse = QGraphicsView.AnchorUnderMouse
+    _Antialias    = QPainter.Antialiasing
     _MB_YES       = QMessageBox.Yes
     _MB_NO        = QMessageBox.No
     _DBB_OK       = QDialogButtonBox.Ok
@@ -565,6 +567,7 @@ class FlyPathDialog(QWidget):
         self._rc_waypoint_path   = None   # detected RC waypoint folder display path
         self._thumb_dir          = None   # session cache for pulled RC mission thumbnails
         self._current_thumb_full = None   # full-res thumbnail path for the zoom viewer
+        self._fresh_preview      = {}     # uuid -> locally rendered preview after a replace
 
         self._build_ui()
         self._setup_combos()
@@ -1903,26 +1906,33 @@ class FlyPathDialog(QWidget):
             self.rcThumbLabel.setText('')
             return
 
-        self.rcThumbLabel.setPixmap(QPixmap())
-        self.rcThumbLabel.setText('Loading preview…')
-        QApplication.setOverrideCursor(_WaitCursor)
-        QApplication.processEvents()
-        try:
-            full = self._pull_thumbnail(mission['uuid'])
-        finally:
-            QApplication.restoreOverrideCursor()
+        uuid = mission['uuid']
 
-        if not full:
+        # After a replace, DJI's on-device thumbnail is stale, so show the
+        # locally rendered preview of the mission we just uploaded instead.
+        rendered = self._fresh_preview.get(uuid)
+        if rendered and os.path.isfile(rendered):
+            self._current_thumb_full = rendered
+            display = rendered
+        else:
             self.rcThumbLabel.setPixmap(QPixmap())
-            self.rcThumbLabel.setText('No preview available for this mission')
-            return
+            self.rcThumbLabel.setText('Loading preview…')
+            QApplication.setOverrideCursor(_WaitCursor)
+            QApplication.processEvents()
+            try:
+                full = self._pull_thumbnail(uuid)
+            finally:
+                QApplication.restoreOverrideCursor()
+            if not full:
+                self.rcThumbLabel.setPixmap(QPixmap())
+                self.rcThumbLabel.setText('No preview available for this mission')
+                return
+            self._current_thumb_full = full          # full image for the viewer
+            display = self._crop_to_mission(full, uuid)  # centred crop for the panel
 
-        # Full image feeds the zoom viewer; the panel shows a centred crop.
-        self._current_thumb_full = full
-        cropped = self._crop_to_mission(full, mission['uuid'])
-        pix = QPixmap(cropped)
+        pix = QPixmap(display)
         if pix.isNull():
-            pix = QPixmap(full)
+            pix = QPixmap(self._current_thumb_full)
         if not pix.isNull():
             self.rcThumbLabel.setText('')
             self.rcThumbLabel.setPixmap(
@@ -1930,6 +1940,66 @@ class FlyPathDialog(QWidget):
             )
         else:
             self.rcThumbLabel.setText('No preview available for this mission')
+
+    def _invalidate_thumb_cache(self, uuid):
+        """Drop cached DJI thumbnails for a mission (they go stale after a replace)."""
+        if not self._thumb_dir:
+            return
+        for name in (uuid + '.jpg', uuid + '.jpeg', uuid + '.png', uuid + '_crop.jpg'):
+            try:
+                os.remove(os.path.join(self._thumb_dir, name))
+            except OSError:
+                pass
+
+    def _render_mission_preview(self, waypoints, uuid):
+        """
+        Draw a preview of the just-uploaded mission from its waypoints, so the
+        picker reflects the new mission immediately (DJI regenerates its own
+        thumbnail only when the mission is reopened in DJI Fly). Returns a path.
+        """
+        if not waypoints:
+            return None
+        W, H, pad = 800, 450, 34
+        pix = QPixmap(W, H)
+        pix.fill(QColor('#EDEAE2'))
+        painter = QPainter(pix)
+        try:
+            painter.setRenderHint(_Antialias, True)
+            lons = [c[0] for c in waypoints]
+            lats = [c[1] for c in waypoints]
+            minx, maxx = min(lons), max(lons)
+            miny, maxy = min(lats), max(lats)
+            dx = (maxx - minx) or 1e-9
+            dy = (maxy - miny) or 1e-9
+            s  = min((W - 2 * pad) / dx, (H - 2 * pad) / dy)
+            ox = (W - s * dx) / 2.0
+            oy = (H - s * dy) / 2.0
+
+            def to_px(lon, lat):
+                return QPointF(ox + (lon - minx) * s,
+                               H - (oy + (lat - miny) * s))   # flip Y
+
+            pts = [to_px(lon, lat) for lon, lat in waypoints]
+            pen = QPen(QColor('#2ECC71'))
+            pen.setWidth(3)
+            painter.setPen(pen)
+            painter.drawPolyline(QPolygonF(pts))
+            painter.setBrush(QColor('#2ECC71'))
+            for pt in pts:
+                painter.drawEllipse(pt, 3.5, 3.5)
+            painter.setBrush(QColor(_COLOR_START_MARKER))
+            painter.drawEllipse(pts[0], 6, 6)
+            painter.setBrush(QColor(_COLOR_END_MARKER))
+            painter.drawEllipse(pts[-1], 6, 6)
+            painter.setPen(QColor('#5A6270'))
+            painter.drawText(10, H - 12,
+                             f'FlyPath mission just uploaded  ·  {len(waypoints)} waypoints')
+        finally:
+            painter.end()
+
+        path = os.path.join(self._thumb_cache_dir(), uuid + '_new.jpg')
+        pix.save(path, 'JPG', 90)
+        return path
 
     def _crop_to_mission(self, path, uuid):
         """
@@ -2689,12 +2759,21 @@ class FlyPathDialog(QWidget):
                 self.infoBar.setText(_INFO_IDLE)
 
         if ok:
+            # DJI's own thumbnail is now stale; show a fresh preview of the
+            # mission we just uploaded and drop the cached DJI image.
+            self._invalidate_thumb_cache(target['uuid'])
+            self._fresh_preview[target['uuid']] = self._render_mission_preview(
+                waypoints, target['uuid']
+            )
+            self._load_selected_thumbnail()
             QMessageBox.information(
                 self, 'Exported to RC',
                 f'Replaced "{label}" on the DJI RC.\n\n'
                 f'Waypoints: {len(waypoints):,}\n'
                 f'UUID: {detail}\n\n'
-                'Reopen DJI Fly on the RC to see the updated mission.'
+                'The preview now shows the mission you just uploaded. '
+                'Reopen DJI Fly on the RC to fly it (DJI refreshes its own '
+                'thumbnail when you open the mission).'
             )
         else:
             QMessageBox.critical(self, 'RC Export Failed', detail)
