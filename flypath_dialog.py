@@ -648,6 +648,10 @@ class FlyPathDialog(QWidget):
         outer.addWidget(self.infoBar)
         outer.addWidget(self._build_action_bar())
 
+        # Keep the panel wide enough that the two-column sections stay readable
+        # and the right column is not squeezed out when the dock is shrunk.
+        self.setMinimumWidth(360)
+
     def _build_mission_group(self):
         group = QGroupBox('Mission Setup')
         form  = QFormLayout(group)
@@ -828,6 +832,7 @@ class FlyPathDialog(QWidget):
         self.gimbalAngleSpin.setValue(-90)
         self.gimbalAngleSpin.setSingleStep(5)
         self.gimbalAngleSpin.setSuffix(' °')
+        self.gimbalAngleSpin.setMaximumWidth(110)
         self._tip(self.gimbalAngleSpin,
             'Gimbal pitch angle. -90° points straight down (nadir) for '
             '2D orthomosaic mapping. Tilt toward 0° for oblique photography.')
@@ -839,6 +844,7 @@ class FlyPathDialog(QWidget):
         self.photoIntervalSpin.setSingleStep(0.5)
         self.photoIntervalSpin.setDecimals(1)
         self.photoIntervalSpin.setSuffix(' s')
+        self.photoIntervalSpin.setMaximumWidth(110)
         self._tip(self.photoIntervalSpin,
             'Time between each photo in seconds. The drone uses auto interval '
             'shooting — minimum 2 s at 12 MP JPEG (DJI Mini 4 Pro / Mini 3 Pro). '
@@ -870,6 +876,7 @@ class FlyPathDialog(QWidget):
         form.setSpacing(6)
 
         self.finishActionCombo = QComboBox()
+        self.finishActionCombo.setMaximumWidth(150)
         self._tip(self.finishActionCombo,
             'What the drone does after the last waypoint. '
             'Return to Home: flies back and lands at takeoff. '
@@ -878,6 +885,7 @@ class FlyPathDialog(QWidget):
         form.addRow('Finish Action', self.finishActionCombo)
 
         self.rcLostActionCombo = QComboBox()
+        self.rcLostActionCombo.setMaximumWidth(150)
         self._tip(self.rcLostActionCombo,
             'What the drone does if the RC signal is lost during the mission. '
             'Return to Home: flies back to takeoff point. '
