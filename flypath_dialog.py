@@ -823,6 +823,7 @@ class FlyPathDialog(QWidget):
 
     def _build_camera_group(self):
         group = QGroupBox('Camera Settings')
+        group.setMaximumWidth(210)
         form  = QFormLayout(group)
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
@@ -871,12 +872,13 @@ class FlyPathDialog(QWidget):
 
     def _build_advanced_group(self):
         group = QGroupBox('Safety Actions')
+        group.setMaximumWidth(210)
         form  = QFormLayout(group)
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
 
         self.finishActionCombo = QComboBox()
-        self.finishActionCombo.setMaximumWidth(150)
+        self.finishActionCombo.setMaximumWidth(110)
         self._tip(self.finishActionCombo,
             'What the drone does after the last waypoint. '
             'Return to Home: flies back and lands at takeoff. '
@@ -885,7 +887,7 @@ class FlyPathDialog(QWidget):
         form.addRow('Finish Action', self.finishActionCombo)
 
         self.rcLostActionCombo = QComboBox()
-        self.rcLostActionCombo.setMaximumWidth(150)
+        self.rcLostActionCombo.setMaximumWidth(110)
         self._tip(self.rcLostActionCombo,
             'What the drone does if the RC signal is lost during the mission. '
             'Return to Home: flies back to takeoff point. '
