@@ -15,17 +15,20 @@ from qgis.PyQt.QtWidgets import (
     QMessageBox, QFileDialog, QApplication,
     QStackedWidget, QDialog, QTreeWidget, QTreeWidgetItem, QDialogButtonBox,
 )
-from qgis.PyQt.QtCore import Qt, QObject, QEvent, QSettings, QVariant
-from qgis.PyQt.QtGui import QColor, QFont
+from qgis.PyQt.QtCore import Qt, QObject, QEvent, QSettings, QVariant, QSize
+from qgis.PyQt.QtGui import QColor, QFont, QPixmap
 
 try:
     _AlignLeft    = Qt.AlignmentFlag.AlignLeft
     _AlignVCenter = Qt.AlignmentFlag.AlignVCenter
+    _AlignCenter  = Qt.AlignmentFlag.AlignCenter
     _EventEnter   = QEvent.Type.Enter
     _EventLeave   = QEvent.Type.Leave
     _FrameNoFrame = QFrame.Shape.NoFrame
     _FontBold     = QFont.Weight.Bold
     _WaitCursor   = Qt.CursorShape.WaitCursor
+    _KeepAspect   = Qt.AspectRatioMode.KeepAspectRatio
+    _SmoothTrans  = Qt.TransformationMode.SmoothTransformation
     _MB_YES       = QMessageBox.StandardButton.Yes
     _MB_NO        = QMessageBox.StandardButton.No
     _DBB_OK       = QDialogButtonBox.StandardButton.Ok
@@ -33,11 +36,14 @@ try:
 except AttributeError:
     _AlignLeft    = Qt.AlignLeft
     _AlignVCenter = Qt.AlignVCenter
+    _AlignCenter  = Qt.AlignCenter
     _EventEnter   = QEvent.Enter
     _EventLeave   = QEvent.Leave
     _FrameNoFrame = QFrame.NoFrame
     _FontBold     = QFont.Bold
     _WaitCursor   = Qt.WaitCursor
+    _KeepAspect   = Qt.KeepAspectRatio
+    _SmoothTrans  = Qt.SmoothTransformation
     _MB_YES       = QMessageBox.Yes
     _MB_NO        = QMessageBox.No
     _DBB_OK       = QDialogButtonBox.Ok
@@ -345,6 +351,14 @@ QLabel#rcNote {
     border-left: 3px solid #2D6DB5;
     border-radius: 3px;
 }
+QLabel#rcThumb {
+    color: #6A7686;
+    font-size: 10px;
+    background-color: #15181E;
+    border: 1px solid #2A2D35;
+    border-radius: 3px;
+    padding: 2px;
+}
 QLabel#infoBar {
     color: #7FB3E8;
     font-size: 10px;
@@ -493,6 +507,7 @@ class FlyPathDialog(QWidget):
         self._waypoints          = []
         self._shot_spacing_m     = 0.0
         self._rc_waypoint_path   = None   # detected RC waypoint folder display path
+        self._thumb_dir          = None   # session cache for pulled RC mission thumbnails
 
         self._build_ui()
         self._setup_combos()
@@ -983,6 +998,18 @@ class FlyPathDialog(QWidget):
             'Match it by date with what you see in DJI Fly.')
         v.addWidget(self.rcMissionCombo)
 
+        # DJI's own map snapshot of the selected mission, so you can see what
+        # you are about to replace.
+        self.rcThumbLabel = QLabel('')
+        self.rcThumbLabel.setObjectName('rcThumb')
+        self.rcThumbLabel.setAlignment(_AlignCenter)
+        self.rcThumbLabel.setMinimumHeight(120)
+        self.rcThumbLabel.setWordWrap(True)
+        self._tip(self.rcThumbLabel,
+            'Preview of the selected mission, as captured by DJI Fly on the RC. '
+            'Use it to confirm you are replacing the right mission.')
+        v.addWidget(self.rcThumbLabel)
+
         self.rcNote = QLabel(
             'ⓘ  FlyPath replaces an existing mission. To add a new one, create '
             'it in DJI Fly first, then Auto Detect RC.')
@@ -1049,7 +1076,7 @@ class FlyPathDialog(QWidget):
         self.localFolderEdit.textChanged.connect(self._on_local_folder_changed)
         self.rcRefreshBtn.clicked.connect(self._on_refresh_rc_missions)
         self.rcManualBtn.clicked.connect(self._on_locate_folder_manually)
-        self.rcMissionCombo.currentIndexChanged.connect(self._update_export_button)
+        self.rcMissionCombo.currentIndexChanged.connect(self._on_rc_mission_selected)
         self.drawPolygonBtn.clicked.connect(self._on_draw_polygon)
         self.removePolygonBtn.clicked.connect(self._on_remove_drawn_polygon)
         self.autoDirectionBtn.clicked.connect(self._on_auto_direction)
@@ -1794,7 +1821,134 @@ class FlyPathDialog(QWidget):
         for m in (missions or []):
             self.rcMissionCombo.addItem(self._mission_label(m), m)
         self.rcMissionCombo.blockSignals(False)
+        # Signals were blocked, so drive the selection-dependent UI directly.
         self._update_export_button()
+        self._load_selected_thumbnail()
+
+    def _on_rc_mission_selected(self, _=None):
+        self._update_export_button()
+        self._load_selected_thumbnail()
+
+    # ── Mission thumbnail preview ──────────────────────────────────────────
+
+    def _thumb_cache_dir(self):
+        if not self._thumb_dir:
+            self._thumb_dir = tempfile.mkdtemp(prefix='flypath_thumbs_')
+        return self._thumb_dir
+
+    def _load_selected_thumbnail(self):
+        """Show DJI's map snapshot for the currently selected RC mission."""
+        mission = self.rcMissionCombo.currentData()
+        if not mission:
+            self.rcThumbLabel.setPixmap(QPixmap())
+            self.rcThumbLabel.setText('')
+            return
+
+        self.rcThumbLabel.setPixmap(QPixmap())
+        self.rcThumbLabel.setText('Loading preview…')
+        QApplication.setOverrideCursor(_WaitCursor)
+        QApplication.processEvents()
+        try:
+            path = self._pull_thumbnail(mission['uuid'])
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        pix = QPixmap(path) if path else QPixmap()
+        if not pix.isNull():
+            self.rcThumbLabel.setText('')
+            self.rcThumbLabel.setPixmap(
+                pix.scaled(QSize(240, 135), _KeepAspect, _SmoothTrans)
+            )
+        else:
+            self.rcThumbLabel.setPixmap(QPixmap())
+            self.rcThumbLabel.setText('No preview available for this mission')
+
+    def _pull_thumbnail(self, uuid):
+        """
+        Return a local path to the mission's DJI map thumbnail
+        (waypoint/map_preview/<uuid>/<uuid>.jpg), or None. Cached per session.
+        """
+        wp = self._rc_waypoint_path
+        if not wp:
+            return None
+        cache = self._thumb_cache_dir()
+        for ext in ('.jpg', '.jpeg', '.png'):
+            cached = os.path.join(cache, uuid + ext)
+            if os.path.isfile(cached):
+                return cached
+
+        # Real filesystem folder (SD card / drive / local copy): read in place.
+        if os.path.isdir(wp):
+            mp = os.path.join(wp, 'map_preview', uuid)
+            if os.path.isdir(mp):
+                for f in os.listdir(mp):
+                    if f.lower().endswith(('.jpg', '.jpeg', '.png')):
+                        return os.path.join(mp, f)
+                cand = os.path.join(mp, uuid)
+                if os.path.isfile(cand):
+                    return cand
+            return None
+
+        # MTP device: copy the thumbnail off silently.
+        ps_exe = os.path.join(
+            os.environ.get('SystemRoot', r'C:\Windows'),
+            r'System32\WindowsPowerShell\v1.0\powershell.exe'
+        )
+        parts = [p for p in wp.replace('/', '\\').split('\\') if p]
+        parts += ['map_preview', uuid]
+        tmp = tempfile.mkdtemp(prefix='flypath_thumb_')
+        try:
+            sp = os.path.join(tmp, 'thumb.ps1')
+            with open(sp, 'w', encoding='utf-8') as fh:
+                fh.write(self._thumb_pull_script(parts, tmp))
+            try:
+                subprocess.run(
+                    [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
+                     '-ExecutionPolicy', 'Bypass', '-File', sp],
+                    capture_output=True, text=True, timeout=30,
+                    creationflags=_NO_WINDOW, startupinfo=_STARTUPINFO
+                )
+            except Exception:
+                return None
+            for f in os.listdir(tmp):
+                if f.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    ext = os.path.splitext(f)[1]
+                    dst = os.path.join(cache, uuid + ext)
+                    shutil.copyfile(os.path.join(tmp, f), dst)
+                    return dst
+            cand = os.path.join(tmp, uuid)
+            if os.path.isfile(cand):
+                dst = os.path.join(cache, uuid + '.jpg')
+                shutil.copyfile(cand, dst)
+                return dst
+            return None
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    @staticmethod
+    def _thumb_pull_script(parts, dest):
+        """PowerShell: navigate to a map_preview/<uuid> folder and copy its image to dest."""
+        arr = ', '.join("'" + p.replace("'", "''") + "'" for p in parts)
+        d = dest.replace("'", "''")
+        return (
+            "$ErrorActionPreference = 'SilentlyContinue'\n"
+            '$shell = New-Object -ComObject Shell.Application\n'
+            "$folder = $shell.Namespace('::{20D04FE0-3AEA-1069-A2D8-08002B30309D}')\n"
+            "$dest = $shell.Namespace('" + d + "')\n"
+            '$parts = @(' + arr + ')\n'
+            'foreach ($p in $parts) {\n'
+            '    $hit = $null\n'
+            '    foreach ($i in $folder.Items()) { if ($i.Name -eq $p) { $hit = $i; break } }\n'
+            '    if (-not $hit) { exit 1 }\n'
+            '    $folder = $hit.GetFolder\n'
+            '    if (-not $folder) { exit 1 }\n'
+            '}\n'
+            # 0x14 = FOF_SILENT | FOF_NOCONFIRMATION (device->local copy is silent)
+            'foreach ($f in $folder.Items()) {\n'
+            '    if (-not $f.IsFolder) { $dest.CopyHere($f, 0x14); Start-Sleep -Milliseconds 2500 }\n'
+            '}\n'
+            'exit 0\n'
+        )
 
     def _set_rc_target(self, path):
         """Record the chosen waypoint folder and show it in the panel."""
@@ -2624,6 +2778,9 @@ class FlyPathDialog(QWidget):
             QgsProject.instance().layersRemoved.disconnect(self._refresh_layer_combo)
         except Exception:
             pass
+        if self._thumb_dir:
+            shutil.rmtree(self._thumb_dir, ignore_errors=True)
+            self._thumb_dir = None
 
     def closeEvent(self, event):
         self.cleanup()
