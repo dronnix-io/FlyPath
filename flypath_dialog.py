@@ -619,9 +619,26 @@ class FlyPathDialog(QWidget):
         scroll_layout.addWidget(self._build_mission_group())
         scroll_layout.addWidget(self._build_area_group())
         scroll_layout.addWidget(self._build_flight_group())
-        scroll_layout.addWidget(self._build_camera_group())
-        scroll_layout.addWidget(self._build_advanced_group())
-        scroll_layout.addWidget(self._build_stats_group())
+
+        # Camera Settings + Safety Actions (short) sit side by side with
+        # Statistics, instead of stacking under it, to save vertical space.
+        two_col = QHBoxLayout()
+        two_col.setSpacing(8)
+
+        left_col = QVBoxLayout()
+        left_col.setSpacing(8)
+        left_col.addWidget(self._build_camera_group())
+        left_col.addWidget(self._build_advanced_group())
+        left_col.addStretch()
+
+        right_col = QVBoxLayout()
+        right_col.setSpacing(8)
+        right_col.addWidget(self._build_stats_group())
+        right_col.addStretch()
+
+        two_col.addLayout(left_col, 1)
+        two_col.addLayout(right_col, 1)
+        scroll_layout.addLayout(two_col)
         scroll_layout.addStretch()
 
         scroll.setWidget(content)
