@@ -1612,9 +1612,16 @@ class FlyPathDialog(QWidget):
             self._prev_map_tool = None
 
     def _cancel_draw_tool(self):
-        if self._draw_tool:
-            self.iface.mapCanvas().unsetMapTool(self._draw_tool)
-            self._draw_tool = None
+        """Stop drawing, restore the previous map tool, and reset the button."""
+        canvas = self.iface.mapCanvas()
+        if self._prev_map_tool is not None:
+            canvas.setMapTool(self._prev_map_tool)   # deactivates the draw tool
+            self._prev_map_tool = None
+        elif self._draw_tool is not None:
+            canvas.unsetMapTool(self._draw_tool)
+        self._draw_tool = None
+        self.drawPolygonBtn.setChecked(False)
+        self.drawPolygonBtn.setText('Draw Polygon on Map')
 
     def _area_ha(self):
         """Return survey polygon area in hectares (metric, via EPSG:3857)."""
