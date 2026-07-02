@@ -648,9 +648,14 @@ class FlyPathDialog(QWidget):
         outer.addWidget(self.infoBar)
         outer.addWidget(self._build_action_bar())
 
-        # Keep the panel wide enough that the two-column sections stay readable
-        # and the right column is not squeezed out when the dock is shrunk.
-        self.setMinimumWidth(360)
+        # Let the dock shrink only down to the natural minimum width of its
+        # content (where the two-column sections still fit), not smaller. The
+        # scroll area would otherwise let the content be squeezed indefinitely.
+        content.layout().activate()
+        # + vertical scrollbar allowance so the content is not clipped at min;
+        # small floor guards against a degenerate hint before the first show.
+        min_w = content.minimumSizeHint().width() + 20
+        self.setMinimumWidth(max(min_w, 280))
 
     def _build_mission_group(self):
         group = QGroupBox('Mission Setup')
