@@ -14,8 +14,11 @@ from qgis.PyQt.QtWidgets import (
     QSpinBox, QDoubleSpinBox,
     QMessageBox, QFileDialog, QApplication,
     QStackedWidget, QDialog, QTreeWidget, QTreeWidgetItem, QDialogButtonBox,
+    QGraphicsView, QGraphicsScene,
 )
-from qgis.PyQt.QtCore import Qt, QObject, QEvent, QSettings, QVariant, QSize
+from qgis.PyQt.QtCore import (
+    Qt, QObject, QEvent, QSettings, QVariant, QSize, pyqtSignal,
+)
 from qgis.PyQt.QtGui import QColor, QFont, QPixmap
 
 try:
@@ -29,6 +32,8 @@ try:
     _WaitCursor   = Qt.CursorShape.WaitCursor
     _KeepAspect   = Qt.AspectRatioMode.KeepAspectRatio
     _SmoothTrans  = Qt.TransformationMode.SmoothTransformation
+    _ScrollHandDrag  = QGraphicsView.DragMode.ScrollHandDrag
+    _AnchorUnderMouse = QGraphicsView.ViewportAnchor.AnchorUnderMouse
     _MB_YES       = QMessageBox.StandardButton.Yes
     _MB_NO        = QMessageBox.StandardButton.No
     _DBB_OK       = QDialogButtonBox.StandardButton.Ok
@@ -44,6 +49,8 @@ except AttributeError:
     _WaitCursor   = Qt.WaitCursor
     _KeepAspect   = Qt.KeepAspectRatio
     _SmoothTrans  = Qt.SmoothTransformation
+    _ScrollHandDrag  = QGraphicsView.ScrollHandDrag
+    _AnchorUnderMouse = QGraphicsView.AnchorUnderMouse
     _MB_YES       = QMessageBox.Yes
     _MB_NO        = QMessageBox.No
     _DBB_OK       = QDialogButtonBox.Ok
@@ -488,6 +495,55 @@ class _RcFolderBrowser(QDialog):
         return item.data(0, _ROLE_PARTS) if item else None
 
 
+class _ClickableLabel(QLabel):
+    """A QLabel that emits `clicked` when it holds an image and is pressed."""
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, event):
+        pm = self.pixmap()
+        if pm is not None and not pm.isNull():
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+class _ZoomView(QGraphicsView):
+    """QGraphicsView with mouse-wheel zoom (drag-to-pan is set by the caller)."""
+
+    def wheelEvent(self, event):
+        factor = 1.25 if event.angleDelta().y() > 0 else 1 / 1.25
+        self.scale(factor, factor)
+
+
+class _ThumbnailViewer(QDialog):
+    """A resizable window showing the full mission image with zoom and pan."""
+
+    def __init__(self, image_path, title, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(900, 560)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        self._view = _ZoomView()
+        self._view.setDragMode(_ScrollHandDrag)
+        self._view.setTransformationAnchor(_AnchorUnderMouse)
+        scene = QGraphicsScene(self)
+        self._item = scene.addPixmap(QPixmap(image_path))
+        self._item.setTransformationMode(_SmoothTrans)
+        self._view.setScene(scene)
+        layout.addWidget(self._view, 1)
+
+        hint = QLabel('Scroll to zoom  ·  drag to pan')
+        hint.setAlignment(_AlignCenter)
+        layout.addWidget(hint)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._view.fitInView(self._item, _KeepAspect)
+
+
 class FlyPathDialog(QWidget):
 
     def __init__(self, iface, parent=None):
@@ -508,6 +564,7 @@ class FlyPathDialog(QWidget):
         self._shot_spacing_m     = 0.0
         self._rc_waypoint_path   = None   # detected RC waypoint folder display path
         self._thumb_dir          = None   # session cache for pulled RC mission thumbnails
+        self._current_thumb_full = None   # full-res thumbnail path for the zoom viewer
 
         self._build_ui()
         self._setup_combos()
@@ -999,15 +1056,15 @@ class FlyPathDialog(QWidget):
         v.addWidget(self.rcMissionCombo)
 
         # DJI's own map snapshot of the selected mission, so you can see what
-        # you are about to replace.
-        self.rcThumbLabel = QLabel('')
+        # you are about to replace. Click to open a zoomable full-size viewer.
+        self.rcThumbLabel = _ClickableLabel('')
         self.rcThumbLabel.setObjectName('rcThumb')
         self.rcThumbLabel.setAlignment(_AlignCenter)
         self.rcThumbLabel.setMinimumHeight(120)
         self.rcThumbLabel.setWordWrap(True)
         self._tip(self.rcThumbLabel,
             'Preview of the selected mission, as captured by DJI Fly on the RC. '
-            'Use it to confirm you are replacing the right mission.')
+            'Click it to open a larger view you can zoom and pan.')
         v.addWidget(self.rcThumbLabel)
 
         self.rcNote = QLabel(
@@ -1077,6 +1134,7 @@ class FlyPathDialog(QWidget):
         self.rcRefreshBtn.clicked.connect(self._on_refresh_rc_missions)
         self.rcManualBtn.clicked.connect(self._on_locate_folder_manually)
         self.rcMissionCombo.currentIndexChanged.connect(self._on_rc_mission_selected)
+        self.rcThumbLabel.clicked.connect(self._open_thumbnail_viewer)
         self.drawPolygonBtn.clicked.connect(self._on_draw_polygon)
         self.removePolygonBtn.clicked.connect(self._on_remove_drawn_polygon)
         self.autoDirectionBtn.clicked.connect(self._on_auto_direction)
@@ -1838,6 +1896,7 @@ class FlyPathDialog(QWidget):
 
     def _load_selected_thumbnail(self):
         """Show DJI's map snapshot for the currently selected RC mission."""
+        self._current_thumb_full = None
         mission = self.rcMissionCombo.currentData()
         if not mission:
             self.rcThumbLabel.setPixmap(QPixmap())
@@ -1849,19 +1908,85 @@ class FlyPathDialog(QWidget):
         QApplication.setOverrideCursor(_WaitCursor)
         QApplication.processEvents()
         try:
-            path = self._pull_thumbnail(mission['uuid'])
+            full = self._pull_thumbnail(mission['uuid'])
         finally:
             QApplication.restoreOverrideCursor()
 
-        pix = QPixmap(path) if path else QPixmap()
+        if not full:
+            self.rcThumbLabel.setPixmap(QPixmap())
+            self.rcThumbLabel.setText('No preview available for this mission')
+            return
+
+        # Full image feeds the zoom viewer; the panel shows a centred crop.
+        self._current_thumb_full = full
+        cropped = self._crop_to_mission(full, mission['uuid'])
+        pix = QPixmap(cropped)
+        if pix.isNull():
+            pix = QPixmap(full)
         if not pix.isNull():
             self.rcThumbLabel.setText('')
             self.rcThumbLabel.setPixmap(
                 pix.scaled(QSize(240, 135), _KeepAspect, _SmoothTrans)
             )
         else:
-            self.rcThumbLabel.setPixmap(QPixmap())
             self.rcThumbLabel.setText('No preview available for this mission')
+
+    def _crop_to_mission(self, path, uuid):
+        """
+        Crop the thumbnail to the flight-path region so the mission fills the
+        preview. Returns the cropped path, or the original if it cannot crop
+        (e.g. Pillow unavailable, or no mission pixels detected).
+        """
+        try:
+            import numpy as np
+            from PIL import Image
+        except Exception:
+            return path
+        dst = os.path.join(self._thumb_cache_dir(), uuid + '_crop.jpg')
+        if os.path.isfile(dst):
+            return dst
+        try:
+            im  = Image.open(path).convert('RGB')
+            arr = np.asarray(im)
+            r = arr[:, :, 0].astype(int)
+            g = arr[:, :, 1].astype(int)
+            b = arr[:, :, 2].astype(int)
+            # Vivid mission green (waypoint markers) and near-black flight lines
+            green = (g > 110) & (g > r + 40) & (g > b + 40)
+            mask  = green | ((r < 60) & (g < 60) & (b < 60))
+            ys, xs = np.where(mask)
+            if len(xs) < 30:
+                ys, xs = np.where(green)
+                if len(xs) < 10:
+                    return path
+            H, W = arr.shape[:2]
+            x0, y0, x1, y1 = int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+            px = int((x1 - x0) * 0.18) + 5
+            py = int((y1 - y0) * 0.18) + 5
+            x0 -= px; x1 += px; y0 -= py; y1 += py
+            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+            cw, ch = x1 - x0, y1 - y0
+            aspect = 16.0 / 9.0
+            if cw / ch < aspect:
+                cw = ch * aspect
+            else:
+                ch = cw / aspect
+            nx0 = int(max(0, cx - cw / 2)); ny0 = int(max(0, cy - ch / 2))
+            nx1 = int(min(W, cx + cw / 2)); ny1 = int(min(H, cy + ch / 2))
+            im.crop((nx0, ny0, nx1, ny1)).save(dst, quality=88)
+            return dst
+        except Exception:
+            return path
+
+    def _open_thumbnail_viewer(self):
+        """Open the full-size, zoomable/pannable view of the selected mission."""
+        if not (self._current_thumb_full and os.path.isfile(self._current_thumb_full)):
+            return
+        mission = self.rcMissionCombo.currentData()
+        title = 'Mission preview'
+        if mission:
+            title = 'Mission  ' + (mission.get('date_str') or mission['uuid'])
+        _ThumbnailViewer(self._current_thumb_full, title, self).exec()
 
     def _pull_thumbnail(self, uuid):
         """
