@@ -92,7 +92,6 @@ def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
     # 5 ── Camera footprint and spacing (all in metres)
     fl = drone_specs['focal_length_mm']
     sw = drone_specs['sensor_width_mm']
-    sh = drone_specs['sensor_height_mm']
 
     footprint_across = altitude_m * sw / fl          # perpendicular to flight
 

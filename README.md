@@ -33,6 +33,7 @@ Developed and maintained by [Dronnix](https://www.dronnix.com), a drone mapping 
 - Configurable safety actions: finish action and RC lost action
 - Exports native DJI WPML KMZ, compatible with DJI Fly on DJI RC2
 - **Direct RC export**: auto-detects the connected DJI RC (over USB, or as a removable drive), lists the missions DJI Fly tracks, and replaces the one you pick, transferred silently over USB with no prompts or pop-up windows
+- **Mission preview in the RC picker**: every mission on the RC is drawn as a live flight-path thumbnail rendered from its own waypoints and labelled with its waypoint count, so you can see exactly which mission to replace before sending the new one; click a preview to open a zoomable viewer, and the list and preview refresh instantly after each replace
 - **Local folder export**: pick a folder and FlyPath saves a dated `.kmz` file there, then offers to open the folder
 - Contextual info bar, hover over any parameter to see what it does
 - Dark-themed dock panel, designed to complement the QGIS interface
@@ -185,9 +186,13 @@ This replaces an existing mission directly on the DJI RC over USB, with no manua
 2. Click **Auto Detect RC**. FlyPath finds the controller whether it is connected over USB (MTP) or shows up as a removable/lettered drive (any drive letter), and lists its missions by date and waypoint count (only missions DJI Fly actually tracks are listed). It identifies the RC by its internal folder structure, not by a drive letter or device name, so it works the same on any computer. The detected waypoint folder is shown in a read-only field so you can confirm the target.
 3. If it still is not found, click **Locate folder manually**. This opens a browser of *This PC* that can reach the RC and any drive (unlike the standard folder dialog, which cannot show MTP devices); navigate to the `waypoint` folder and click Select.
 4. If the folder is found but has no missions, FlyPath tells you to create one in DJI Fly first (see the Important note above).
-5. Pick the mission you want to replace. Use the date to match what you see in DJI Fly.
+5. Pick the mission you want to replace. Each mission shows a preview of its flight path and its waypoint count, rendered from that mission's own waypoints, so you can confirm the right one at a glance; click the preview to open a zoomable viewer. Use the date to match what you see in DJI Fly.
 6. Click **Replace "…" on RC**. FlyPath writes the new mission into the selected UUID folder.
 7. Disconnect the RC, then close and reopen DJI Fly to see the updated mission.
+
+The replaced mission as it appears in the DJI Fly app on the RC:
+
+![Imported mission on the DJI RC in DJI Fly](docs/images/rc_mission_dji_fly.png)
 
 ---
 
