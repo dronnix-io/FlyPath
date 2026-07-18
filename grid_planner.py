@@ -23,6 +23,11 @@ from qgis.core import (
     QgsWkbTypes,
 )
 
+try:
+    _LineGeometry = QgsWkbTypes.GeometryType.LineGeometry
+except AttributeError:
+    _LineGeometry = getattr(QgsWkbTypes, 'LineGeometry')
+
 
 # ── Public functions ──────────────────────────────────────────────────────────
 
@@ -320,7 +325,7 @@ def _line_segments(geom):
     result = []
     if geom.isEmpty():
         return result
-    if QgsWkbTypes.geometryType(geom.wkbType()) != QgsWkbTypes.LineGeometry:
+    if QgsWkbTypes.geometryType(geom.wkbType()) != _LineGeometry:
         return result
 
     if geom.isMultipart():

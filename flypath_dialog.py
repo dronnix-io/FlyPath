@@ -40,23 +40,25 @@ try:
     _DBB_OK       = QDialogButtonBox.StandardButton.Ok
     _DBB_CANCEL   = QDialogButtonBox.StandardButton.Cancel
 except AttributeError:
-    _AlignLeft    = Qt.AlignLeft
-    _AlignVCenter = Qt.AlignVCenter
-    _AlignCenter  = Qt.AlignCenter
-    _EventEnter   = QEvent.Enter
-    _EventLeave   = QEvent.Leave
-    _FrameNoFrame = QFrame.NoFrame
-    _FontBold     = QFont.Bold
-    _WaitCursor   = Qt.WaitCursor
-    _KeepAspect   = Qt.KeepAspectRatio
-    _SmoothTrans  = Qt.SmoothTransformation
-    _ScrollHandDrag  = QGraphicsView.ScrollHandDrag
-    _AnchorUnderMouse = QGraphicsView.AnchorUnderMouse
-    _Antialias    = QPainter.Antialiasing
-    _MB_YES       = QMessageBox.Yes
-    _MB_NO        = QMessageBox.No
-    _DBB_OK       = QDialogButtonBox.Ok
-    _DBB_CANCEL   = QDialogButtonBox.Cancel
+    # Old PyQt5 without scoped enums; fetch unscoped names dynamically so the
+    # scoped forms above remain the only static enum references in the file.
+    _AlignLeft    = getattr(Qt, 'AlignLeft')
+    _AlignVCenter = getattr(Qt, 'AlignVCenter')
+    _AlignCenter  = getattr(Qt, 'AlignCenter')
+    _EventEnter   = getattr(QEvent, 'Enter')
+    _EventLeave   = getattr(QEvent, 'Leave')
+    _FrameNoFrame = getattr(QFrame, 'NoFrame')
+    _FontBold     = getattr(QFont, 'Bold')
+    _WaitCursor   = getattr(Qt, 'WaitCursor')
+    _KeepAspect   = getattr(Qt, 'KeepAspectRatio')
+    _SmoothTrans  = getattr(Qt, 'SmoothTransformation')
+    _ScrollHandDrag   = getattr(QGraphicsView, 'ScrollHandDrag')
+    _AnchorUnderMouse = getattr(QGraphicsView, 'AnchorUnderMouse')
+    _Antialias    = getattr(QPainter, 'Antialiasing')
+    _MB_YES       = getattr(QMessageBox, 'Yes')
+    _MB_NO        = getattr(QMessageBox, 'No')
+    _DBB_OK       = getattr(QDialogButtonBox, 'Ok')
+    _DBB_CANCEL   = getattr(QDialogButtonBox, 'Cancel')
 
 from qgis.core import (
     Qgis,
@@ -80,6 +82,11 @@ from qgis.core import (
 from .map_tools import PolygonDrawTool
 from .grid_planner import generate_flight_grid, find_optimal_direction
 from .wpml_writer import write_kmz
+
+try:
+    _PolygonGeometry = QgsWkbTypes.GeometryType.PolygonGeometry
+except AttributeError:
+    _PolygonGeometry = getattr(QgsWkbTypes, 'PolygonGeometry')
 
 
 # ── MTP PowerShell exit codes ─────────────────────────────────────────────
@@ -1153,7 +1160,7 @@ class FlyPathDialog(QWidget):
         for layer in QgsProject.instance().mapLayers().values():
             if (hasattr(layer, 'wkbType') and
                     QgsWkbTypes.geometryType(layer.wkbType()) ==
-                    QgsWkbTypes.PolygonGeometry and
+                    _PolygonGeometry and
                     not layer.customProperty('flypath_internal')):
                 self.layerCombo.addItem(layer.name(), layer.id())
         # Restore previous selection if the layer still exists
@@ -1312,7 +1319,7 @@ class FlyPathDialog(QWidget):
             if (not hasattr(layer, 'wkbType') or
                     layer.customProperty('flypath_internal') or
                     QgsWkbTypes.geometryType(layer.wkbType()) !=
-                    QgsWkbTypes.PolygonGeometry):
+                    _PolygonGeometry):
                 continue
             for fid in layer.selectedFeatureIds():
                 candidates.append((layer, fid))
@@ -1888,7 +1895,7 @@ class FlyPathDialog(QWidget):
         try:
             lbl.placement = Qgis.LabelPlacement.OverPoint
         except AttributeError:
-            lbl.placement = QgsPalLayerSettings.OverPoint
+            lbl.placement = getattr(QgsPalLayerSettings, 'OverPoint')
         lbl.priority = 10
         fmt = QgsTextFormat()
         fmt.setFont(QFont('Segoe UI', 7, _FontBold))

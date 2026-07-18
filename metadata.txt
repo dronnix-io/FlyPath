@@ -10,7 +10,8 @@ changelog=1.4.0 - New editable GSD (ground sample distance) field that stays in 
     photos) are measured from the real generated flight path, including the turnaround edges. The
     map preview now updates live as you change parameters, so the drawn route always matches the
     numbers. Hardened the internal PowerShell process and exception handling to pass the plugin
-    repository security scan, with no change to behaviour.
+    repository security scan, and made all Qt and QGIS enum access fully scoped for Qt6
+    compatibility, with no change to behaviour.
     1.3.0 - Live mission preview in the RC picker: each mission is drawn from its own
     waypoints and labelled with its waypoint count, with a zoomable viewer, so you can see which
     mission to replace before sending; the list and preview now refresh instantly after a replace.

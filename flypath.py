@@ -10,8 +10,9 @@ try:
     _DockLeft  = Qt.DockWidgetArea.LeftDockWidgetArea
     _DockRight = Qt.DockWidgetArea.RightDockWidgetArea
 except AttributeError:
-    _DockLeft  = Qt.LeftDockWidgetArea
-    _DockRight = Qt.RightDockWidgetArea
+    # Old PyQt5 without scoped enums; fetch the unscoped names dynamically.
+    _DockLeft  = getattr(Qt, 'LeftDockWidgetArea')
+    _DockRight = getattr(Qt, 'RightDockWidgetArea')
 
 
 class FlyPath:

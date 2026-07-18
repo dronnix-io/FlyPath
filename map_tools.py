@@ -11,12 +11,20 @@ try:
     _Key_Backspace = Qt.Key.Key_Backspace
     _Key_Delete   = Qt.Key.Key_Delete
 except AttributeError:
-    _DashLine     = Qt.DashLine
-    _LeftButton   = Qt.LeftButton
-    _RightButton  = Qt.RightButton
-    _Key_Escape   = Qt.Key_Escape
-    _Key_Backspace = Qt.Key_Backspace
-    _Key_Delete   = Qt.Key_Delete
+    # Old PyQt5 without scoped enums; fetch the unscoped names dynamically.
+    _DashLine     = getattr(Qt, 'DashLine')
+    _LeftButton   = getattr(Qt, 'LeftButton')
+    _RightButton  = getattr(Qt, 'RightButton')
+    _Key_Escape   = getattr(Qt, 'Key_Escape')
+    _Key_Backspace = getattr(Qt, 'Key_Backspace')
+    _Key_Delete   = getattr(Qt, 'Key_Delete')
+
+try:
+    _PolygonGeometry = QgsWkbTypes.GeometryType.PolygonGeometry
+    _IconBox         = QgsVertexMarker.IconType.ICON_BOX
+except AttributeError:
+    _PolygonGeometry = getattr(QgsWkbTypes, 'PolygonGeometry')
+    _IconBox         = getattr(QgsVertexMarker, 'ICON_BOX')
 
 
 class PolygonDrawTool(QgsMapTool):
@@ -48,7 +56,7 @@ class PolygonDrawTool(QgsMapTool):
         self._cursor  = None        # last known cursor position (map coords)
 
         # Single polygon rubber band — Qt auto-closes it back to the first point
-        self._band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+        self._band = QgsRubberBand(canvas, _PolygonGeometry)
         self._band.setColor(QColor(255, 20, 147, 80))         # deep pink semi-fill
         self._band.setStrokeColor(QColor(255, 20, 147, 220))
         self._band.setWidth(2)
@@ -70,7 +78,7 @@ class PolygonDrawTool(QgsMapTool):
 
     def _redraw(self, cursor_pt=None):
         """Rebuild the rubber band from placed points + optional cursor position."""
-        self._band.reset(QgsWkbTypes.PolygonGeometry)
+        self._band.reset(_PolygonGeometry)
         pts = self._points + ([cursor_pt] if cursor_pt else [])
         for i, pt in enumerate(pts):
             self._band.addPoint(pt, i == len(pts) - 1)
@@ -115,7 +123,7 @@ class PolygonDrawTool(QgsMapTool):
     def _add_marker(self, pt):
         m = QgsVertexMarker(self.canvas())
         m.setCenter(pt)
-        m.setIconType(QgsVertexMarker.ICON_BOX)
+        m.setIconType(_IconBox)
         m.setColor(QColor(255, 20, 147))
         m.setFillColor(QColor(255, 255, 255, 200))
         m.setIconSize(8)
@@ -148,7 +156,7 @@ class PolygonDrawTool(QgsMapTool):
     def _reset(self):
         self._points.clear()
         self._cursor = None
-        self._band.reset(QgsWkbTypes.PolygonGeometry)
+        self._band.reset(_PolygonGeometry)
         self._remove_markers()
 
     def deactivate(self):
