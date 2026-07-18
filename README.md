@@ -27,9 +27,10 @@ Developed and maintained by [Dronnix](https://www.dronnix.com), a drone mapping 
 - Configurable flight altitude, speed, gimbal angle, photo interval, side overlap, and flight direction
 - Photo Interval parameter for planning along-track overlap, used as a reference to set the drone's auto interval capture mode manually before flying
 - Calculated front overlap display, showing effective along-track overlap from speed x interval with low-overlap warnings
-- Auto-optimised flight direction based on survey area geometry
-- Live GSD and effective photo spacing, synced to drone model, altitude, speed, and interval
-- Flight statistics: area, path distance, waypoint count, photo count, estimated batteries, and flight time
+- Auto-optimised flight direction that minimises flight time for the survey area shape
+- Editable GSD linked two-way with altitude, so you can plan by target resolution, with effective photo spacing synced to drone model, speed, and interval
+- Live map preview that redraws the flight path as you change parameters, so the route always matches the statistics
+- Flight statistics measured from the actual generated flight path, including the turns between lines: area, path distance, waypoint count, photo count, estimated batteries, and flight time
 - Configurable safety actions: finish action and RC lost action
 - Exports native DJI WPML KMZ, compatible with DJI Fly on DJI RC2
 - **Direct RC export**: auto-detects the connected DJI RC (over USB, or as a removable drive), lists the missions DJI Fly tracks, and replaces the one you pick, transferred silently over USB with no prompts or pop-up windows
@@ -111,10 +112,10 @@ Only one polygon can be active at a time. Switching methods automatically remove
 |---|---|
 | Drone Model | Sets camera specs used for GSD and spacing calculations |
 | Altitude | Flight altitude above ground level (AGL) in metres |
-| GSD | Calculated ground sampling distance, updates live with altitude |
+| GSD | Target ground sampling distance in cm/px, editable and linked two-way with altitude |
 | Side Overlap | Cross-track strip spacing overlap, controls distance between flight lines |
 | Speed | Waypoint flight speed in m/s (max varies by drone model) |
-| Direction | Angle of flight lines, or click **Auto** to optimise for the survey shape |
+| Direction | Angle of flight lines, or click **Auto** to minimise flight time for the survey shape |
 | Margin | Buffer added around the survey polygon boundary in metres |
 
 #### Camera Settings
@@ -149,7 +150,7 @@ Click **Preview on Map** to generate the flight grid and display it on the canva
 - **Red filled circle**: start waypoint
 - **Blue filled circle**: end waypoint
 
-Flight statistics (area, distance, photos, batteries, flight time) update below the parameters.
+Flight statistics (area, distance, photos, batteries, flight time) update below the parameters, measured from the actual flight path including the turns between lines. Once a preview is on the map, changing any parameter redraws the path live and recalculates the statistics, so the numbers always match what you see.
 
 ![Export bar](docs/images/export_bar.png)
 
