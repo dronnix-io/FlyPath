@@ -333,7 +333,7 @@ QScrollBar::handle:vertical {
 }
 QScrollBar::handle:vertical:hover  { background-color: #5A5D65; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QLabel#gsdLabel, QLabel#areaLabel, QLabel#intervalLabel,
+QLabel#areaLabel, QLabel#intervalLabel,
 QLabel#frontOverlapLabel,
 QLabel#flightTimeLabel, QLabel#distanceLabel, QLabel#photosLabel,
 QLabel#linesLabel, QLabel#batteriesLabel, QLabel#coverageLabel {
@@ -754,12 +754,17 @@ class FlyPathDialog(QWidget):
             'Lower altitude → sharper images but more flight lines and longer mission time.')
         form.addRow('Altitude', self.altitudeSpin)
 
-        self.gsdLabel = QLabel('—')
-        self.gsdLabel.setObjectName('gsdLabel')
-        self._tip(self.gsdLabel,
-            'Ground Sampling Distance — the real-world size of one pixel in your photos. '
-            'Smaller GSD = higher resolution. Calculated from altitude, sensor size and focal length.')
-        form.addRow('GSD', self.gsdLabel)
+        self.gsdSpin = QDoubleSpinBox()
+        self.gsdSpin.setRange(0.10, 20.0)
+        self.gsdSpin.setValue(1.0)
+        self.gsdSpin.setSingleStep(0.1)
+        self.gsdSpin.setDecimals(2)
+        self.gsdSpin.setSuffix(' cm/px')
+        self._tip(self.gsdSpin,
+            'Ground Sampling Distance: the real-world size of one pixel in your photos. '
+            'Smaller GSD means higher resolution. Linked to altitude, so changing one '
+            'updates the other (and the flight path when you preview).')
+        form.addRow('GSD', self.gsdSpin)
 
         self.sideOverlapSpin = QSpinBox()
         self.sideOverlapSpin.setRange(50, 95)
@@ -1163,6 +1168,7 @@ class FlyPathDialog(QWidget):
 
         self.droneModelCombo.currentIndexChanged.connect(self._on_drone_changed)
         self.altitudeSpin.valueChanged.connect(self._on_param_changed)
+        self.gsdSpin.valueChanged.connect(self._on_gsd_changed)
         self.sideOverlapSpin.valueChanged.connect(self._on_param_changed)
         self.speedSpin.valueChanged.connect(self._on_param_changed)
         self.photoIntervalSpin.valueChanged.connect(self._on_param_changed)
@@ -1215,9 +1221,38 @@ class FlyPathDialog(QWidget):
             (s['focal_length_mm'] * s['image_width_px']), 2
         )
 
+    def _calc_altitude_from_gsd(self):
+        """Inverse of _calc_gsd: altitude (m) needed to reach the current GSD."""
+        drone = self.droneModelCombo.currentText()
+        if drone not in DRONE_SPECS:
+            return None
+        s   = DRONE_SPECS[drone]
+        gsd = self.gsdSpin.value()
+        if gsd <= 0:
+            return None
+        return (gsd * s['focal_length_mm'] * s['image_width_px']) / (s['sensor_width_mm'] * 100.0)
+
     def _update_gsd(self):
+        """Refresh the GSD field from the current altitude (altitude drives GSD)."""
         gsd = self._calc_gsd()
-        self.gsdLabel.setText(f'{gsd:.2f} cm/px' if gsd else '—')
+        if gsd is None:
+            return
+        self.gsdSpin.blockSignals(True)
+        self.gsdSpin.setValue(gsd)
+        self.gsdSpin.blockSignals(False)
+
+    def _on_gsd_changed(self):
+        """User edited GSD: set altitude accordingly, clamped to its range."""
+        alt = self._calc_altitude_from_gsd()
+        if alt is None:
+            return
+        alt = max(self.altitudeSpin.minimum(), min(self.altitudeSpin.maximum(), alt))
+        self.altitudeSpin.blockSignals(True)
+        self.altitudeSpin.setValue(alt)
+        self.altitudeSpin.blockSignals(False)
+        # Reflect the clamped/rounded altitude back into GSD and refresh everything
+        # downstream (footprint, interval, stats, preview) via the shared handler.
+        self._on_param_changed()
 
     # ── Footprint & trigger interval ──────────────────────────────────────
 
