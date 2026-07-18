@@ -3,7 +3,7 @@ import math
 import os
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import tempfile
 import zipfile
 
@@ -1677,7 +1677,9 @@ class FlyPathDialog(QWidget):
                 try:
                     layer.editingStopped.disconnect(self._on_survey_area_edited)
                     layer.geometryChanged.disconnect(self._on_survey_area_geometry_changed)
-                except Exception:
+                except (TypeError, RuntimeError):
+                    # Signals were never connected, or the layer's C++ object
+                    # is already gone; nothing to disconnect.
                     pass
                 QgsProject.instance().removeMapLayer(self._survey_area_layer_id)
             self._survey_area_layer_id = None
@@ -2200,7 +2202,7 @@ class FlyPathDialog(QWidget):
             try:
                 if os.path.isdir(candidate):
                     return candidate
-            except Exception:
+            except (OSError, ValueError):
                 continue
         return None
 
@@ -2305,7 +2307,7 @@ class FlyPathDialog(QWidget):
             with open(sp, 'w', encoding='utf-8') as fh:
                 fh.write(self._shell_children_script(parts))
             try:
-                r = subprocess.run(
+                r = subprocess.run(  # nosec B603
                     [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
                      '-ExecutionPolicy', 'Bypass', '-File', sp],
                     capture_output=True, text=True, timeout=40,
@@ -2353,7 +2355,7 @@ class FlyPathDialog(QWidget):
             with open(sp, 'w', encoding='utf-8') as fh:
                 fh.write(self._missions_at_path_script(parts, tmp_dir))
             try:
-                r = subprocess.run(
+                r = subprocess.run(  # nosec B603
                     [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
                      '-ExecutionPolicy', 'Bypass', '-File', sp],
                     capture_output=True, text=True, timeout=120,
@@ -2479,7 +2481,7 @@ class FlyPathDialog(QWidget):
             with open(list_ps, 'w', encoding='utf-8') as fh:
                 fh.write(self._rc_list_script(tmp_dir))
             try:
-                r = subprocess.run(
+                r = subprocess.run(  # nosec B603
                     [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
                      '-ExecutionPolicy', 'Bypass', '-File', list_ps],
                     capture_output=True, text=True, timeout=120,
@@ -2651,9 +2653,14 @@ class FlyPathDialog(QWidget):
 
     def _open_in_explorer(self, filepath):
         """Open File Explorer with the exported file selected."""
+        explorer = os.path.join(
+            os.environ.get('SystemRoot', r'C:\Windows'), 'explorer.exe'
+        )
         try:
-            subprocess.Popen(['explorer', '/select,', os.path.normpath(filepath)])
-        except Exception:
+            subprocess.Popen(  # nosec B603
+                [explorer, '/select,', os.path.normpath(filepath)]
+            )
+        except OSError:
             pass
 
     def _write_mission_kmz(self, filepath, waypoints, mission, create_time_ms=None):
@@ -2917,7 +2924,7 @@ class FlyPathDialog(QWidget):
             )
 
         try:
-            r = subprocess.run(
+            r = subprocess.run(  # nosec B603
                 [ps_exe, '-NoProfile', '-NonInteractive',
                  '-ExecutionPolicy', 'Bypass', '-File', find_ps],
                 capture_output=True, text=True, timeout=30,
@@ -2974,7 +2981,7 @@ class FlyPathDialog(QWidget):
             )
 
         try:
-            r2 = subprocess.run(
+            r2 = subprocess.run(  # nosec B603
                 [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
                  '-ExecutionPolicy', 'Bypass', '-File', copy_ps],
                 capture_output=True, text=True, timeout=60,
@@ -3010,7 +3017,7 @@ class FlyPathDialog(QWidget):
         try:
             QgsProject.instance().layersAdded.disconnect(self._refresh_layer_combo)
             QgsProject.instance().layersRemoved.disconnect(self._refresh_layer_combo)
-        except Exception:
+        except (TypeError, RuntimeError):
             pass
         if self._thumb_dir:
             shutil.rmtree(self._thumb_dir, ignore_errors=True)
