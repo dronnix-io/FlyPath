@@ -565,6 +565,7 @@ class FlyPathDialog(QWidget):
         self._preview_layer_ids  = []     # [path_line_id, waypoints_id]
         self._waypoints          = []
         self._shot_spacing_m     = 0.0
+        self._live_waypoints     = None   # last grid computed for stats/live sync
         self._rc_waypoint_path   = None   # detected RC waypoint folder display path
         self._thumb_dir          = None   # session cache for pulled RC mission thumbnails
         self._current_thumb_full = None   # full-res preview path for the zoom viewer
@@ -1196,7 +1197,9 @@ class FlyPathDialog(QWidget):
         self._update_gsd()
         self._update_interval()
         self._update_stats()
-        self._on_clear_preview(reset_area=False)
+        # If a preview is already on the map, keep it live-synced to the new
+        # parameters instead of clearing it. Does nothing when no preview shown.
+        self._sync_preview()
 
     # ── Drone / camera ────────────────────────────────────────────────────
 
@@ -1732,6 +1735,7 @@ class FlyPathDialog(QWidget):
     # ── Statistics ────────────────────────────────────────────────────────
 
     def _update_stats(self):
+        self._live_waypoints = None
         if not self._has_survey_area(silent=True):
             self._clear_stats()
             return
@@ -1777,6 +1781,8 @@ class FlyPathDialog(QWidget):
                          'linesLabel', 'batteriesLabel'):
                 getattr(self, attr).setText('—')
             return
+
+        self._live_waypoints = waypoints
 
         dist_m     = self._path_length_m(waypoints)
         n_lines    = len(waypoints) // 2
@@ -1832,18 +1838,25 @@ class FlyPathDialog(QWidget):
             'FlyPath — Path', 'memory'
         )
         layer.setCustomProperty('flypath_internal', True)
+        layer.renderer().setSymbol(QgsLineSymbol.createSimple({
+            'color': '#FFE600', 'width': '0.8',
+            'capstyle': 'round', 'joinstyle': 'round',
+        }))
+        self._populate_path_layer(layer, waypoints)
+        QgsProject.instance().addMapLayer(layer)
+        return layer
+
+    def _populate_path_layer(self, layer, waypoints):
+        """(Re)fill the path layer's geometry from waypoints, in place."""
+        dp = layer.dataProvider()
+        dp.truncate()
         feat = QgsFeature()
         feat.setGeometry(QgsGeometry.fromPolylineXY(
             [QgsPointXY(lon, lat) for lon, lat in waypoints]
         ))
         feat.setAttributes([0])
-        layer.dataProvider().addFeatures([feat])
-        layer.renderer().setSymbol(QgsLineSymbol.createSimple({
-            'color': '#FFE600', 'width': '0.8',
-            'capstyle': 'round', 'joinstyle': 'round',
-        }))
-        QgsProject.instance().addMapLayer(layer)
-        return layer
+        dp.addFeatures([feat])
+        layer.triggerRepaint()
 
     def _build_waypoints_layer(self, waypoints):
         """Create and register a rule-based Point layer for waypoint markers."""
@@ -1852,21 +1865,7 @@ class FlyPathDialog(QWidget):
             'FlyPath — Waypoints', 'memory'
         )
         layer.setCustomProperty('flypath_internal', True)
-
-        last_idx  = len(waypoints) - 1
-        wp_feats  = []
-        for i, (lon, lat) in enumerate(waypoints):
-            f = QgsFeature()
-            f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(lon, lat)))
-            if i == 0:
-                wp_type = 'start'
-            elif i == last_idx:
-                wp_type = 'end'
-            else:
-                wp_type = 'mid'
-            f.setAttributes([i + 1, wp_type])
-            wp_feats.append(f)
-        layer.dataProvider().addFeatures(wp_feats)
+        self._populate_waypoints_layer(layer, waypoints)
 
         root = QgsRuleBasedRenderer.Rule(None)
         for expr, color, border, size, label in [
@@ -1899,6 +1898,64 @@ class FlyPathDialog(QWidget):
 
         QgsProject.instance().addMapLayer(layer)
         return layer
+
+    def _populate_waypoints_layer(self, layer, waypoints):
+        """(Re)fill the waypoint layer's point features from waypoints, in place."""
+        dp = layer.dataProvider()
+        dp.truncate()
+        last_idx = len(waypoints) - 1
+        wp_feats = []
+        for i, (lon, lat) in enumerate(waypoints):
+            f = QgsFeature()
+            f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(lon, lat)))
+            if i == 0:
+                wp_type = 'start'
+            elif i == last_idx:
+                wp_type = 'end'
+            else:
+                wp_type = 'mid'
+            f.setAttributes([i + 1, wp_type])
+            wp_feats.append(f)
+        dp.addFeatures(wp_feats)
+        layer.triggerRepaint()
+
+    def _sync_preview(self):
+        """Keep an already-shown preview in sync with the current parameters.
+
+        Reuses the grid just computed for the statistics, so there is no extra
+        generation. Does nothing unless a preview is currently on the map; if
+        the new parameters can't produce a valid grid, the stale path is
+        dropped quietly (no dialog) rather than left showing something wrong.
+        """
+        if not self._preview_layer_ids:
+            return
+        waypoints = self._live_waypoints
+        if not waypoints or len(waypoints) < 2:
+            self._on_clear_preview(reset_area=False)
+            return
+        self._waypoints      = waypoints
+        self._shot_spacing_m = max(
+            self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5
+        )
+        self._redraw_preview_layers(waypoints)
+
+    def _redraw_preview_layers(self, waypoints):
+        """Refresh the existing preview layers in place from new waypoints."""
+        proj = QgsProject.instance()
+        line_layer = (proj.mapLayer(self._preview_layer_ids[0])
+                      if len(self._preview_layer_ids) >= 1 else None)
+        wp_layer   = (proj.mapLayer(self._preview_layer_ids[1])
+                      if len(self._preview_layer_ids) >= 2 else None)
+        if line_layer is None or wp_layer is None:
+            # Layers were removed outside the plugin — rebuild from scratch.
+            self._on_clear_preview(reset_area=False)
+            line_layer = self._build_path_layer(waypoints)
+            wp_layer   = self._build_waypoints_layer(waypoints)
+            self._preview_layer_ids = [line_layer.id(), wp_layer.id()]
+        else:
+            self._populate_path_layer(line_layer, waypoints)
+            self._populate_waypoints_layer(wp_layer, waypoints)
+        self.iface.mapCanvas().refresh()
 
     def _on_clear_preview(self, reset_area=True):
         # Always remove the flight-path preview layers
