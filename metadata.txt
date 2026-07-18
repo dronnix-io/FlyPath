@@ -3,8 +3,14 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D orthomosaic mapping directly from QGIS
-version=1.3.0
-changelog=1.3.0 - Live mission preview in the RC picker: each mission is drawn from its own
+version=1.4.0
+changelog=1.4.0 - New editable GSD (ground sample distance) field that stays in sync with flight
+    altitude, so you can plan by target resolution. Auto flight direction now picks the orientation
+    that minimises flight time for your survey shape. Statistics (distance, flight time, lines,
+    photos) are measured from the real generated flight path, including the turnaround edges. The
+    map preview now updates live as you change parameters, so the drawn route always matches the
+    numbers.
+    1.3.0 - Live mission preview in the RC picker: each mission is drawn from its own
     waypoints and labelled with its waypoint count, with a zoomable viewer, so you can see which
     mission to replace before sending; the list and preview now refresh instantly after a replace.
     Redesigned panel layout for a cleaner, more efficient UI. Fixed the Draw Polygon button state.
