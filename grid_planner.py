@@ -165,54 +165,118 @@ def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
 def find_optimal_direction(polygon_geom, polygon_crs, line_spacing_m):
     """
     Return the flight direction (degrees CW from North) that minimises the
-    number of flight lines, i.e. aligns lines with the polygon's longest axis.
+    estimated mission flight time for the actual polygon shape.
 
-    Tries every integer degree from 0–179 and picks the one with the smallest
-    perpendicular span.
+    The total length of the flight lines needed to cover an area is roughly
+    (area / line_spacing) regardless of direction, so flight time is dominated
+    by the number of passes and turns. This routine picks the direction that
+    yields the fewest flight-line segments inside the real polygon at the given
+    line spacing. Counting real segments (not the convex-hull width) means
+    concave, L-shaped or irregular areas, where a single pass is split into
+    several segments across a notch, are handled correctly. Ties are broken by
+    the smaller perpendicular span (tighter alignment with the long axis).
+
+    A coarse-to-fine angle search (every 5 deg, then refined to 1 deg around the
+    best) keeps it fast. Uses only QgsGeometry APIs common to QGIS 3 and 4.
 
     Parameters
     ----------
     polygon_geom   : QgsGeometry (any CRS)
     polygon_crs    : QgsCoordinateReferenceSystem
-    line_spacing_m : float — line spacing in metres (used only for tie-breaking)
+    line_spacing_m : float, perpendicular spacing between flight lines in metres
 
     Returns
     -------
-    float : best direction in degrees
+    float : best direction in degrees (0 to 179)
     """
-    wgs84    = QgsCoordinateReferenceSystem('EPSG:4326')
-    to_wgs84 = QgsCoordinateTransform(polygon_crs, wgs84, QgsProject.instance())
-    poly_wgs84 = QgsGeometry(polygon_geom)
-    poly_wgs84.transform(to_wgs84)
-    centroid = poly_wgs84.centroid().asPoint()
+    try:
+        spacing = line_spacing_m if (line_spacing_m and line_spacing_m > 0) else 1.0
 
-    utm_crs  = _utm_crs_for(centroid.x(), centroid.y())
-    to_utm   = QgsCoordinateTransform(polygon_crs, utm_crs, QgsProject.instance())
-    poly_utm = QgsGeometry(polygon_geom)
-    poly_utm.transform(to_utm)
+        wgs84    = QgsCoordinateReferenceSystem('EPSG:4326')
+        to_wgs84 = QgsCoordinateTransform(polygon_crs, wgs84, QgsProject.instance())
+        poly_wgs84 = QgsGeometry(polygon_geom)
+        poly_wgs84.transform(to_wgs84)
+        centroid = poly_wgs84.centroid().asPoint()
 
-    hull     = poly_utm.convexHull()
-    exterior = _exterior_ring(hull) or _exterior_ring(poly_utm)
-    if not exterior:
+        utm_crs  = _utm_crs_for(centroid.x(), centroid.y())
+        to_utm   = QgsCoordinateTransform(polygon_crs, utm_crs, QgsProject.instance())
+        poly_utm = QgsGeometry(polygon_geom)
+        poly_utm.transform(to_utm)
+
+        pts = [(v.x(), v.y()) for v in poly_utm.vertices()]
+        if len(pts) < 3:
+            return 0.0
+
+        # One scan step for the whole search so segment counts stay comparable
+        # across angles; cap total scan lines (~200) to stay fast on big areas.
+        bb   = poly_utm.boundingBox()
+        diag = math.hypot(bb.width(), bb.height())
+        step = spacing if (diag <= 0 or diag / spacing <= 200) else diag / 200.0
+
+        coarse = _best_angle(poly_utm, pts, step, range(0, 180, 5))
+        lo, hi = int(coarse) - 4, int(coarse) + 4
+        fine   = _best_angle(poly_utm, pts, step,
+                             [a % 180 for a in range(lo, hi + 1)])
+        return float(fine % 180)
+    except Exception:
         return 0.0
 
-    xs = [pt.x() for pt in exterior]
-    ys = [pt.y() for pt in exterior]
 
-    best_span  = float('inf')
+def _best_angle(poly_utm, pts, step, angles):
+    """Return the angle (deg) in `angles` with the lowest (segments, span) cost."""
     best_angle = 0.0
-
-    for deg in range(180):
-        rad   = math.radians(deg)
-        cos_a = math.cos(rad)
-        sin_a = math.sin(rad)
-        projections = [-x * sin_a + y * cos_a for x, y in zip(xs, ys)]
-        span = max(projections) - min(projections)
-        if span < best_span:
-            best_span  = span
+    best_cost  = None
+    for deg in angles:
+        cost = _flight_cost(poly_utm, pts, step, float(deg))
+        if best_cost is None or cost < best_cost:
+            best_cost  = cost
             best_angle = float(deg)
-
     return best_angle
+
+
+def _flight_cost(poly_utm, pts, step, deg):
+    """
+    Relative flight cost for flight lines oriented at `deg`.
+
+    Returns (segment_count, perpendicular_span): fewer segments means fewer
+    turns and shorter flight time; span breaks ties. Scan lines are cast along
+    the flight direction at `step` spacing and intersected with the real
+    polygon, so a concavity that splits a pass into pieces is counted.
+    """
+    rad = math.radians(deg)
+    vx, vy = math.cos(rad), math.sin(rad)     # along-track (pass) direction
+    ux, uy = -math.sin(rad), math.cos(rad)    # perpendicular direction
+
+    t_vals = [x * ux + y * uy for x, y in pts]
+    s_vals = [x * vx + y * vy for x, y in pts]
+    t_min, t_max = min(t_vals), max(t_vals)
+    s_min, s_max = min(s_vals), max(s_vals)
+    span = t_max - t_min
+
+    pad = step
+    a0, a1 = s_min - pad, s_max + pad
+    seg_count = 0
+    t = t_min + step / 2.0
+    while t <= t_max:
+        p0 = QgsPointXY(a0 * vx + t * ux, a0 * vy + t * uy)
+        p1 = QgsPointXY(a1 * vx + t * ux, a1 * vy + t * uy)
+        inter = poly_utm.intersection(QgsGeometry.fromPolylineXY([p0, p1]))
+        if inter and not inter.isEmpty():
+            seg_count += len(_polylines(inter))
+        t += step
+
+    return (seg_count, span)
+
+
+def _polylines(geom):
+    """Return the list of polylines in a (possibly multi) line geometry."""
+    line = geom.asPolyline()
+    if line:
+        return [line]
+    multi = geom.asMultiPolyline()
+    if multi:
+        return multi
+    return []
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
