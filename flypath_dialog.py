@@ -75,6 +75,7 @@ from qgis.core import (
     QgsVectorLayerSimpleLabeling,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
+    QgsDistanceArea,
 )
 from .map_tools import PolygonDrawTool
 from .grid_planner import generate_flight_grid, find_optimal_direction
@@ -1173,7 +1174,7 @@ class FlyPathDialog(QWidget):
         self.speedSpin.valueChanged.connect(self._on_param_changed)
         self.photoIntervalSpin.valueChanged.connect(self._on_param_changed)
         self.gimbalAngleSpin.valueChanged.connect(self._update_stats)
-        self.directionSpin.valueChanged.connect(self._update_stats)
+        self.directionSpin.valueChanged.connect(self._on_param_changed)
         self.layerCombo.currentIndexChanged.connect(self._on_layer_changed)
         self.featureCombo.currentIndexChanged.connect(self._on_feature_changed)
         self.useSelectionBtn.clicked.connect(self._on_use_qgis_selection)
@@ -1741,41 +1742,61 @@ class FlyPathDialog(QWidget):
 
         s     = DRONE_SPECS[drone]
         speed = self.speedSpin.value()
-        fw, fh = self._footprint()
-        if fw is None:
-            self._clear_stats()
-            return
 
-        line_spacing   = max(fw * (1.0 - self.sideOverlapSpin.value()  / 100.0), 0.5)
-        actual_spacing = max(speed * self.photoIntervalSpin.value(), 0.5)
-
-        utm = QgsCoordinateReferenceSystem('EPSG:3857')
-        xf  = QgsCoordinateTransform(
-            self._survey_polygon_crs, utm, QgsProject.instance()
+        # Coverage area
+        webmerc = QgsCoordinateReferenceSystem('EPSG:3857')
+        xf = QgsCoordinateTransform(
+            self._survey_polygon_crs, webmerc, QgsProject.instance()
         )
         g = QgsGeometry(self._survey_polygon)
         g.transform(xf)
-        bbox  = g.boundingBox()
-        a_rad = math.radians(self.directionSpin.value())
+        self.coverageLabel.setText(f'{g.area() / 10_000:.2f} ha')
 
-        across = (abs(bbox.width()  * math.cos(a_rad)) +
-                  abs(bbox.height() * math.sin(a_rad)))
-        along  = (abs(bbox.width()  * math.sin(a_rad)) +
-                  abs(bbox.height() * math.cos(a_rad)))
+        # Flight-path stats are taken from the ACTUAL generated waypoints (the
+        # same path the preview draws), so distance, lines, photos and time
+        # always match the real plan and include every turnaround edge. This
+        # runs silently on every parameter change; on any failure the
+        # path-dependent stats are blanked.
+        actual_spacing = max(speed * self.photoIntervalSpin.value(), 0.5)
+        try:
+            waypoints, _ = generate_flight_grid(
+                polygon_geom=self._survey_polygon,
+                polygon_crs=self._survey_polygon_crs,
+                altitude_m=self.altitudeSpin.value(),
+                shot_spacing_m=actual_spacing,
+                side_overlap=self.sideOverlapSpin.value() / 100.0,
+                direction_deg=self.directionSpin.value(),
+                margin_m=self.marginSpin.value(),
+                drone_specs=s,
+            )
+        except Exception:
+            waypoints = None
 
-        n_lines    = max(1, math.ceil(across / line_spacing) + 1)
-        dist_m     = n_lines * along + (n_lines - 1) * line_spacing
+        if not waypoints or len(waypoints) < 2:
+            for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
+                         'linesLabel', 'batteriesLabel'):
+                getattr(self, attr).setText('—')
+            return
+
+        dist_m     = self._path_length_m(waypoints)
+        n_lines    = len(waypoints) // 2
         n_photos   = max(0, int(dist_m / actual_spacing))
-        flight_min = dist_m / (speed * 60) if speed > 0 else 0
-        batteries  = math.ceil(flight_min / s['battery_time_min'])
-        area_ha    = g.area() / 10_000
+        flight_min = dist_m / (speed * 60.0) if speed > 0 else 0.0
+        batteries  = math.ceil(flight_min / s['battery_time_min']) if flight_min > 0 else 0
 
         self.flightTimeLabel.setText(f'{flight_min:.1f} min')
         self.distanceLabel.setText(f'{dist_m / 1000:.2f} km')
         self.photosLabel.setText(f'{n_photos:,}')
         self.linesLabel.setText(str(n_lines))
         self.batteriesLabel.setText(str(batteries))
-        self.coverageLabel.setText(f'{area_ha:.2f} ha')
+
+    def _path_length_m(self, waypoints):
+        """Ellipsoidal length of the (lon, lat) flight path in metres."""
+        da = QgsDistanceArea()
+        da.setSourceCrs(QgsCoordinateReferenceSystem('EPSG:4326'),
+                        QgsProject.instance().transformContext())
+        da.setEllipsoid('WGS84')
+        return da.measureLine([QgsPointXY(lon, lat) for lon, lat in waypoints])
 
     def _clear_stats(self):
         for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',

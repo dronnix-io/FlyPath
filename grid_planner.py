@@ -244,11 +244,13 @@ def _flight_cost(poly_utm, pts, step, deg):
     polygon, so a concavity that splits a pass into pieces is counted.
     """
     rad = math.radians(deg)
-    vx, vy = math.cos(rad), math.sin(rad)     # along-track (pass) direction
-    ux, uy = -math.sin(rad), math.cos(rad)    # perpendicular direction
+    # Match generate_flight_grid's convention: at `deg` the line-spacing
+    # (perpendicular) axis is u and the flight passes run along v.
+    ux, uy = math.cos(rad), math.sin(rad)     # across / line-spacing axis
+    vx, vy = -math.sin(rad), math.cos(rad)    # along-track (pass) axis
 
-    t_vals = [x * ux + y * uy for x, y in pts]
-    s_vals = [x * vx + y * vy for x, y in pts]
+    t_vals = [x * ux + y * uy for x, y in pts]   # perpendicular offsets
+    s_vals = [x * vx + y * vy for x, y in pts]   # along-track positions
     t_min, t_max = min(t_vals), max(t_vals)
     s_min, s_max = min(s_vals), max(s_vals)
     span = t_max - t_min
