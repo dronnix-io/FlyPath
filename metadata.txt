@@ -3,8 +3,11 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D orthomosaic mapping directly from QGIS
-version=1.4.1
-changelog=1.4.1 - New editable GSD (ground sample distance) field that stays in sync with flight
+version=1.4.2
+changelog=1.4.2 - You can now edit a drawn survey polygon after drawing it. A new Edit button
+    turns on vertex editing so you can drag, add or remove vertices, and the area and statistics
+    update as you go. Click Finish Editing to commit the new shape.
+    1.4.1 - New editable GSD (ground sample distance) field that stays in sync with flight
     altitude, so you can plan by target resolution. Auto flight direction now picks the orientation
     that minimises flight time for your survey shape. Statistics (distance, flight time, lines,
     photos) are measured from the real generated flight path, including the turnaround edges. The
