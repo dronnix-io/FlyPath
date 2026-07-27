@@ -326,6 +326,12 @@ QPushButton#removePolygonBtn {
     font-weight: bold; padding: 3px 6px;
 }
 QPushButton#removePolygonBtn:hover { background-color: #7A2525; color: #FFAAAA; }
+QPushButton#editPolygonBtn {
+    background-color: #203A5A; color: #88BBFF;
+    border: 1px solid #305A7A; border-radius: 3px;
+    font-weight: bold; padding: 3px 6px;
+}
+QPushButton#editPolygonBtn:hover { background-color: #254A7A; color: #AACCFF; }
 QPushButton#useSelectionBtn {
     background-color: #2A3A2A; color: #80C880;
     border: 1px solid #3A5A3A; border-radius: 3px;
@@ -728,6 +734,14 @@ class FlyPathDialog(QWidget):
             'Left-click to place vertices, right-click or double-click to finish, '
             'Backspace to undo the last vertex, Escape to cancel.')
 
+        self.editPolygonBtn = QPushButton('✎ Edit')
+        self.editPolygonBtn.setObjectName('editPolygonBtn')
+        self._tip(self.editPolygonBtn,
+            'Edit the drawn polygon: drag a vertex to move it, click an edge '
+            'to add a vertex, or select a vertex and press Delete to remove '
+            'it. Click Finish Editing when done.')
+        self.editPolygonBtn.setVisible(False)
+
         self.removePolygonBtn = QPushButton('✕ Remove')
         self.removePolygonBtn.setObjectName('removePolygonBtn')
         self._tip(self.removePolygonBtn,
@@ -735,6 +749,7 @@ class FlyPathDialog(QWidget):
         self.removePolygonBtn.setVisible(False)
 
         draw_layout.addWidget(self.drawPolygonBtn)
+        draw_layout.addWidget(self.editPolygonBtn)
         draw_layout.addWidget(self.removePolygonBtn)
         form.addRow(draw_row)
 
@@ -1194,6 +1209,7 @@ class FlyPathDialog(QWidget):
         self.rcMissionCombo.currentIndexChanged.connect(self._on_rc_mission_selected)
         self.rcThumbLabel.clicked.connect(self._open_thumbnail_viewer)
         self.drawPolygonBtn.clicked.connect(self._on_draw_polygon)
+        self.editPolygonBtn.clicked.connect(self._on_edit_polygon)
         self.removePolygonBtn.clicked.connect(self._on_remove_drawn_polygon)
         self.autoDirectionBtn.clicked.connect(self._on_auto_direction)
         self.previewBtn.clicked.connect(self._on_preview)
@@ -1633,11 +1649,14 @@ class FlyPathDialog(QWidget):
 
         QgsProject.instance().addMapLayer(layer)
         self._survey_area_layer_id = layer.id()
+        self.editPolygonBtn.setText('✎ Edit')
+        self.editPolygonBtn.setVisible(True)
         self.removePolygonBtn.setVisible(True)
         self.iface.mapCanvas().refresh()
 
     def _on_survey_area_edited(self):
         """Called after the user commits edits to the survey area layer."""
+        self._finish_polygon_edit()
         if not self._survey_area_layer_id:
             return
         layer = QgsProject.instance().mapLayer(self._survey_area_layer_id)
@@ -1690,7 +1709,50 @@ class FlyPathDialog(QWidget):
                     pass
                 QgsProject.instance().removeMapLayer(self._survey_area_layer_id)
             self._survey_area_layer_id = None
+        self.editPolygonBtn.setVisible(False)
+        self.editPolygonBtn.setText('✎ Edit')
         self.removePolygonBtn.setVisible(False)
+
+    def _on_edit_polygon(self):
+        """Toggle vertex editing of the drawn survey polygon with QGIS tools."""
+        if not self._survey_area_layer_id:
+            return
+        layer = QgsProject.instance().mapLayer(self._survey_area_layer_id)
+        if layer is None:
+            return
+        if layer.isEditable():
+            # Finish: commit the edits. This fires editingStopped, which runs
+            # _on_survey_area_edited to sync the polygon and reset the UI.
+            layer.commitChanges()
+            return
+        # Start: make the layer active, begin editing, and switch to the QGIS
+        # Vertex Tool so the user can drag, add and delete vertices. The
+        # existing geometryChanged/editingStopped hooks keep FlyPath in sync.
+        self.iface.setActiveLayer(layer)
+        layer.startEditing()
+        self._prev_tool_before_edit = self.iface.mapCanvas().mapTool()
+        try:
+            self.iface.actionVertexTool().trigger()
+        except AttributeError:
+            try:
+                self.iface.actionNodeTool().trigger()   # older QGIS name
+            except AttributeError:
+                pass
+        self.editPolygonBtn.setText('✓ Finish Editing')
+        self.infoBar.setText(
+            'Editing the survey polygon: drag a vertex to move it, click an '
+            'edge to add one, or select a vertex and press Delete to remove '
+            'it. Click Finish Editing when done.'
+        )
+
+    def _finish_polygon_edit(self):
+        """Reset the Edit button, restore the previous map tool and info bar."""
+        self.editPolygonBtn.setText('✎ Edit')
+        tool = getattr(self, '_prev_tool_before_edit', None)
+        if tool is not None:
+            self.iface.mapCanvas().setMapTool(tool)
+            self._prev_tool_before_edit = None
+        self.infoBar.setText(_INFO_IDLE)
 
     def _on_drawing_cancelled(self):
         self.drawPolygonBtn.setChecked(False)
