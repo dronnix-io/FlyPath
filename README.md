@@ -14,9 +14,25 @@ Developed and maintained by [Dronnix](https://www.dronnix.com), a drone mapping 
 
 ## Screenshots
 
+FlyPath panel and flight-path preview:
+
 ![FlyPath panel overview](docs/images/panel_overview.png)
 
 ![Flight path preview on map](docs/images/map_preview.png)
+
+The latest version adds multi-battery mission splitting. A large survey is divided into separate missions (one per battery), each drawn in its own color on the map and listed in the Layers panel, with a Mission part picker for sending each part to the RC:
+
+![FlyPath with a large survey split into multiple missions](docs/images/splitting_overview.png)
+
+---
+
+## Video Tutorial
+
+A walkthrough of installing and using FlyPath in QGIS: defining a survey area, setting flight parameters, previewing the path, and exporting a mission.
+
+[![Watch the FlyPath tutorial on YouTube](https://img.youtube.com/vi/uhaE7L8n0Fc/hqdefault.jpg)](https://www.youtube.com/watch?v=uhaE7L8n0Fc)
+
+> This video was recorded on an earlier release, so some of the interface has changed and newer features (such as multi-battery mission splitting) are not shown, but the core workflow is the same.
 
 ---
 
@@ -30,7 +46,8 @@ Developed and maintained by [Dronnix](https://www.dronnix.com), a drone mapping 
 - Auto-optimised flight direction that minimises flight time for the survey area shape
 - Editable GSD linked two-way with altitude, so you can plan by target resolution, with effective photo spacing synced to drone model, speed, and interval
 - Live map preview that redraws the flight path as you change parameters, so the route always matches the statistics
-- Flight statistics measured from the actual generated flight path, including the turns between lines: area, path distance, waypoint count, photo count, estimated batteries, and flight time
+- Flight statistics measured from the actual generated flight path, including the turns between lines: area, path distance, waypoint count, photo count, estimated batteries, and flight time. Battery estimates plan against a 30% reserve, so usable time per battery is 70% of the drone's rated endurance
+- **Multi-battery mission splitting**: divide a large survey into several missions, one per battery, with the split count defaulting to the estimated batteries and editable to any value. Each mission is drawn in its own colour on the preview, and Save to computer writes one KMZ file per mission. Consecutive missions share a seam waypoint, so each mission begins exactly where the previous one ended
 - Configurable safety actions: finish action and RC lost action
 - Exports native DJI WPML KMZ, compatible with DJI Fly on DJI RC2
 - **Direct RC export**: auto-detects the connected DJI RC (over USB, or as a removable drive), lists the missions DJI Fly tracks, and replaces the one you pick, transferred silently over USB with no prompts or pop-up windows
@@ -117,6 +134,7 @@ Only one polygon can be active at a time. Switching methods automatically remove
 | Speed | Waypoint flight speed in m/s (max varies by drone model) |
 | Direction | Angle of flight lines, or click **Auto** to minimise flight time for the survey shape |
 | Margin | Buffer added around the survey polygon boundary in metres |
+| Split Missions | Number of separate missions to divide the survey into, one per battery; defaults to the estimated batteries and can be set to any value up to the flight-line count |
 
 #### Camera Settings
 
@@ -150,6 +168,8 @@ Click **Preview on Map** to generate the flight grid and display it on the canva
 - **Red filled circle**: start waypoint
 - **Blue filled circle**: end waypoint
 
+When you set **Split Missions** above 1, each mission's flight path is drawn in its own colour, with its own start and end markers, so you can see how the survey divides across batteries. The missions join at shared seam waypoints where one ends and the next begins.
+
 Flight statistics (area, distance, photos, batteries, flight time) update below the parameters, measured from the actual flight path including the turns between lines. Once a preview is on the map, changing any parameter redraws the path live and recalculates the statistics, so the numbers always match what you see.
 
 ![Export bar](docs/images/export_bar.png)
@@ -168,6 +188,8 @@ Use this to save the mission as a `.kmz` file on your PC or an external drive.
 2. Click **Browse…** and choose a folder (the folder is remembered for next time).
 3. Click **Export KMZ**. A save dialog opens with a dated default filename.
 4. After saving, FlyPath offers to open the folder.
+
+If **Split Missions** is above 1, FlyPath writes one file per mission from the name you choose, numbered in order: `<name>_1_of_N.kmz`, `<name>_2_of_N.kmz`, and so on.
 
 ---
 
@@ -188,8 +210,9 @@ This replaces an existing mission directly on the DJI RC over USB, with no manua
 3. If it still is not found, click **Locate folder manually**. This opens a browser of *This PC* that can reach the RC and any drive (unlike the standard folder dialog, which cannot show MTP devices); navigate to the `waypoint` folder and click Select.
 4. If the folder is found but has no missions, FlyPath tells you to create one in DJI Fly first (see the Important note above).
 5. Pick the mission you want to replace. Each mission shows a preview of its flight path and its waypoint count, rendered from that mission's own waypoints, so you can confirm the right one at a glance; click the preview to open a zoomable viewer. Use the date to match what you see in DJI Fly.
-6. Click **Replace "…" on RC**. FlyPath writes the new mission into the selected UUID folder.
-7. Disconnect the RC, then close and reopen DJI Fly to see the updated mission.
+6. If **Split Missions** is above 1, a **Mission part** picker appears. The RC replaces one mission at a time, so choose which part to send into the selected slot and repeat for each part, filling one RC mission per part.
+7. Click **Replace "…" on RC**. FlyPath writes the new mission into the selected UUID folder.
+8. Disconnect the RC, then close and reopen DJI Fly to see the updated mission.
 
 The replaced mission as it appears in the DJI Fly app on the RC:
 
@@ -233,7 +256,7 @@ FlyPath/
 - Direct RC export requires a DJI RC2 connected via USB with at least one existing mission
 - DJI Mini 3 Pro droneEnumValue (`97`) is community-verified, not confirmed from a native mission file
 - 2D grid missions only, no terrain following, 3D facade, or orbit missions
-- No automatic multi-battery mission splitting
+- Mission splitting divides the survey into whole flight-line groups by battery count; sending split missions to the RC replaces one existing mission slot per part, so create enough slots in DJI Fly first
 
 ---
 

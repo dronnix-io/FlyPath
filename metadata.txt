@@ -3,8 +3,18 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D orthomosaic mapping directly from QGIS
-version=1.4.2
-changelog=1.4.2 - You can now edit a drawn survey polygon after drawing it. A new Edit button
+version=1.5.0
+changelog=1.5.0 - Split a large survey into multiple missions, one per battery. A new Split
+    Missions field defaults to the estimated number of batteries and can be set to any value; the
+    map preview draws each mission in its own colour and Save to computer writes one KMZ per
+    mission. Consecutive missions share a seam waypoint, so each one begins where the previous
+    ended. Send to DJI RC gains a Mission part picker to choose which split mission fills the
+    selected RC slot. Battery estimates now plan against a 30 percent reserve, so usable time per
+    battery is 70 percent of the drone's rated endurance, leaving margin for wind, turnarounds and a
+    safe return. The panel width is now fixed so it can no longer be dragged wider or narrower.
+    Fixed the polygon draw tool leaving the crosshair cursor active after a polygon was finished or
+    removed.
+    1.4.2 - You can now edit a drawn survey polygon after drawing it. A new Edit button
     turns on vertex editing so you can drag, add or remove vertices, and the area and statistics
     update as you go. Click Finish Editing to commit the new shape.
     1.4.1 - New editable GSD (ground sample distance) field that stays in sync with flight
@@ -29,7 +39,8 @@ about=FlyPath is a QGIS plugin for planning autonomous drone mapping missions an
     them as native DJI WPML KMZ files, loadable directly in the DJI Fly app.
     Supported drones: DJI Mini 3 Pro, Mini 4 Pro, Mini 5 Pro (community-verified).
     Draw your survey area on the map, set flight altitude and overlap, preview
-    the flight path, and export a ready-to-fly mission file.
+    the flight path, and export a ready-to-fly mission file. Large surveys can
+    be split into several missions, one per battery.
 
 tracker=https://github.com/dronnix-io/FlyPath/issues
 repository=https://github.com/dronnix-io/FlyPath
