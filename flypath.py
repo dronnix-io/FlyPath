@@ -39,10 +39,14 @@ class FlyPath:
         self.dock_widget.setAllowedAreas(
             _DockLeft | _DockRight
         )
-        self.dock_widget.setMinimumWidth(300)
 
         self.panel = FlyPathDialog(self.iface, self.dock_widget)
         self.dock_widget.setWidget(self.panel)
+
+        # Lock the dock to the panel's natural width so it can't be dragged
+        # wider or narrower. The two-column layout is designed for one width,
+        # and stretching it only adds empty space.
+        self.dock_widget.setFixedWidth(self.panel.minimumWidth())
 
         self.iface.mainWindow().addDockWidget(
             _DockRight, self.dock_widget
