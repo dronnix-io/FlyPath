@@ -227,6 +227,50 @@ def find_optimal_direction(polygon_geom, polygon_crs, line_spacing_m):
         return 0.0
 
 
+def split_waypoints(waypoints, n_missions):
+    """
+    Split a lawnmower waypoint list into n_missions contiguous sub-missions.
+
+    `waypoints` is the (lon, lat) turn-point list from generate_flight_grid,
+    with two points per flight line. The lines are divided into n_missions
+    groups of roughly equal line count, so each sub-mission is a clean, self
+    contained lawnmower over a contiguous strip of the area (no partial lines,
+    no coverage gap at the seams). Used for multi-battery survey planning on
+    consumer drones.
+
+    Consecutive missions share a seam waypoint: each mission after the first
+    begins at the last waypoint of the previous mission, so the drone picks up
+    exactly where the last mission ended and the coloured paths join up with no
+    gap on the map.
+
+    Returns a list of waypoint sub-lists (one per mission). n_missions is
+    clamped to the range 1..n_lines.
+    """
+    pts = list(waypoints)
+    n_lines = len(pts) // 2
+    try:
+        n = int(n_missions)
+    except (TypeError, ValueError):
+        n = 1
+    n = max(1, min(n, max(1, n_lines)))
+    if n <= 1 or n_lines <= 1:
+        return [pts]
+
+    base, rem = divmod(n_lines, n)
+    missions = []
+    start_line = 0
+    prev_last = None
+    for g in range(n):
+        count = base + (1 if g < rem else 0)
+        chunk = pts[start_line * 2:(start_line + count) * 2]
+        if prev_last is not None:
+            chunk = [prev_last] + chunk
+        missions.append(chunk)
+        prev_last = chunk[-1]
+        start_line += count
+    return missions
+
+
 def _best_angle(poly_utm, pts, step, angles):
     """Return the angle (deg) in `angles` with the lowest (segments, span) cost."""
     best_angle = 0.0

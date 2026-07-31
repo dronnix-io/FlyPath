@@ -80,7 +80,9 @@ from qgis.core import (
     QgsDistanceArea,
 )
 from .map_tools import PolygonDrawTool
-from .grid_planner import generate_flight_grid, find_optimal_direction
+from .grid_planner import (
+    generate_flight_grid, find_optimal_direction, split_waypoints
+)
 from .wpml_writer import write_kmz
 
 try:
@@ -414,6 +416,18 @@ _COLOR_START_MARKER  = '#CC2222'   # red filled circle — first waypoint
 _COLOR_END_MARKER    = '#2D6DB5'   # blue filled circle — last waypoint
 _COLOR_MID_MARKER    = 'white'     # white circle — intermediate waypoints
 
+# Distinct flight-path colours, one per split mission. The first is the same
+# yellow used before splitting existed, so an unsplit plan looks unchanged.
+_MISSION_COLORS = [
+    '#FFE600', '#00E0FF', '#FF7AD9', '#7CFF6B', '#FFA24B',
+    '#B98CFF', '#4BE0C0', '#FF6B6B', '#8CD6FF', '#E0FF6B',
+]
+
+
+def _mission_color(i):
+    return _MISSION_COLORS[i % len(_MISSION_COLORS)]
+
+
 class _HoverFilter(QObject):
     """Event filter that writes a hint to a shared info label on mouse enter/leave."""
 
@@ -584,7 +598,11 @@ class FlyPathDialog(QWidget):
         self._preview_layer_ids  = []     # [path_line_id, waypoints_id]
         self._waypoints          = []
         self._shot_spacing_m     = 0.0
+        self._missions           = []     # last previewed plan, split into sub-missions
         self._live_waypoints     = None   # last grid computed for stats/live sync
+        self._live_missions      = None   # last grid split by the current split count
+        self._split_overridden   = False  # user typed a split count; stop auto-tracking
+        self._setting_split      = False  # guard: programmatic splitSpin.setValue()
         self._rc_waypoint_path   = None   # detected RC waypoint folder display path
         self._thumb_dir          = None   # session cache for pulled RC mission thumbnails
         self._current_thumb_full = None   # full-res preview path for the zoom viewer
@@ -859,6 +877,16 @@ class FlyPathDialog(QWidget):
             'Typically 0–50 m depending on altitude and terrain.')
         form.addRow('Margin', self.marginSpin)
 
+        self.splitSpin = QSpinBox()
+        self.splitSpin.setRange(1, 99)
+        self.splitSpin.setValue(1)
+        self._tip(self.splitSpin,
+            'Split the survey into this many separate missions, each a group '
+            'of whole flight lines you fly on its own battery. Defaults to the '
+            'estimated number of batteries; set your own value to fly fewer or '
+            'more missions. Each mission is exported as its own KMZ file.')
+        form.addRow('Split Missions', self.splitSpin)
+
         return group
 
     def _build_camera_group(self):
@@ -1130,6 +1158,23 @@ class FlyPathDialog(QWidget):
             'Set by Auto Detect RC or Locate folder manually.')
         v.addWidget(self.rcTargetEdit)
 
+        # When the survey is split, choose which part goes into the RC slot.
+        # The RC replaces one mission at a time, so parts are sent one by one.
+        self.splitPartRow = QWidget()
+        part_layout = QHBoxLayout(self.splitPartRow)
+        part_layout.setContentsMargins(0, 0, 0, 0)
+        part_layout.setSpacing(4)
+        part_label = QLabel('Mission part')
+        self.splitPartCombo = QComboBox()
+        self._tip(self.splitPartCombo,
+            'Which split mission to send into the selected RC slot. The RC '
+            'replaces one mission at a time, so send each part in turn, each '
+            'into its own RC mission.')
+        part_layout.addWidget(part_label)
+        part_layout.addWidget(self.splitPartCombo, 1)
+        self.splitPartRow.setVisible(False)
+        v.addWidget(self.splitPartRow)
+
         self.rcMissionCombo = QComboBox()
         self._tip(self.rcMissionCombo,
             'The mission on the RC that will be replaced when you export. '
@@ -1207,6 +1252,7 @@ class FlyPathDialog(QWidget):
         self.photoIntervalSpin.valueChanged.connect(self._on_param_changed)
         self.gimbalAngleSpin.valueChanged.connect(self._update_stats)
         self.directionSpin.valueChanged.connect(self._on_param_changed)
+        self.splitSpin.valueChanged.connect(self._on_split_changed)
         self.layerCombo.currentIndexChanged.connect(self._on_layer_changed)
         self.featureCombo.currentIndexChanged.connect(self._on_feature_changed)
         self.useSelectionBtn.clicked.connect(self._on_use_qgis_selection)
@@ -1216,6 +1262,7 @@ class FlyPathDialog(QWidget):
         self.rcRefreshBtn.clicked.connect(self._on_refresh_rc_missions)
         self.rcManualBtn.clicked.connect(self._on_locate_folder_manually)
         self.rcMissionCombo.currentIndexChanged.connect(self._on_rc_mission_selected)
+        self.splitPartCombo.currentIndexChanged.connect(self._update_export_button)
         self.rcThumbLabel.clicked.connect(self._open_thumbnail_viewer)
         self.drawPolygonBtn.clicked.connect(self._on_draw_polygon)
         self.editPolygonBtn.clicked.connect(self._on_edit_polygon)
@@ -1231,6 +1278,16 @@ class FlyPathDialog(QWidget):
         self._update_stats()
         # If a preview is already on the map, keep it live-synced to the new
         # parameters instead of clearing it. Does nothing when no preview shown.
+        self._sync_preview()
+
+    def _on_split_changed(self):
+        # Ignore the change we make ourselves when the default tracks the
+        # battery estimate; only a real user edit stops the auto-tracking.
+        if self._setting_split:
+            return
+        self._split_overridden = True
+        self._update_stats()
+        self._refresh_split_part_combo()
         self._sync_preview()
 
     # ── Drone / camera ────────────────────────────────────────────────────
@@ -1567,9 +1624,11 @@ class FlyPathDialog(QWidget):
             QMessageBox.information(
                 self, 'Large Survey Area',
                 f'The selected area is {area_ha:.0f} ha.\n\n'
-                'Missions this size will require multiple battery swaps. '
-                'Check the estimated Batteries field in Statistics and '
-                'plan your swap stops before flying.'
+                'A survey this large needs more than one battery. Use the '
+                'Split Missions field in Flight Parameters to divide it into '
+                'separate missions, one per battery (it defaults to the '
+                'estimated Batteries count), then export and fly each part in '
+                'turn.'
             )
 
     @staticmethod
@@ -1822,8 +1881,43 @@ class FlyPathDialog(QWidget):
 
     # ── Statistics ────────────────────────────────────────────────────────
 
+    def _apply_split_default(self, n_lines, batteries):
+        """Cap the split count to the line count and, until the user overrides
+        it, keep it tracking the battery estimate. Runs with signals blocked so
+        the programmatic value change doesn't read as a user edit."""
+        max_split = max(1, n_lines)
+        target = self.splitSpin.value()
+        if not self._split_overridden:
+            target = max(1, batteries)
+        target = max(1, min(target, max_split))
+        self._setting_split = True
+        self.splitSpin.blockSignals(True)
+        self.splitSpin.setMaximum(max_split)
+        self.splitSpin.setValue(target)
+        self.splitSpin.blockSignals(False)
+        self._setting_split = False
+
+    def _refresh_split_part_combo(self):
+        """Show and fill the RC 'Mission part' picker to match the split count.
+
+        The RC replaces one mission slot at a time, so when the survey is split
+        the user picks which part to send. Hidden when there is a single part."""
+        n = self.splitSpin.value()
+        prev = self.splitPartCombo.currentData()
+        self.splitPartCombo.blockSignals(True)
+        self.splitPartCombo.clear()
+        if n > 1:
+            for i in range(n):
+                self.splitPartCombo.addItem(f'Part {i + 1} of {n}', i)
+            idx = self.splitPartCombo.findData(prev)
+            self.splitPartCombo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.splitPartCombo.blockSignals(False)
+        self.splitPartRow.setVisible(n > 1)
+        self._update_export_button()
+
     def _update_stats(self):
         self._live_waypoints = None
+        self._live_missions  = None
         if not self._has_survey_area(silent=True):
             self._clear_stats()
             return
@@ -1885,6 +1979,12 @@ class FlyPathDialog(QWidget):
         self.linesLabel.setText(str(n_lines))
         self.batteriesLabel.setText(str(batteries))
 
+        # Split-count default tracks the battery estimate until the user sets
+        # their own value; then split the just-computed grid for the preview.
+        self._apply_split_default(n_lines, batteries)
+        self._live_missions = split_waypoints(waypoints, self.splitSpin.value())
+        self._refresh_split_part_combo()
+
     def _path_length_m(self, waypoints):
         """Ellipsoidal length of the (lon, lat) flight path in metres."""
         da = QgsDistanceArea()
@@ -1912,49 +2012,73 @@ class FlyPathDialog(QWidget):
         if result is None:
             return
         waypoints, shot_spacing_m = result
+        missions = split_waypoints(waypoints, self.splitSpin.value())
         self._waypoints      = waypoints
         self._shot_spacing_m = shot_spacing_m
+        self._missions       = missions
         self._on_clear_preview(reset_area=False)
-        line_layer = self._build_path_layer(waypoints)
-        wp_layer   = self._build_waypoints_layer(waypoints)
+        line_layer = self._build_path_layer(missions)
+        wp_layer   = self._build_waypoints_layer(missions)
         self._preview_layer_ids = [line_layer.id(), wp_layer.id()]
         self.iface.mapCanvas().refresh()
 
-    def _build_path_layer(self, waypoints):
-        """Create and register a yellow LineString layer for the flight path."""
+    def _path_renderer(self, n_missions):
+        """Rule-based renderer that colours each split mission's line its own
+        colour. A single (unsplit) mission keeps the original yellow."""
+        root = QgsRuleBasedRenderer.Rule(None)
+        for m in range(max(1, n_missions)):
+            sym = QgsLineSymbol.createSimple({
+                'color': _mission_color(m), 'width': '0.8',
+                'capstyle': 'round', 'joinstyle': 'round',
+            })
+            label = 'Flight path' if n_missions <= 1 else f'Mission {m + 1}'
+            root.appendChild(QgsRuleBasedRenderer.Rule(
+                sym, filterExp=f'"mission" = {m}', label=label))
+        return QgsRuleBasedRenderer(root)
+
+    def _build_path_layer(self, missions):
+        """Create and register a LineString layer for the flight path, drawing
+        one colour-coded polyline per split mission."""
         layer = QgsVectorLayer(
-            'LineString?crs=EPSG:4326&field=id:integer',
+            'LineString?crs=EPSG:4326&field=id:integer&field=mission:integer',
             'FlyPath — Path', 'memory'
         )
         layer.setCustomProperty('flypath_internal', True)
-        layer.renderer().setSymbol(QgsLineSymbol.createSimple({
-            'color': '#FFE600', 'width': '0.8',
-            'capstyle': 'round', 'joinstyle': 'round',
-        }))
-        self._populate_path_layer(layer, waypoints)
+        layer.setRenderer(self._path_renderer(len(missions)))
+        self._populate_path_layer(layer, missions)
         QgsProject.instance().addMapLayer(layer)
         return layer
 
-    def _populate_path_layer(self, layer, waypoints):
-        """(Re)fill the path layer's geometry from waypoints, in place."""
+    def _populate_path_layer(self, layer, missions):
+        """(Re)fill the path layer with one polyline per mission, in place.
+
+        Missions are drawn as separate polylines with no line joining one to
+        the next: the drone lands and swaps battery between them, so there is
+        no flight leg connecting them."""
         dp = layer.dataProvider()
         dp.truncate()
-        feat = QgsFeature()
-        feat.setGeometry(QgsGeometry.fromPolylineXY(
-            [QgsPointXY(lon, lat) for lon, lat in waypoints]
-        ))
-        feat.setAttributes([0])
-        dp.addFeatures([feat])
+        feats = []
+        for m, wps in enumerate(missions):
+            if len(wps) < 2:
+                continue
+            feat = QgsFeature()
+            feat.setGeometry(QgsGeometry.fromPolylineXY(
+                [QgsPointXY(lon, lat) for lon, lat in wps]
+            ))
+            feat.setAttributes([m, m])
+            feats.append(feat)
+        dp.addFeatures(feats)
         layer.triggerRepaint()
 
-    def _build_waypoints_layer(self, waypoints):
+    def _build_waypoints_layer(self, missions):
         """Create and register a rule-based Point layer for waypoint markers."""
         layer = QgsVectorLayer(
-            'Point?crs=EPSG:4326&field=seq:integer&field=wp_type:string(10)',
+            'Point?crs=EPSG:4326&field=seq:integer&field=wp_type:string(10)'
+            '&field=mission:integer',
             'FlyPath — Waypoints', 'memory'
         )
         layer.setCustomProperty('flypath_internal', True)
-        self._populate_waypoints_layer(layer, waypoints)
+        self._populate_waypoints_layer(layer, missions)
 
         root = QgsRuleBasedRenderer.Rule(None)
         for expr, color, border, size, label in [
@@ -1988,23 +2112,25 @@ class FlyPathDialog(QWidget):
         QgsProject.instance().addMapLayer(layer)
         return layer
 
-    def _populate_waypoints_layer(self, layer, waypoints):
-        """(Re)fill the waypoint layer's point features from waypoints, in place."""
+    def _populate_waypoints_layer(self, layer, missions):
+        """(Re)fill the waypoint markers, in place. Each mission is numbered
+        from 1 on its own and gets its own start and end marker."""
         dp = layer.dataProvider()
         dp.truncate()
-        last_idx = len(waypoints) - 1
         wp_feats = []
-        for i, (lon, lat) in enumerate(waypoints):
-            f = QgsFeature()
-            f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(lon, lat)))
-            if i == 0:
-                wp_type = 'start'
-            elif i == last_idx:
-                wp_type = 'end'
-            else:
-                wp_type = 'mid'
-            f.setAttributes([i + 1, wp_type])
-            wp_feats.append(f)
+        for m, wps in enumerate(missions):
+            last_idx = len(wps) - 1
+            for i, (lon, lat) in enumerate(wps):
+                f = QgsFeature()
+                f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(lon, lat)))
+                if i == 0:
+                    wp_type = 'start'
+                elif i == last_idx:
+                    wp_type = 'end'
+                else:
+                    wp_type = 'mid'
+                f.setAttributes([i + 1, wp_type, m])
+                wp_feats.append(f)
         dp.addFeatures(wp_feats)
         layer.triggerRepaint()
 
@@ -2018,18 +2144,20 @@ class FlyPathDialog(QWidget):
         """
         if not self._preview_layer_ids:
             return
-        waypoints = self._live_waypoints
-        if not waypoints or len(waypoints) < 2:
+        missions = self._live_missions
+        flat     = self._live_waypoints
+        if not flat or len(flat) < 2 or not missions:
             self._on_clear_preview(reset_area=False)
             return
-        self._waypoints      = waypoints
+        self._waypoints      = flat
+        self._missions       = missions
         self._shot_spacing_m = max(
             self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5
         )
-        self._redraw_preview_layers(waypoints)
+        self._redraw_preview_layers(missions)
 
-    def _redraw_preview_layers(self, waypoints):
-        """Refresh the existing preview layers in place from new waypoints."""
+    def _redraw_preview_layers(self, missions):
+        """Refresh the existing preview layers in place from new missions."""
         proj = QgsProject.instance()
         line_layer = (proj.mapLayer(self._preview_layer_ids[0])
                       if len(self._preview_layer_ids) >= 1 else None)
@@ -2038,12 +2166,15 @@ class FlyPathDialog(QWidget):
         if line_layer is None or wp_layer is None:
             # Layers were removed outside the plugin — rebuild from scratch.
             self._on_clear_preview(reset_area=False)
-            line_layer = self._build_path_layer(waypoints)
-            wp_layer   = self._build_waypoints_layer(waypoints)
+            line_layer = self._build_path_layer(missions)
+            wp_layer   = self._build_waypoints_layer(missions)
             self._preview_layer_ids = [line_layer.id(), wp_layer.id()]
         else:
-            self._populate_path_layer(line_layer, waypoints)
-            self._populate_waypoints_layer(wp_layer, waypoints)
+            # The mission count can change between syncs (the split value or the
+            # line count moved), so rebuild the colour rules before refilling.
+            line_layer.setRenderer(self._path_renderer(len(missions)))
+            self._populate_path_layer(line_layer, missions)
+            self._populate_waypoints_layer(wp_layer, missions)
         self.iface.mapCanvas().refresh()
 
     def _on_clear_preview(self, reset_area=True):
@@ -2054,13 +2185,17 @@ class FlyPathDialog(QWidget):
         self._preview_layer_ids = []
 
         if reset_area:
-            # Full reset — also remove the survey boundary layer
+            # Full reset — also stop any active draw and remove the boundary
+            self._leave_draw_tool()
             self._remove_survey_area_layer()
             self._clear_layer_selection()
             self._survey_polygon     = None
             self._survey_polygon_crs = None
             self._waypoints          = []
             self._shot_spacing_m     = 0.0
+            self._missions           = []
+            self._live_missions      = None
+            self._split_overridden   = False
             self.areaLabel.setText('—')
             self.layerCombo.setCurrentIndex(0)
             self.featureCombo.clear()
@@ -2078,6 +2213,7 @@ class FlyPathDialog(QWidget):
         QSettings('FlyPath', 'FlyPath').setValue(
             'dest_mode', self.destCombo.currentData()
         )
+        self._refresh_split_part_combo()
         self._update_export_button()
 
     def _on_local_folder_changed(self, text):
@@ -2099,8 +2235,11 @@ class FlyPathDialog(QWidget):
         if self.destCombo.currentData() == 'rc':
             mission = self.rcMissionCombo.currentData()
             if mission:
+                part = ''
+                if self.splitSpin.value() > 1 and self.splitPartRow.isVisible():
+                    part = f' with {self.splitPartCombo.currentText()}'
                 self.exportBtn.setText(
-                    f'Replace "{self._mission_display(mission)}" on RC'
+                    f'Replace "{self._mission_display(mission)}"{part} on RC'
                 )
             else:
                 self.exportBtn.setText('Send to DJI RC')
@@ -2785,13 +2924,24 @@ class FlyPathDialog(QWidget):
                 return
             waypoints, shot_spacing_m = result
 
-        if self.destCombo.currentData() == 'rc':
-            self._export_rc(mission, waypoints, shot_spacing_m)
-        else:
-            self._export_local(mission, waypoints)
+        missions = split_waypoints(waypoints, self.splitSpin.value())
 
-    def _export_local(self, mission, waypoints):
-        """Save the mission as a .kmz file in the chosen folder."""
+        if self.destCombo.currentData() == 'rc':
+            # The RC replaces one mission slot, so send just the chosen part.
+            if len(missions) > 1:
+                part = self.splitPartCombo.currentData()
+                if part is None:
+                    part = 0
+                part_wps = missions[part]
+                part_name = f'{mission} {part + 1} of {len(missions)}'
+                self._export_rc(part_name, part_wps, shot_spacing_m)
+            else:
+                self._export_rc(mission, waypoints, shot_spacing_m)
+        else:
+            self._export_local(mission, missions)
+
+    def _export_local(self, mission, missions):
+        """Save the mission (or each split mission) as a .kmz in the folder."""
         folder = self.localFolderEdit.text().strip() or os.path.expanduser('~')
         if not os.path.isdir(folder):
             reply = QMessageBox.question(
@@ -2815,8 +2965,25 @@ class FlyPathDialog(QWidget):
         if not filepath:
             return
 
+        n = len(missions)
+        base, ext = os.path.splitext(filepath)
+        ext = ext or '.kmz'
+        # One file when unsplit; otherwise name them <base>_1_of_N … so they
+        # stay in order and never overwrite one another.
+        if n <= 1:
+            targets = [(filepath, missions[0], mission)]
+        else:
+            width = len(str(n))
+            targets = []
+            for i, wps in enumerate(missions, start=1):
+                path = f'{base}_{str(i).zfill(width)}_of_{n}{ext}'
+                targets.append((path, wps, f'{mission} {i} of {n}'))
+
+        written = []
         try:
-            self._write_mission_kmz(filepath, waypoints, mission)
+            for path, wps, name in targets:
+                self._write_mission_kmz(path, wps, name)
+                written.append(path)
         except Exception as exc:
             QMessageBox.critical(self, 'Export Failed', str(exc))
             return
@@ -2824,15 +2991,21 @@ class FlyPathDialog(QWidget):
         QSettings('FlyPath', 'FlyPath').setValue(
             'local_export_dir', os.path.dirname(filepath)
         )
+        total_wp = sum(len(wps) for _, wps, _ in targets)
+        if n <= 1:
+            saved_text = f'Saved to:\n{written[0]}'
+        else:
+            names = '\n'.join('  ' + os.path.basename(p) for p in written)
+            saved_text = f'Saved {n} missions to:\n{folder}\n\n{names}'
         reply = QMessageBox.information(
             self, 'Export Complete',
-            f'Waypoints: {len(waypoints):,}  ·  '
+            f'Missions: {n}  ·  Waypoints: {total_wp:,}  ·  '
             f'Interval: {self.photoIntervalSpin.value():.1f} s\n\n'
-            f'Saved to:\n{filepath}\n\nOpen the folder?',
+            f'{saved_text}\n\nOpen the folder?',
             _MB_YES | _MB_NO, _MB_YES,
         )
         if reply == _MB_YES:
-            self._open_in_explorer(filepath)
+            self._open_in_explorer(written[0])
 
     def _export_rc(self, mission, waypoints, shot_spacing_m):
         """Replace the selected mission on the connected RC."""
