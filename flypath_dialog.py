@@ -1617,12 +1617,25 @@ class FlyPathDialog(QWidget):
         else:
             self._cancel_draw_tool()
 
+    def _leave_draw_tool(self):
+        """Turn off the crosshair draw tool. Restores whatever map tool was
+        active before drawing, or unsets ours if there was none, so the plus
+        cursor is only ever shown while Draw or Edit is active."""
+        canvas = self.iface.mapCanvas()
+        current = canvas.mapTool()
+        if self._prev_map_tool is not None:
+            canvas.setMapTool(self._prev_map_tool)
+            self._prev_map_tool = None
+        elif isinstance(current, PolygonDrawTool):
+            # No earlier tool to fall back to (the canvas had none when Draw
+            # started); clear ours so the cursor returns to the default arrow.
+            canvas.unsetMapTool(current)
+        self._draw_tool = None
+
     def _on_polygon_drawn(self, geom):
         self.drawPolygonBtn.setChecked(False)
         self.drawPolygonBtn.setText('Draw Polygon on Map')
-        if self._prev_map_tool:
-            self.iface.mapCanvas().setMapTool(self._prev_map_tool)
-            self._prev_map_tool = None
+        self._leave_draw_tool()
         crs = self.iface.mapCanvas().mapSettings().destinationCrs()
         self._show_drawn_polygon(geom, crs)
         self._set_survey_polygon(geom, crs)
@@ -1694,6 +1707,9 @@ class FlyPathDialog(QWidget):
 
     def _on_remove_drawn_polygon(self):
         """Remove the drawn polygon and reset the survey area."""
+        # Guarantee the crosshair is gone: if a draw is somehow still active
+        # (e.g. it started with no prior tool to fall back to), drop it here.
+        self._leave_draw_tool()
         self._remove_survey_area_layer()
         self._on_clear_preview(reset_area=False)
         self._survey_polygon     = None
@@ -1766,19 +1782,11 @@ class FlyPathDialog(QWidget):
     def _on_drawing_cancelled(self):
         self.drawPolygonBtn.setChecked(False)
         self.drawPolygonBtn.setText('Draw Polygon on Map')
-        if self._prev_map_tool:
-            self.iface.mapCanvas().setMapTool(self._prev_map_tool)
-            self._prev_map_tool = None
+        self._leave_draw_tool()
 
     def _cancel_draw_tool(self):
         """Stop drawing, restore the previous map tool, and reset the button."""
-        canvas = self.iface.mapCanvas()
-        if self._prev_map_tool is not None:
-            canvas.setMapTool(self._prev_map_tool)   # deactivates the draw tool
-            self._prev_map_tool = None
-        elif self._draw_tool is not None:
-            canvas.unsetMapTool(self._draw_tool)
-        self._draw_tool = None
+        self._leave_draw_tool()
         self.drawPolygonBtn.setChecked(False)
         self.drawPolygonBtn.setText('Draw Polygon on Map')
 
