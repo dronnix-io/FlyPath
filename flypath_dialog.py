@@ -191,6 +191,12 @@ namespace FlyPathIFO {
 _IFILEOP_PS = "Add-Type -Language CSharp -TypeDefinition @'\n" + _IFILEOP_CS + "\n'@\n"
 
 # ── Drone / camera specifications ─────────────────────────────────────────
+# Fraction of each battery held in reserve when estimating how many batteries a
+# mission needs. Manufacturer "battery_time_min" figures are ideal hover-to-empty
+# numbers with no wind, turnarounds, or landing margin, so mapping plans are made
+# against usable time = rated * (1 - reserve).
+_BATTERY_RESERVE = 0.30
+
 DRONE_SPECS = {
     'DJI Mini 3 Pro': {
         'sensor_width_mm':  9.6,
@@ -950,8 +956,11 @@ class FlyPathDialog(QWidget):
             ('linesLabel',      'Flight Lines',
              'Number of parallel flight lines needed to cover the survey area.'),
             ('batteriesLabel',  'Batteries',
-             'Estimated number of battery charges needed to complete the mission, '
-             'based on the drone\'s rated endurance at the selected speed.'),
+             'Estimated battery charges needed for the mission. Planned against a '
+             f'{int(round(_BATTERY_RESERVE * 100))}% reserve, so usable time per '
+             f'battery is {int(round((1 - _BATTERY_RESERVE) * 100))}% of the '
+             'drone\'s rated endurance, leaving margin for wind, turnarounds and '
+             'a safe return.'),
             ('photosLabel',     'Photos',
              'Estimated number of photos the camera will take during the mission.'),
         ]
@@ -1859,7 +1868,8 @@ class FlyPathDialog(QWidget):
         n_lines    = len(waypoints) // 2
         n_photos   = max(0, int(dist_m / actual_spacing))
         flight_min = dist_m / (speed * 60.0) if speed > 0 else 0.0
-        batteries  = math.ceil(flight_min / s['battery_time_min']) if flight_min > 0 else 0
+        usable_min = s['battery_time_min'] * (1.0 - _BATTERY_RESERVE)
+        batteries  = math.ceil(flight_min / usable_min) if flight_min > 0 else 0
 
         self.flightTimeLabel.setText(f'{flight_min:.1f} min')
         self.distanceLabel.setText(f'{dist_m / 1000:.2f} km')
