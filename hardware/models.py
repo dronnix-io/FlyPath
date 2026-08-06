@@ -1,0 +1,65 @@
+"""
+hardware/models.py
+------------------
+Typed model for a drone and its integrated camera.
+
+Every drone FlyPath supports has one fixed camera built into the aircraft
+(consumer DJI Mini bodies, and enterprise bodies such as the Matrice 4E that
+ship with their own mapping camera). There are no swappable payloads, so a
+drone is fully described by its aircraft data plus that one camera.
+
+These are plain dataclasses with no QGIS dependency, so they can be imported
+and unit-tested outside a QGIS runtime.
+"""
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Camera:
+    """The camera integrated into a drone."""
+    sensor_width_mm: float
+    sensor_height_mm: float
+    focal_length_mm: float
+    image_width_px: int
+    image_height_px: int
+    # DJI payload identifiers, used by the enterprise (Pilot 2) WPML writer.
+    # Consumer missions do not emit a payload block, so these stay at 0 there.
+    payload_enum: int = 0
+    payload_sub_enum: int = 0
+    payload_position_index: int = 0
+
+    def footprint_across(self, altitude_m):
+        """Ground footprint width (m) across the flight direction at altitude."""
+        return altitude_m * self.sensor_width_mm / self.focal_length_mm
+
+    def footprint_along(self, altitude_m):
+        """Ground footprint length (m) along the flight direction at altitude."""
+        return altitude_m * self.sensor_height_mm / self.focal_length_mm
+
+    def gsd_cm_per_px(self, altitude_m):
+        """Ground sample distance (cm/px) at the given altitude."""
+        return (altitude_m * self.sensor_width_mm * 100.0) / (
+            self.focal_length_mm * self.image_width_px)
+
+
+@dataclass(frozen=True)
+class Drone:
+    """A drone body plus its integrated camera."""
+    name: str
+    category: str          # 'consumer' | 'enterprise'
+    app: str               # 'DJI Fly' | 'DJI Pilot 2'
+    drone_enum: int
+    drone_sub_enum: int
+    max_speed_ms: float
+    battery_time_min: int
+    camera: Camera
+    info: str
+    verified: str = ''
+
+    def grid_specs(self):
+        """Minimal dict consumed by grid_planner.generate_flight_grid."""
+        return {
+            'focal_length_mm': self.camera.focal_length_mm,
+            'sensor_width_mm': self.camera.sensor_width_mm,
+        }

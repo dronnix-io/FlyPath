@@ -84,6 +84,7 @@ from .grid_planner import (
     generate_flight_grid, find_optimal_direction, split_waypoints
 )
 from .wpml_writer import write_kmz
+from .hardware import registry
 
 try:
     _PolygonGeometry = QgsWkbTypes.GeometryType.PolygonGeometry
@@ -192,50 +193,14 @@ namespace FlyPathIFO {
 
 _IFILEOP_PS = "Add-Type -Language CSharp -TypeDefinition @'\n" + _IFILEOP_CS + "\n'@\n"
 
-# ── Drone / camera specifications ─────────────────────────────────────────
+# ── Battery reserve ───────────────────────────────────────────────────────
 # Fraction of each battery held in reserve when estimating how many batteries a
 # mission needs. Manufacturer "battery_time_min" figures are ideal hover-to-empty
 # numbers with no wind, turnarounds, or landing margin, so mapping plans are made
 # against usable time = rated * (1 - reserve).
+# Drone and camera specifications live in hardware/drones.json and are read via
+# `registry` (see the hardware package).
 _BATTERY_RESERVE = 0.30
-
-DRONE_SPECS = {
-    'DJI Mini 3 Pro': {
-        'sensor_width_mm':  9.6,
-        'sensor_height_mm': 7.2,
-        'focal_length_mm':  6.9,
-        'image_width_px':   4000,
-        'image_height_px':  3000,
-        'max_speed_ms':     12.0,
-        'battery_time_min': 34,
-        'info': '1/1.3" CMOS  ·  12 MP  ·  24 mm equiv',
-    },
-    'DJI Mini 4 Pro': {
-        'sensor_width_mm':  9.6,
-        'sensor_height_mm': 7.2,
-        'focal_length_mm':  6.9,
-        'image_width_px':   4000,
-        'image_height_px':  3000,
-        'max_speed_ms':     12.0,
-        'battery_time_min': 34,
-        'info': '1/1.3" CMOS  ·  12 MP  ·  24 mm equiv',
-    },
-    # Sensor dimensions use the standard Sony 1" format (13.2 × 8.8 mm).
-    # Focal length derived from 24 mm equiv on a 1" sensor (crop factor ≈ 2.73).
-    # Verify sensor_width_mm / focal_length_mm against official DJI EXIF data
-    # if precision better than ~2% is needed for GSD calculations.
-    # Drone enum (68) and mission compatibility community-verified on DJI RC2.
-    'DJI Mini 5 Pro': {
-        'sensor_width_mm':  13.2,
-        'sensor_height_mm':  8.8,
-        'focal_length_mm':   8.8,
-        'image_width_px':   8192,
-        'image_height_px':  6144,
-        'max_speed_ms':     15.0,
-        'battery_time_min':  45,
-        'info': '1" CMOS  ·  50 MP  ·  24 mm equiv',
-    },
-}
 
 # ── Dark stylesheet (Litchi-inspired) ─────────────────────────────────────
 STYLESHEET = """
@@ -1204,7 +1169,7 @@ class FlyPathDialog(QWidget):
     # ── Combo population ──────────────────────────────────────────────────
 
     def _setup_combos(self):
-        self.droneModelCombo.addItems(list(DRONE_SPECS.keys()))
+        self.droneModelCombo.addItems(registry.names())
         self.droneModelCombo.setCurrentText('DJI Mini 4 Pro')
 
 
@@ -1299,31 +1264,29 @@ class FlyPathDialog(QWidget):
     def _update_camera_info(self):
         drone = self.droneModelCombo.currentText()
         self.cameraInfoLabel.setText(
-            DRONE_SPECS[drone]['info'] if drone in DRONE_SPECS else '—'
+            registry.get(drone).info if registry.has(drone) else '—'
         )
 
     # ── GSD ───────────────────────────────────────────────────────────────
 
     def _calc_gsd(self):
         drone = self.droneModelCombo.currentText()
-        if drone not in DRONE_SPECS:
+        if not registry.has(drone):
             return None
-        s = DRONE_SPECS[drone]
         return round(
-            (self.altitudeSpin.value() * s['sensor_width_mm'] * 100) /
-            (s['focal_length_mm'] * s['image_width_px']), 2
+            registry.get(drone).camera.gsd_cm_per_px(self.altitudeSpin.value()), 2
         )
 
     def _calc_altitude_from_gsd(self):
         """Inverse of _calc_gsd: altitude (m) needed to reach the current GSD."""
         drone = self.droneModelCombo.currentText()
-        if drone not in DRONE_SPECS:
+        if not registry.has(drone):
             return None
-        s   = DRONE_SPECS[drone]
+        cam = registry.get(drone).camera
         gsd = self.gsdSpin.value()
         if gsd <= 0:
             return None
-        return (gsd * s['focal_length_mm'] * s['image_width_px']) / (s['sensor_width_mm'] * 100.0)
+        return (gsd * cam.focal_length_mm * cam.image_width_px) / (cam.sensor_width_mm * 100.0)
 
     def _update_gsd(self):
         """Refresh the GSD field from the current altitude (altitude drives GSD)."""
@@ -1351,12 +1314,11 @@ class FlyPathDialog(QWidget):
 
     def _footprint(self):
         drone = self.droneModelCombo.currentText()
-        if drone not in DRONE_SPECS:
+        if not registry.has(drone):
             return None, None
-        s   = DRONE_SPECS[drone]
+        cam = registry.get(drone).camera
         alt = self.altitudeSpin.value()
-        return (alt * s['sensor_width_mm'] / s['focal_length_mm'],
-                alt * s['sensor_height_mm'] / s['focal_length_mm'])
+        return cam.footprint_across(alt), cam.footprint_along(alt)
 
     def _update_interval(self):
         _, fh = self._footprint()
@@ -1922,11 +1884,11 @@ class FlyPathDialog(QWidget):
             self._clear_stats()
             return
         drone = self.droneModelCombo.currentText()
-        if drone not in DRONE_SPECS:
+        if not registry.has(drone):
             self._clear_stats()
             return
 
-        s     = DRONE_SPECS[drone]
+        d     = registry.get(drone)
         speed = self.speedSpin.value()
 
         # Coverage area
@@ -1953,7 +1915,7 @@ class FlyPathDialog(QWidget):
                 side_overlap=self.sideOverlapSpin.value() / 100.0,
                 direction_deg=self.directionSpin.value(),
                 margin_m=self.marginSpin.value(),
-                drone_specs=s,
+                drone_specs=d.grid_specs(),
             )
         except Exception:
             waypoints = None
@@ -1970,7 +1932,7 @@ class FlyPathDialog(QWidget):
         n_lines    = len(waypoints) // 2
         n_photos   = max(0, int(dist_m / actual_spacing))
         flight_min = dist_m / (speed * 60.0) if speed > 0 else 0.0
-        usable_min = s['battery_time_min'] * (1.0 - _BATTERY_RESERVE)
+        usable_min = d.battery_time_min * (1.0 - _BATTERY_RESERVE)
         batteries  = math.ceil(flight_min / usable_min) if flight_min > 0 else 0
 
         self.flightTimeLabel.setText(f'{flight_min:.1f} min')
@@ -3303,7 +3265,7 @@ class FlyPathDialog(QWidget):
         waypoints is a list of (lon, lat) turn points only.
         """
         drone = self.droneModelCombo.currentText()
-        if drone not in DRONE_SPECS:
+        if not registry.has(drone):
             return None
         shot_spacing_m = max(
             self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5
@@ -3317,7 +3279,7 @@ class FlyPathDialog(QWidget):
                 side_overlap=self.sideOverlapSpin.value() / 100.0,
                 direction_deg=self.directionSpin.value(),
                 margin_m=self.marginSpin.value(),
-                drone_specs=DRONE_SPECS[drone],
+                drone_specs=registry.get(drone).grid_specs(),
             )
         except ValueError as exc:
             QMessageBox.warning(self, 'Cannot Generate Grid', str(exc))

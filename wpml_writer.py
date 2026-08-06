@@ -22,13 +22,8 @@ import io
 import time
 import zipfile
 
+from .hardware import registry
 
-# ── DJI drone enum values (verified from native RC2 mission files) ─────────
-_DRONE_ENUM = {
-    'DJI Mini 3 Pro': 97,   # community-verified
-    'DJI Mini 4 Pro': 68,   # verified from native RC2 mission dump
-    'DJI Mini 5 Pro': 68,   # community-verified: same enum as Mini 4 Pro, confirmed to fly on RC2
-}
 
 # ── Finish action mapping ──────────────────────────────────────────────────
 _FINISH_ACTION = {
@@ -67,7 +62,7 @@ def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
     ----------
     filepath              : str   — destination .kmz path
     waypoints             : list of (lon, lat) float tuples in WGS84
-    drone_name            : str   — key from DRONE_SPECS
+    drone_name            : str   — key from the drone registry (hardware/)
     altitude_m            : float — AGL flight altitude in metres
     speed_ms              : float — waypoint flight speed in m/s
     finish_action_label   : str   — human-readable finish action label
@@ -86,7 +81,8 @@ def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
     if not waypoints:
         raise ValueError('No waypoints provided — define a survey area first.')
 
-    drone_enum             = _DRONE_ENUM.get(drone_name, 68)
+    drone_enum             = registry.get(drone_name).drone_enum \
+        if registry.has(drone_name) else 68
     finish_action          = _FINISH_ACTION.get(finish_action_label, 'goHome')
     height_mode            = 'relativeToStartPoint'
     exit_on_rc_lost, rc_lost_action = _RC_LOST_ACTION.get(

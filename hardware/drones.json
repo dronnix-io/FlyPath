@@ -1,0 +1,60 @@
+{
+  "DJI Mini 3 Pro": {
+    "category": "consumer",
+    "app": "DJI Fly",
+    "aircraft": {
+      "drone_enum": 97,
+      "drone_sub_enum": 0,
+      "max_speed_ms": 12.0,
+      "battery_time_min": 34
+    },
+    "camera": {
+      "sensor_width_mm": 9.6,
+      "sensor_height_mm": 7.2,
+      "focal_length_mm": 6.9,
+      "image_width_px": 4000,
+      "image_height_px": 3000
+    },
+    "verified": "community-verified",
+    "info": "1/1.3\" CMOS  ·  12 MP  ·  24 mm equiv"
+  },
+  "DJI Mini 4 Pro": {
+    "category": "consumer",
+    "app": "DJI Fly",
+    "aircraft": {
+      "drone_enum": 68,
+      "drone_sub_enum": 0,
+      "max_speed_ms": 12.0,
+      "battery_time_min": 34
+    },
+    "camera": {
+      "sensor_width_mm": 9.6,
+      "sensor_height_mm": 7.2,
+      "focal_length_mm": 6.9,
+      "image_width_px": 4000,
+      "image_height_px": 3000
+    },
+    "verified": "native RC2 mission dump",
+    "info": "1/1.3\" CMOS  ·  12 MP  ·  24 mm equiv"
+  },
+  "DJI Mini 5 Pro": {
+    "category": "consumer",
+    "app": "DJI Fly",
+    "aircraft": {
+      "drone_enum": 68,
+      "drone_sub_enum": 0,
+      "max_speed_ms": 15.0,
+      "battery_time_min": 45
+    },
+    "camera": {
+      "sensor_width_mm": 13.2,
+      "sensor_height_mm": 8.8,
+      "focal_length_mm": 8.8,
+      "image_width_px": 8192,
+      "image_height_px": 6144
+    },
+    "verified": "community-verified",
+    "notes": "Sensor dimensions use the standard 1\" format (13.2 x 8.8 mm); focal length derived from 24 mm equiv on a 1\" sensor (crop factor ~2.73). Verify against official DJI EXIF if better than ~2% GSD precision is needed. Drone enum 68 and RC2 compatibility community-verified.",
+    "info": "1\" CMOS  ·  50 MP  ·  24 mm equiv"
+  }
+}
