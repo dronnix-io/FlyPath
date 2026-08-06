@@ -55,7 +55,14 @@ class Drone:
     battery_time_min: int
     camera: Camera
     info: str
+    # Slowest allowed waypoint speed. Optional in the data (defaults to 1 m/s)
+    # because not every drone documents a minimum.
+    min_speed_ms: float = 1.0
     verified: str = ''
+
+    def speed_range(self):
+        """(min, max) waypoint speed in m/s for this drone."""
+        return self.min_speed_ms, self.max_speed_ms
 
     def grid_specs(self):
         """Minimal dict consumed by grid_planner.generate_flight_grid."""

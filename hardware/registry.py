@@ -48,6 +48,13 @@ def _build(name, entry):
     _require(name, 'aircraft', aircraft, _REQUIRED_AIRCRAFT)
     _require(name, 'camera', cam, _REQUIRED_CAMERA)
 
+    min_speed = float(aircraft.get('min_speed_ms', 1.0))
+    max_speed = float(aircraft['max_speed_ms'])
+    if min_speed <= 0 or max_speed < min_speed:
+        raise ValueError(
+            f'Drone "{name}": need 0 < min_speed_ms <= max_speed_ms '
+            f'(got min={min_speed}, max={max_speed})')
+
     camera = Camera(
         sensor_width_mm=float(cam['sensor_width_mm']),
         sensor_height_mm=float(cam['sensor_height_mm']),
@@ -64,7 +71,8 @@ def _build(name, entry):
         app=entry['app'],
         drone_enum=int(aircraft['drone_enum']),
         drone_sub_enum=int(aircraft['drone_sub_enum']),
-        max_speed_ms=float(aircraft['max_speed_ms']),
+        min_speed_ms=min_speed,
+        max_speed_ms=max_speed,
         battery_time_min=int(aircraft['battery_time_min']),
         camera=camera,
         info=entry['info'],

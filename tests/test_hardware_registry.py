@@ -32,7 +32,8 @@ def test_every_drone_is_complete_and_valid():
         assert d.info, f'{d.name}: missing info'
         assert isinstance(d.drone_enum, int)
         assert isinstance(d.drone_sub_enum, int)
-        assert d.max_speed_ms > 0, f'{d.name}: max_speed_ms must be positive'
+        assert d.min_speed_ms > 0, f'{d.name}: min_speed_ms must be positive'
+        assert d.max_speed_ms >= d.min_speed_ms, f'{d.name}: max < min speed'
         assert d.battery_time_min > 0, f'{d.name}: battery_time_min must be positive'
         c = d.camera
         assert isinstance(c, Camera)
@@ -73,6 +74,11 @@ def test_camera_math_matches_legacy_formulas():
     assert math.isclose(c.gsd_cm_per_px(alt), expected_gsd, rel_tol=1e-9)
     assert math.isclose(c.footprint_across(alt), alt * c.sensor_width_mm / c.focal_length_mm)
     assert math.isclose(c.footprint_along(alt), alt * c.sensor_height_mm / c.focal_length_mm)
+
+
+def test_speed_range():
+    assert registry.get('DJI Mini 4 Pro').speed_range() == (1.0, 12.0)
+    assert registry.get('DJI Mini 5 Pro').speed_range() == (1.0, 15.0)
 
 
 def test_has_and_missing():

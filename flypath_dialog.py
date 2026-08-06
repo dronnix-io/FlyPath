@@ -577,6 +577,7 @@ class FlyPathDialog(QWidget):
         self._setup_combos()
         self._connect_signals()
         self._update_camera_info()
+        self._apply_speed_range()
         self._update_gsd()
         self._update_interval()
 
@@ -1259,6 +1260,7 @@ class FlyPathDialog(QWidget):
 
     def _on_drone_changed(self):
         self._update_camera_info()
+        self._apply_speed_range()
         self._on_param_changed()
 
     def _update_camera_info(self):
@@ -1266,6 +1268,21 @@ class FlyPathDialog(QWidget):
         self.cameraInfoLabel.setText(
             registry.get(drone).info if registry.has(drone) else '—'
         )
+
+    def _apply_speed_range(self):
+        """Set the Speed control's limits to the selected drone's own range.
+
+        The min/max come from hardware/drones.json, so adding a drone with a
+        different speed envelope needs no code change. Signals are blocked while
+        the range moves; the caller recomputes stats afterwards (setRange clamps
+        the current value into the new range automatically)."""
+        drone = self.droneModelCombo.currentText()
+        if not registry.has(drone):
+            return
+        lo, hi = registry.get(drone).speed_range()
+        self.speedSpin.blockSignals(True)
+        self.speedSpin.setRange(lo, hi)
+        self.speedSpin.blockSignals(False)
 
     # ── GSD ───────────────────────────────────────────────────────────────
 

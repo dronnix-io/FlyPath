@@ -5,6 +5,7 @@
     "aircraft": {
       "drone_enum": 97,
       "drone_sub_enum": 0,
+      "min_speed_ms": 1.0,
       "max_speed_ms": 12.0,
       "battery_time_min": 34
     },
@@ -24,6 +25,7 @@
     "aircraft": {
       "drone_enum": 68,
       "drone_sub_enum": 0,
+      "min_speed_ms": 1.0,
       "max_speed_ms": 12.0,
       "battery_time_min": 34
     },
@@ -43,6 +45,7 @@
     "aircraft": {
       "drone_enum": 68,
       "drone_sub_enum": 0,
+      "min_speed_ms": 1.0,
       "max_speed_ms": 15.0,
       "battery_time_min": 45
     },
