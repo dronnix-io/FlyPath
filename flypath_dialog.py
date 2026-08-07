@@ -684,6 +684,15 @@ class FlyPathDialog(QWidget):
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
 
+        self.missionTypeCombo = QComboBox()
+        self.missionTypeCombo.addItem('Semi-automatic 2D mapping')
+        self._tip(self.missionTypeCombo,
+            'The kind of mission to plan. Semi-automatic 2D mapping flies a '
+            'grid over the survey area for orthomosaic mapping; you set the '
+            'camera to interval capture before takeoff. More mission types will '
+            'be added here.')
+        form.addRow('Mission Type', self.missionTypeCombo)
+
         self.droneModelCombo = QComboBox()
         self._tip(self.droneModelCombo,
             'Your drone model — determines camera sensor specs, '
