@@ -83,7 +83,7 @@ from .map_tools import PolygonDrawTool
 from .grid_planner import (
     generate_flight_grid, find_optimal_direction, split_waypoints
 )
-from .wpml_writer import write_kmz
+from .wpml import MissionSpec, write_mission
 from .hardware import registry
 
 try:
@@ -2870,18 +2870,18 @@ class FlyPathDialog(QWidget):
 
     def _write_mission_kmz(self, filepath, waypoints, mission, create_time_ms=None):
         """Write the KMZ file using current UI parameter values."""
-        write_kmz(
-            filepath=filepath,
+        drone = registry.get(self.droneModelCombo.currentText())
+        spec = MissionSpec(
             waypoints=waypoints,
-            drone_name=self.droneModelCombo.currentText(),
             altitude_m=self.altitudeSpin.value(),
             speed_ms=self.speedSpin.value(),
-            finish_action_label=self.finishActionCombo.currentText(),
-            rc_lost_action_label=self.rcLostActionCombo.currentText(),
+            finish_action=self.finishActionCombo.currentText(),
+            rc_lost_action=self.rcLostActionCombo.currentText(),
             gimbal_pitch=self.gimbalAngleSpin.value(),
             mission_name=mission,
             create_time_ms=create_time_ms,
         )
+        write_mission(drone, spec, filepath)
 
     @staticmethod
     def _default_kmz_name():

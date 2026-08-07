@@ -1,29 +1,16 @@
 """
-wpml_writer.py
---------------
-Writes a DJI-compatible WPML mission as a single .kmz file for 2D
-orthomosaic mapping.
+wpml/consumer.py
+----------------
+Mission writer for DJI consumer drones (DJI Fly on RC2).
 
-KMZ contents
-------------
-  <file>.kmz
-  └── wpmz/
-      ├── template.kml    — mission + wayline template config (no Placemarks)
-      └── waylines.wpml   — mission config + all waypoint Placemarks
-
-On the DJI RC each mission lives in waypoint/<uuid>/<uuid>.kmz; FlyPath
-replaces that file with the .kmz written here.
-
-Namespace        : http://www.uav.com/wpmz/1.0.2  (as used by DJI Fly on RC2)
-Verified against : DJI Mini 4 Pro + DJI RC2 (native mission dump)
+Native WPML waypoint format, namespace http://www.uav.com/wpmz/1.0.2, verified
+against a DJI Mini 4 Pro + DJI RC2 native mission dump. Emits wpmz/template.kml
++ wpmz/waylines.wpml packaged into a .kmz.
 """
 
-import io
 import time
-import zipfile
 
-from .hardware import registry
-
+from .base import esc, package_kmz
 
 # ── Finish action mapping ──────────────────────────────────────────────────
 _FINISH_ACTION = {
@@ -40,72 +27,41 @@ _RC_LOST_ACTION = {
     'Continue mission': ('goContinue',        'goBack'),
 }
 
-
 # ── WPML namespace (native RC2 format) ────────────────────────────────────
 _NS = 'http://www.uav.com/wpmz/1.0.2'
 
 
-# ── Public API ─────────────────────────────────────────────────────────────
-
-def write_kmz(filepath, waypoints, drone_name, altitude_m, speed_ms,
-              finish_action_label, rc_lost_action_label,
-              gimbal_pitch=-90, mission_name='FlyPath Mission',
-              create_time_ms=None):
-    """
-    Write a single DJI-compatible KMZ file at filepath.
-
-    FlyPath calls this both for local exports and when replacing a mission
-    on the RC (it writes the KMZ, then copies it into the mission's UUID
-    folder over USB).
-
-    Parameters
-    ----------
-    filepath              : str   — destination .kmz path
-    waypoints             : list of (lon, lat) float tuples in WGS84
-    drone_name            : str   — key from the drone registry (hardware/)
-    altitude_m            : float — AGL flight altitude in metres
-    speed_ms              : float — waypoint flight speed in m/s
-    finish_action_label   : str   — human-readable finish action label
-    rc_lost_action_label  : str   — human-readable RC lost action label
-    gimbal_pitch          : float — gimbal pitch angle in degrees (default -90)
-    mission_name          : str   — embedded in mission metadata
-    create_time_ms        : int   — preserve this createTime when replacing an
-                                    existing mission, so its date keeps matching
-                                    DJI Fly (None = use the current time)
+def write(drone, spec, filepath):
+    """Write a consumer WPML KMZ for `drone` following `spec` to `filepath`.
 
     Raises
     ------
-    ValueError  if waypoints is empty
+    ValueError  if spec has no waypoints
     IOError     if the file cannot be written
     """
-    if not waypoints:
+    if not spec.waypoints:
         raise ValueError('No waypoints provided — define a survey area first.')
 
-    drone_enum             = registry.get(drone_name).drone_enum \
-        if registry.has(drone_name) else 68
-    finish_action          = _FINISH_ACTION.get(finish_action_label, 'goHome')
-    height_mode            = 'relativeToStartPoint'
+    finish_action = _FINISH_ACTION.get(spec.finish_action, 'goHome')
+    height_mode   = 'relativeToStartPoint'
     exit_on_rc_lost, rc_lost_action = _RC_LOST_ACTION.get(
-        rc_lost_action_label, ('executeLostAction', 'goBack')
+        spec.rc_lost_action, ('executeLostAction', 'goBack')
     )
-    ts_ms         = int(create_time_ms) if create_time_ms else int(time.time() * 1000)
+    ts_ms = int(spec.create_time_ms) if spec.create_time_ms else int(time.time() * 1000)
 
-    mission_config = _mission_config_xml(drone_enum, finish_action, speed_ms,
-                                         exit_on_rc_lost, rc_lost_action)
-    template_kml   = _build_template_kml(mission_config, ts_ms, mission_name,
-                                         speed_ms, altitude_m, height_mode)
+    mission_config = _mission_config_xml(drone.drone_enum, finish_action,
+                                         spec.speed_ms, exit_on_rc_lost, rc_lost_action)
+    template_kml   = _build_template_kml(mission_config, ts_ms, spec.mission_name,
+                                         spec.speed_ms, spec.altitude_m, height_mode)
     waylines_wpml  = _build_waylines_wpml(
-        waypoints, altitude_m, speed_ms, height_mode,
-        gimbal_pitch, mission_config
+        spec.waypoints, spec.altitude_m, spec.speed_ms, height_mode,
+        spec.gimbal_pitch, mission_config
     )
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr('wpmz/template.kml',  template_kml)
-        zf.writestr('wpmz/waylines.wpml', waylines_wpml)
-
-    with open(filepath, 'wb') as f:
-        f.write(buf.getvalue())
+    package_kmz(filepath, [
+        ('wpmz/template.kml',  template_kml),
+        ('wpmz/waylines.wpml', waylines_wpml),
+    ])
 
 
 # ── Shared mission config block ────────────────────────────────────────────
@@ -135,7 +91,7 @@ def _build_template_kml(mission_config, ts_ms, mission_name,
 <kml xmlns="http://www.opengis.net/kml/2.2"
      xmlns:wpml="{_NS}">
   <Document>
-    <wpml:author>{_esc(mission_name)}</wpml:author>
+    <wpml:author>{esc(mission_name)}</wpml:author>
     <wpml:createTime>{ts_ms}</wpml:createTime>
     <wpml:updateTime>{ts_ms}</wpml:updateTime>
 {mission_config}
@@ -255,14 +211,3 @@ def _gimbal_action_group(group_id, pitch_angle=-90):
           </wpml:action>
         </wpml:actionGroup>
 '''
-
-
-
-# ── Utilities ──────────────────────────────────────────────────────────────
-
-def _esc(text):
-    """Minimal XML text escaping."""
-    return (text.replace('&', '&amp;')
-                .replace('<', '&lt;')
-                .replace('>', '&gt;')
-                .replace('"', '&quot;'))
