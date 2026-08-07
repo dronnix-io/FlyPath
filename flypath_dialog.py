@@ -669,6 +669,9 @@ class FlyPathDialog(QWidget):
         params_row.addLayout(cam_col, 1)
         scroll_layout.addLayout(params_row)
 
+        # How the grid becomes deliverable mission files (split, cap, cross-hatch).
+        scroll_layout.addWidget(self._build_organizer_group())
+
         # Statistics full width below, itself split into two columns.
         scroll_layout.addWidget(self._build_stats_group())
         scroll_layout.addStretch()
@@ -791,7 +794,6 @@ class FlyPathDialog(QWidget):
     def _build_flight_group(self):
         group = QGroupBox('Flight Parameters')
         form  = QFormLayout(group)
-        self._flight_form = form   # kept so capability logic can hide rows
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
 
@@ -881,6 +883,18 @@ class FlyPathDialog(QWidget):
             'Ensures full photo coverage at the edges. '
             'Typically 0–50 m depending on altitude and terrain.')
         form.addRow('Margin', self.marginSpin)
+
+        return group
+
+    def _build_organizer_group(self):
+        """Adv. Mission Organizers — how the planned grid is turned into the
+        deliverable mission files: how many to split it into, the per-mission
+        waypoint cap, and whether to add a perpendicular cross-hatch pass."""
+        group = QGroupBox('Adv. Mission Organizers')
+        form  = QFormLayout(group)
+        self._organizer_form = form   # kept so capability logic can hide rows
+        form.setLabelAlignment(_AlignLeft | _AlignVCenter)
+        form.setSpacing(6)
 
         self.splitSpin = QSpinBox()
         self.splitSpin.setRange(1, 99)
@@ -1357,7 +1371,7 @@ class FlyPathDialog(QWidget):
 
         # Split Missions row (label + spin): consumer only.
         self.splitSpin.setVisible(consumer)
-        lbl = self._flight_form.labelForField(self.splitSpin)
+        lbl = self._organizer_form.labelForField(self.splitSpin)
         if lbl is not None:
             lbl.setVisible(consumer)
         if not consumer:
@@ -1404,7 +1418,7 @@ class FlyPathDialog(QWidget):
         self._set_row_visible(self._camera_form, self.photoIntervalSpin, not full)
         self._set_row_visible(self._camera_form, self.frontOverlapLabel, not full)
         self._set_row_visible(self._camera_form, self.frontOverlapSpin, full)
-        self._set_row_visible(self._flight_form, self.maxWaypointsSpin, full)
+        self._set_row_visible(self._organizer_form, self.maxWaypointsSpin, full)
 
     def _set_destination_rc_enabled(self, enabled):
         """Enable/disable the 'Send to DJI RC' destination item (kept visible,
