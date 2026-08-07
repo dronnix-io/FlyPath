@@ -886,10 +886,11 @@ class FlyPathDialog(QWidget):
         self.splitSpin.setRange(1, 99)
         self.splitSpin.setValue(1)
         self._tip(self.splitSpin,
-            'Split the survey into this many separate missions, each a group '
-            'of whole flight lines you fly on its own battery. Defaults to the '
-            'estimated number of batteries; set your own value to fly fewer or '
-            'more missions. Each mission is exported as its own KMZ file.')
+            'Minimum number of separate missions to split the survey into, each '
+            'flown on its own battery and exported as its own KMZ file. Defaults '
+            'to the estimated number of batteries; raise it to fly more, smaller '
+            'missions. In full-automatic mode this is a minimum: the Max '
+            'Waypoints cap may create more missions than this, never fewer.')
         form.addRow('Split Missions', self.splitSpin)
 
         self.maxWaypointsSpin = QSpinBox()
@@ -1503,13 +1504,6 @@ class FlyPathDialog(QWidget):
         front = self.frontOverlapSpin.value() / 100.0
         return max(footprint_along * (1.0 - front), 0.5)
 
-    def _full_auto_split_need(self, n_waypoints):
-        """Fewest missions so no sub-mission exceeds the Max Waypoints cap."""
-        maxwp = self.maxWaypointsSpin.value()
-        if n_waypoints > 1 and maxwp >= 2:
-            return -(-(n_waypoints - 1) // (maxwp - 1))   # ceil
-        return 1
-
     def _update_interval(self):
         # Full-automatic: Shot Spacing is the waypoint spacing set by front
         # overlap; the derived front-overlap label is hidden in this mode.
@@ -2039,13 +2033,12 @@ class FlyPathDialog(QWidget):
 
     # ── Statistics ────────────────────────────────────────────────────────
 
-    def _apply_split_default(self, max_split, default_target, min_split=1):
+    def _apply_split_default(self, max_split, default_target):
         """Set the split spin's range and, until the user overrides it, its
-        default. `min_split` is the floor (full-auto needs at least enough
-        missions to stay under the waypoint cap). Runs with signals blocked so
-        the programmatic value change doesn't read as a user edit."""
+        default (the battery estimate). Split Missions is a minimum: the
+        waypoint cap may produce more missions than this, but never fewer. Runs
+        with signals blocked so the programmatic change isn't read as an edit."""
         max_split = max(1, max_split)
-        min_split = max(1, min(min_split, max_split))
         drone = self.droneModelCombo.currentText()
         enterprise = registry.has(drone) and registry.get(drone).category == 'enterprise'
         target = self.splitSpin.value()
@@ -2053,10 +2046,10 @@ class FlyPathDialog(QWidget):
             target = 1                       # enterprise missions are not split
         elif not self._split_overridden:
             target = default_target
-        target = max(min_split, min(target, max_split))
+        target = max(1, min(target, max_split))
         self._setting_split = True
         self.splitSpin.blockSignals(True)
-        self.splitSpin.setMinimum(min_split)
+        self.splitSpin.setMinimum(1)
         self.splitSpin.setMaximum(max_split)
         self.splitSpin.setValue(target)
         self.splitSpin.blockSignals(False)
@@ -2066,8 +2059,11 @@ class FlyPathDialog(QWidget):
         """Show and fill the RC 'Mission part' picker to match the split count.
 
         The RC replaces one mission slot at a time, so when the survey is split
-        the user picks which part to send. Hidden when there is a single part."""
-        n = self.splitSpin.value()
+        the user picks which part to send. Hidden when there is a single part.
+
+        Uses the actual mission count, which in full-auto can exceed the Split
+        Missions value when the waypoint cap forces extra missions."""
+        n = len(self._live_missions) if self._live_missions else self.splitSpin.value()
         prev = self.splitPartCombo.currentData()
         self.splitPartCombo.blockSignals(True)
         self.splitPartCombo.clear()
@@ -2167,15 +2163,12 @@ class FlyPathDialog(QWidget):
         self.linesLabel.setText(str(n_lines))
         self.batteriesLabel.setText(str(batteries))
 
-        # Split-count default tracks the battery estimate until the user sets
-        # their own value; full-auto also needs enough missions to keep each
-        # under the waypoint cap. Then split the just-computed grid for preview.
-        if full:
-            need = self._full_auto_split_need(len(waypoints))
-            self._apply_split_default(max(1, len(waypoints) - 1),
-                                      max(batteries, need), min_split=need)
-        else:
-            self._apply_split_default(n_lines, batteries)
+        # Split Missions is the MINIMUM number of missions, defaulting to (and
+        # tracking) the battery estimate until the user sets their own value. In
+        # full-auto the waypoint cap can raise the actual count above it, but the
+        # spin itself stays the user's minimum. Then split for the preview.
+        max_split = max(1, len(waypoints) - 1) if full else n_lines
+        self._apply_split_default(max_split, batteries)
         self._live_missions = self._split_missions(waypoints)
         self._refresh_split_part_combo()
 
