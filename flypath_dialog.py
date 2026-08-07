@@ -11,7 +11,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QGroupBox, QScrollArea, QFrame,
     QLabel, QLineEdit, QPushButton, QComboBox,
-    QSpinBox, QDoubleSpinBox,
+    QSpinBox, QDoubleSpinBox, QCheckBox,
     QMessageBox, QFileDialog, QApplication,
     QStackedWidget, QDialog, QTreeWidget, QTreeWidgetItem, QDialogButtonBox,
     QGraphicsView, QGraphicsScene,
@@ -298,6 +298,21 @@ QDoubleSpinBox::up-arrow, QSpinBox::up-arrow {
 }
 QDoubleSpinBox::down-arrow, QSpinBox::down-arrow {
     image: url(ARROW_DOWN_PATH); width: 8px; height: 5px;
+}
+QCheckBox {
+    color: #D0D0D0;
+    spacing: 6px;
+}
+QCheckBox::indicator {
+    width: 14px; height: 14px;
+    border: 1px solid #D0D0D0;
+    border-radius: 3px;
+    background-color: #2A2D35;
+}
+QCheckBox::indicator:hover { border: 1px solid #7FB3E8; }
+QCheckBox::indicator:checked {
+    background-color: #2D6DB5;
+    border: 1px solid #7FB3E8;
 }
 QPushButton {
     background-color: #2D6DB5;
@@ -887,6 +902,14 @@ class FlyPathDialog(QWidget):
             'more missions. Each mission is exported as its own KMZ file.')
         form.addRow('Split Missions', self.splitSpin)
 
+        self.crossHatchCheck = QCheckBox('Cross-hatch')
+        self._tip(self.crossHatchCheck,
+            'Fly the grid, then fly it again perpendicular to the flight '
+            'direction. The double coverage improves 3D reconstruction and, for '
+            'LiDAR, point-cloud stability. It roughly doubles flight time, photos '
+            'and battery use.')
+        form.addRow('', self.crossHatchCheck)
+
         return group
 
     def _build_camera_group(self):
@@ -1252,6 +1275,7 @@ class FlyPathDialog(QWidget):
         self.photoIntervalSpin.valueChanged.connect(self._on_param_changed)
         self.gimbalAngleSpin.valueChanged.connect(self._update_stats)
         self.directionSpin.valueChanged.connect(self._on_param_changed)
+        self.crossHatchCheck.toggled.connect(self._on_param_changed)
         self.splitSpin.valueChanged.connect(self._on_split_changed)
         self.layerCombo.currentIndexChanged.connect(self._on_layer_changed)
         self.featureCombo.currentIndexChanged.connect(self._on_feature_changed)
@@ -1945,16 +1969,19 @@ class FlyPathDialog(QWidget):
         # path-dependent stats are blanked.
         actual_spacing = max(speed * self.photoIntervalSpin.value(), 0.5)
         try:
-            waypoints, _ = generate_flight_grid(
-                polygon_geom=self._survey_polygon,
-                polygon_crs=self._survey_polygon_crs,
-                altitude_m=self.altitudeSpin.value(),
-                shot_spacing_m=actual_spacing,
-                side_overlap=self.sideOverlapSpin.value() / 100.0,
-                direction_deg=self.directionSpin.value(),
-                margin_m=self.marginSpin.value(),
-                drone_specs=s,
-            )
+            waypoints = []
+            for direction in self._grid_directions():
+                wps, _ = generate_flight_grid(
+                    polygon_geom=self._survey_polygon,
+                    polygon_crs=self._survey_polygon_crs,
+                    altitude_m=self.altitudeSpin.value(),
+                    shot_spacing_m=actual_spacing,
+                    side_overlap=self.sideOverlapSpin.value() / 100.0,
+                    direction_deg=direction,
+                    margin_m=self.marginSpin.value(),
+                    drone_specs=s,
+                )
+                waypoints.extend(wps)
         except Exception:
             waypoints = None
 
@@ -3297,6 +3324,14 @@ class FlyPathDialog(QWidget):
             return False
         return True
 
+    def _grid_directions(self):
+        """The flight-line direction(s) to fly. Cross-hatch adds a second grid
+        at 90° to the first."""
+        base = self.directionSpin.value()
+        if self.crossHatchCheck.isChecked():
+            return [base, (base + 90.0) % 360.0]
+        return [base]
+
     def _generate_waypoints(self):
         """
         Returns (waypoints, shot_spacing_m) or None on failure.
@@ -3309,16 +3344,19 @@ class FlyPathDialog(QWidget):
             self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5
         )
         try:
-            waypoints, shot_spacing_m = generate_flight_grid(
-                polygon_geom=self._survey_polygon,
-                polygon_crs=self._survey_polygon_crs,
-                altitude_m=self.altitudeSpin.value(),
-                shot_spacing_m=shot_spacing_m,
-                side_overlap=self.sideOverlapSpin.value() / 100.0,
-                direction_deg=self.directionSpin.value(),
-                margin_m=self.marginSpin.value(),
-                drone_specs=DRONE_SPECS[drone],
-            )
+            waypoints = []
+            for direction in self._grid_directions():
+                wps, shot_spacing_m = generate_flight_grid(
+                    polygon_geom=self._survey_polygon,
+                    polygon_crs=self._survey_polygon_crs,
+                    altitude_m=self.altitudeSpin.value(),
+                    shot_spacing_m=shot_spacing_m,
+                    side_overlap=self.sideOverlapSpin.value() / 100.0,
+                    direction_deg=direction,
+                    margin_m=self.marginSpin.value(),
+                    drone_specs=DRONE_SPECS[drone],
+                )
+                waypoints.extend(wps)
         except ValueError as exc:
             QMessageBox.warning(self, 'Cannot Generate Grid', str(exc))
             return None
