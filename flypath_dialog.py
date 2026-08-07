@@ -83,6 +83,7 @@ from .map_tools import PolygonDrawTool
 from .grid_planner import (
     generate_flight_grid, find_optimal_direction, split_waypoints
 )
+from .grid_route import split_by_waypoint_count
 from .wpml import MissionSpec, write_mission
 from .hardware import registry
 
@@ -201,6 +202,14 @@ _IFILEOP_PS = "Add-Type -Language CSharp -TypeDefinition @'\n" + _IFILEOP_CS + "
 # Drone and camera specifications live in hardware/drones.json and are read via
 # `registry` (see the hardware package).
 _BATTERY_RESERVE = 0.30
+
+# Full-automatic capture stops at every photo waypoint. Each stop costs a halt
+# (decelerate + settle + accelerate, ~2.5 s from real DJI waypoint missions) or
+# the camera's shutter/write time, whichever is longer, on top of transit time.
+_HALT_S = 2.5
+# Default waypoints per full-auto sub-mission (DJI caps a mission at ~200);
+# smaller keeps each mission quick and manageable. User adjustable.
+_DEFAULT_MAX_WAYPOINTS = 70
 
 # ── Dark stylesheet (Litchi-inspired) ─────────────────────────────────────
 STYLESHEET = """
@@ -686,11 +695,15 @@ class FlyPathDialog(QWidget):
 
         self.missionTypeCombo = QComboBox()
         self.missionTypeCombo.addItem('Semi-automatic 2D mapping')
+        self.missionTypeCombo.addItem('Full-automatic 2D mapping')
         self._tip(self.missionTypeCombo,
-            'The kind of mission to plan. Semi-automatic 2D mapping flies a '
-            'grid over the survey area for orthomosaic mapping; you set the '
-            'camera to interval capture before takeoff. More mission types will '
-            'be added here.')
+            'The kind of mission to plan.\n'
+            'Semi-automatic 2D mapping flies a grid of flight lines; you set the '
+            'camera to interval capture before takeoff.\n'
+            'Full-automatic 2D mapping places a waypoint at every photo and the '
+            'drone shoots automatically (stop-and-shoot), so no manual interval '
+            'is needed. It is slower and uses more battery because the drone '
+            'stops at each photo.')
         form.addRow('Mission Type', self.missionTypeCombo)
 
         self.droneModelCombo = QComboBox()
@@ -879,6 +892,17 @@ class FlyPathDialog(QWidget):
             'more missions. Each mission is exported as its own KMZ file.')
         form.addRow('Split Missions', self.splitSpin)
 
+        self.maxWaypointsSpin = QSpinBox()
+        self.maxWaypointsSpin.setRange(2, 400)
+        self.maxWaypointsSpin.setValue(_DEFAULT_MAX_WAYPOINTS)
+        self.maxWaypointsSpin.setMaximumWidth(110)
+        self._tip(self.maxWaypointsSpin,
+            'Maximum waypoints per mission (full-automatic only). A full-auto '
+            'mission places one waypoint per photo, and DJI caps a mission at '
+            'about 200 waypoints, so the survey is split so no mission exceeds '
+            'this. Lower it for shorter, more manageable missions.')
+        form.addRow('Max Waypoints', self.maxWaypointsSpin)
+
         self.crossHatchCheck = QCheckBox('Cross-hatch')
         self._tip(self.crossHatchCheck,
             'Fly the grid, then fly it again perpendicular to the flight '
@@ -895,6 +919,7 @@ class FlyPathDialog(QWidget):
         form  = QFormLayout(group)
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
+        self._camera_form = form   # kept so mission-type logic can hide rows
 
         self.gimbalAngleSpin = QSpinBox()
         self.gimbalAngleSpin.setRange(-90, -30)
@@ -935,6 +960,21 @@ class FlyPathDialog(QWidget):
             'Aim for 75–85% for mapping, 85–90% for 3D models. '
             'Reduce speed or increase interval to raise overlap.')
         form.addRow('Front Overlap', self.frontOverlapLabel)
+
+        # Full-automatic: front overlap is a direct input (we control where each
+        # photo is taken, not just how often). Shares the 'Front Overlap' row
+        # with the derived label above; only one is visible at a time.
+        self.frontOverlapSpin = QSpinBox()
+        self.frontOverlapSpin.setRange(50, 95)
+        self.frontOverlapSpin.setValue(70)
+        self.frontOverlapSpin.setSingleStep(5)
+        self.frontOverlapSpin.setSuffix(' %')
+        self.frontOverlapSpin.setMaximumWidth(110)
+        self._tip(self.frontOverlapSpin,
+            'Target front (along-track) overlap between consecutive photos. '
+            'A waypoint is placed every footprint x (1 - overlap) metres along '
+            'each line. Aim for 75-85% for mapping, 85-90% for 3D models.')
+        form.addRow('Front Overlap', self.frontOverlapSpin)
 
         return group
 
@@ -1244,6 +1284,9 @@ class FlyPathDialog(QWidget):
         QgsProject.instance().layersAdded.connect(self._refresh_layer_combo)
         QgsProject.instance().layersRemoved.connect(self._refresh_layer_combo)
 
+        self.missionTypeCombo.currentIndexChanged.connect(self._on_mission_type_changed)
+        self.frontOverlapSpin.valueChanged.connect(self._on_param_changed)
+        self.maxWaypointsSpin.valueChanged.connect(self._on_param_changed)
         self.droneModelCombo.currentIndexChanged.connect(self._on_drone_changed)
         self.altitudeSpin.valueChanged.connect(self._on_param_changed)
         self.gsdSpin.valueChanged.connect(self._on_gsd_changed)
@@ -1326,6 +1369,41 @@ class FlyPathDialog(QWidget):
 
         # Send to DJI RC is a DJI Fly transfer; grey it out for enterprise.
         self._set_destination_rc_enabled(consumer)
+
+        # Rows that depend on the mission type (full vs semi automatic).
+        self._apply_mission_type_capabilities()
+
+    # ── Mission type (semi- / full-automatic 2D mapping) ──────────────────
+
+    def _mission_type(self):
+        """'full' for full-automatic capture (a waypoint per photo), else 'semi'."""
+        return 'full' if self.missionTypeCombo.currentIndex() == 1 else 'semi'
+
+    def _on_mission_type_changed(self):
+        self._apply_mission_type_capabilities()
+        self._on_param_changed()
+
+    @staticmethod
+    def _set_row_visible(form, widget, visible):
+        """Show/hide a QFormLayout row (its field widget and its label)."""
+        widget.setVisible(visible)
+        lbl = form.labelForField(widget)
+        if lbl is not None:
+            lbl.setVisible(visible)
+
+    def _apply_mission_type_capabilities(self):
+        """Swap the panel between semi- and full-automatic layouts.
+
+        Semi-automatic: the pilot sets interval capture, so Photo Interval is an
+        input and Front Overlap is the resulting (derived) value.
+        Full-automatic: a waypoint is placed per photo, so Front Overlap becomes
+        the input, Photo Interval is irrelevant and hidden, and Max Waypoints
+        (the per-mission cap) appears."""
+        full = self._mission_type() == 'full'
+        self._set_row_visible(self._camera_form, self.photoIntervalSpin, not full)
+        self._set_row_visible(self._camera_form, self.frontOverlapLabel, not full)
+        self._set_row_visible(self._camera_form, self.frontOverlapSpin, full)
+        self._set_row_visible(self._flight_form, self.maxWaypointsSpin, full)
 
     def _set_destination_rc_enabled(self, enabled):
         """Enable/disable the 'Send to DJI RC' destination item (kept visible,
@@ -1415,7 +1493,30 @@ class FlyPathDialog(QWidget):
         alt = self.altitudeSpin.value()
         return cam.footprint_across(alt), cam.footprint_along(alt)
 
+    def _full_auto_spacing(self):
+        """Along-track distance between photo waypoints in full-automatic mode:
+        footprint_along x (1 - front overlap). None if the drone/altitude is not
+        resolved yet."""
+        _, footprint_along = self._footprint()
+        if not footprint_along:
+            return None
+        front = self.frontOverlapSpin.value() / 100.0
+        return max(footprint_along * (1.0 - front), 0.5)
+
+    def _full_auto_split_need(self, n_waypoints):
+        """Fewest missions so no sub-mission exceeds the Max Waypoints cap."""
+        maxwp = self.maxWaypointsSpin.value()
+        if n_waypoints > 1 and maxwp >= 2:
+            return -(-(n_waypoints - 1) // (maxwp - 1))   # ceil
+        return 1
+
     def _update_interval(self):
+        # Full-automatic: Shot Spacing is the waypoint spacing set by front
+        # overlap; the derived front-overlap label is hidden in this mode.
+        if self._mission_type() == 'full':
+            spacing = self._full_auto_spacing()
+            self.intervalLabel.setText(f'{spacing:.1f} m' if spacing else '—')
+            return
         _, fh = self._footprint()
         spd = self.speedSpin.value()
         interval = self.photoIntervalSpin.value()
@@ -1938,21 +2039,24 @@ class FlyPathDialog(QWidget):
 
     # ── Statistics ────────────────────────────────────────────────────────
 
-    def _apply_split_default(self, n_lines, batteries):
-        """Cap the split count to the line count and, until the user overrides
-        it, keep it tracking the battery estimate. Runs with signals blocked so
+    def _apply_split_default(self, max_split, default_target, min_split=1):
+        """Set the split spin's range and, until the user overrides it, its
+        default. `min_split` is the floor (full-auto needs at least enough
+        missions to stay under the waypoint cap). Runs with signals blocked so
         the programmatic value change doesn't read as a user edit."""
-        max_split = max(1, n_lines)
+        max_split = max(1, max_split)
+        min_split = max(1, min(min_split, max_split))
         drone = self.droneModelCombo.currentText()
         enterprise = registry.has(drone) and registry.get(drone).category == 'enterprise'
         target = self.splitSpin.value()
         if enterprise:
             target = 1                       # enterprise missions are not split
         elif not self._split_overridden:
-            target = max(1, batteries)
-        target = max(1, min(target, max_split))
+            target = default_target
+        target = max(min_split, min(target, max_split))
         self._setting_split = True
         self.splitSpin.blockSignals(True)
+        self.splitSpin.setMinimum(min_split)
         self.splitSpin.setMaximum(max_split)
         self.splitSpin.setValue(target)
         self.splitSpin.blockSignals(False)
@@ -2004,11 +2108,18 @@ class FlyPathDialog(QWidget):
         # always match the real plan and include every turnaround edge. This
         # runs silently on every parameter change; on any failure the
         # path-dependent stats are blanked.
-        actual_spacing = max(speed * self.photoIntervalSpin.value(), 0.5)
+        full = self._mission_type() == 'full'
+        if full:
+            densify = self._full_auto_spacing()
+            actual_spacing = densify or 0.5
+        else:
+            densify = None
+            actual_spacing = max(speed * self.photoIntervalSpin.value(), 0.5)
         try:
-            waypoints = []
+            turn_pts = []                    # endpoints only: for line count + distance
+            waypoints = []                   # the plan the drone flies (dense if full)
             for direction in self._grid_directions():
-                wps, _ = generate_flight_grid(
+                common = dict(
                     polygon_geom=self._survey_polygon,
                     polygon_crs=self._survey_polygon_crs,
                     altitude_m=self.altitudeSpin.value(),
@@ -2018,9 +2129,15 @@ class FlyPathDialog(QWidget):
                     margin_m=self.marginSpin.value(),
                     drone_specs=d.grid_specs(),
                 )
-                waypoints.extend(wps)
+                tp, _ = generate_flight_grid(**common)
+                turn_pts.extend(tp)
+                if full:
+                    dp, _ = generate_flight_grid(densify_spacing=densify, **common)
+                    waypoints.extend(dp)
+            if not full:
+                waypoints = turn_pts
         except Exception:
-            waypoints = None
+            turn_pts = waypoints = None
 
         if not waypoints or len(waypoints) < 2:
             for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
@@ -2030,11 +2147,18 @@ class FlyPathDialog(QWidget):
 
         self._live_waypoints = waypoints
 
-        dist_m     = self._path_length_m(waypoints)
-        n_lines    = len(waypoints) // 2
-        n_photos   = max(0, int(dist_m / actual_spacing))
-        flight_min = dist_m / (speed * 60.0) if speed > 0 else 0.0
+        dist_m     = self._path_length_m(turn_pts)
+        n_lines    = len(turn_pts) // 2
         usable_min = d.battery_time_min * (1.0 - _BATTERY_RESERVE)
+        if full:
+            # Stop-and-shoot: transit plus a stop per photo (the halt, or the
+            # camera's shutter/write time if longer).
+            n_photos   = len(waypoints)
+            per_photo  = max(_HALT_S, d.camera.min_shoot_interval_s)
+            flight_min = (dist_m / speed + n_photos * per_photo) / 60.0 if speed > 0 else 0.0
+        else:
+            n_photos   = max(0, int(dist_m / actual_spacing))
+            flight_min = dist_m / (speed * 60.0) if speed > 0 else 0.0
         batteries  = math.ceil(flight_min / usable_min) if flight_min > 0 else 0
 
         self.flightTimeLabel.setText(f'{flight_min:.1f} min')
@@ -2044,10 +2168,24 @@ class FlyPathDialog(QWidget):
         self.batteriesLabel.setText(str(batteries))
 
         # Split-count default tracks the battery estimate until the user sets
-        # their own value; then split the just-computed grid for the preview.
-        self._apply_split_default(n_lines, batteries)
-        self._live_missions = split_waypoints(waypoints, self.splitSpin.value())
+        # their own value; full-auto also needs enough missions to keep each
+        # under the waypoint cap. Then split the just-computed grid for preview.
+        if full:
+            need = self._full_auto_split_need(len(waypoints))
+            self._apply_split_default(max(1, len(waypoints) - 1),
+                                      max(batteries, need), min_split=need)
+        else:
+            self._apply_split_default(n_lines, batteries)
+        self._live_missions = self._split_missions(waypoints)
         self._refresh_split_part_combo()
+
+    def _split_missions(self, waypoints):
+        """Split waypoints for the current mission type: by flight line
+        (semi-automatic) or by waypoint count under the cap (full-automatic)."""
+        if self._mission_type() == 'full':
+            return split_by_waypoint_count(
+                waypoints, self.splitSpin.value(), self.maxWaypointsSpin.value())
+        return split_waypoints(waypoints, self.splitSpin.value())
 
     def _path_length_m(self, waypoints):
         """Ellipsoidal length of the (lon, lat) flight path in metres."""
@@ -2076,7 +2214,7 @@ class FlyPathDialog(QWidget):
         if result is None:
             return
         waypoints, shot_spacing_m = result
-        missions = split_waypoints(waypoints, self.splitSpin.value())
+        missions = self._split_missions(waypoints)
         self._waypoints      = waypoints
         self._shot_spacing_m = shot_spacing_m
         self._missions       = missions
@@ -2973,6 +3111,7 @@ class FlyPathDialog(QWidget):
             front_overlap=self._front_overlap_fraction(),
             direction_deg=self.directionSpin.value(),
             margin_m=self.marginSpin.value(),
+            capture_mode=self._mission_type(),
         )
         write_mission(drone, spec, filepath)
 
@@ -2996,7 +3135,12 @@ class FlyPathDialog(QWidget):
         return coords
 
     def _front_overlap_fraction(self):
-        """Current along-track (front) overlap as a fraction 0..0.99."""
+        """Current along-track (front) overlap as a fraction 0..0.99.
+
+        Full-automatic: the user sets it directly. Semi-automatic: it is derived
+        from speed x interval versus the along-track footprint."""
+        if self._mission_type() == 'full':
+            return max(0.0, min(0.99, self.frontOverlapSpin.value() / 100.0))
         _, footprint_along = self._footprint()
         spd = self.speedSpin.value()
         interval = self.photoIntervalSpin.value()
@@ -3042,7 +3186,7 @@ class FlyPathDialog(QWidget):
             self._export_local_enterprise(mission, waypoints)
             return
 
-        missions = split_waypoints(waypoints, self.splitSpin.value())
+        missions = self._split_missions(waypoints)
 
         if self.destCombo.currentData() == 'rc':
             # The RC replaces one mission slot, so send just the chosen part.
@@ -3160,10 +3304,13 @@ class FlyPathDialog(QWidget):
         else:
             names = '\n'.join('  ' + os.path.basename(p) for p in written)
             saved_text = f'Saved {n} missions to:\n{folder}\n\n{names}'
+        if self._mission_type() == 'full':
+            capture_text = 'Capture: automatic (photo per waypoint)'
+        else:
+            capture_text = f'Interval: {self.photoIntervalSpin.value():.1f} s'
         reply = QMessageBox.information(
             self, 'Export Complete',
-            f'Missions: {n}  ·  Waypoints: {total_wp:,}  ·  '
-            f'Interval: {self.photoIntervalSpin.value():.1f} s\n\n'
+            f'Missions: {n}  ·  Waypoints: {total_wp:,}  ·  {capture_text}\n\n'
             f'{saved_text}\n\nOpen the folder?',
             _MB_YES | _MB_NO, _MB_YES,
         )
@@ -3476,9 +3623,15 @@ class FlyPathDialog(QWidget):
         drone = self.droneModelCombo.currentText()
         if not registry.has(drone):
             return None
-        shot_spacing_m = max(
-            self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5
-        )
+        full = self._mission_type() == 'full'
+        if full:
+            densify = self._full_auto_spacing()
+            shot_spacing_m = densify or 0.5
+        else:
+            densify = None
+            shot_spacing_m = max(
+                self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5
+            )
         try:
             waypoints = []
             for direction in self._grid_directions():
@@ -3491,6 +3644,7 @@ class FlyPathDialog(QWidget):
                     direction_deg=direction,
                     margin_m=self.marginSpin.value(),
                     drone_specs=registry.get(drone).grid_specs(),
+                    densify_spacing=densify,
                 )
                 waypoints.extend(wps)
         except ValueError as exc:
