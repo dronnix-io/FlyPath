@@ -47,8 +47,10 @@ about=FlyPath is a QGIS plugin for planning autonomous drone mapping missions an
     them as native DJI WPML KMZ files, loadable directly in the DJI Fly app.
     Supported drones: DJI Mini 3 Pro, Mini 4 Pro, Mini 5 Pro (community-verified).
     Draw your survey area on the map, set flight altitude and overlap, preview
-    the flight path, and export a ready-to-fly mission file. Large surveys can
-    be split into several missions, one per battery.
+    the flight path, and export a ready-to-fly mission file. Flight lines stay
+    inside irregular (L, U, notched) areas, an optional cross-hatch adds a
+    perpendicular pass for 3D and LiDAR, and large surveys can be split into
+    several missions, one per battery.
 
 tracker=https://github.com/dronnix-io/FlyPath/issues
 repository=https://github.com/dronnix-io/FlyPath
