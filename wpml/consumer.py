@@ -55,7 +55,7 @@ def write(drone, spec, filepath):
                                          spec.speed_ms, spec.altitude_m, height_mode)
     waylines_wpml  = _build_waylines_wpml(
         spec.waypoints, spec.altitude_m, spec.speed_ms, height_mode,
-        spec.gimbal_pitch, mission_config
+        spec.gimbal_pitch, mission_config, spec.capture_mode
     )
 
     package_kmz(filepath, [
@@ -114,15 +114,24 @@ def _build_template_kml(mission_config, ts_ms, mission_name,
 
 
 def _build_waylines_wpml(waypoints, altitude_m, speed_ms, height_mode,
-                          gimbal_pitch, mission_config):
-    """waylines.wpml — repeats missionConfig + full Placemark list."""
+                          gimbal_pitch, mission_config, capture_mode='semi'):
+    """waylines.wpml — repeats missionConfig + full Placemark list.
+
+    In 'full' capture mode every waypoint also carries a takePhoto action, so
+    the drone shoots automatically at each photo location (full-automatic 2D
+    mapping)."""
     placemark_blocks = []
+    group_id = 1                                     # unique per action group
 
     for idx, (lon, lat) in enumerate(waypoints):
+        action_groups = ''
         if idx == 0:
-            action_groups = _gimbal_action_group(group_id=1, pitch_angle=gimbal_pitch)
-        else:
-            action_groups = ''
+            action_groups += _gimbal_action_group(group_id=group_id,
+                                                  pitch_angle=gimbal_pitch)
+            group_id += 1
+        if capture_mode == 'full':
+            action_groups += _take_photo_action_group(group_id=group_id, index=idx)
+            group_id += 1
         placemark_blocks.append(
             _placemark(idx, lon, lat, altitude_m, speed_ms,
                        action_groups, gimbal_pitch)
@@ -180,6 +189,27 @@ def _placemark(idx, lon, lat, altitude_m, speed_ms, action_groups_xml,
           <wpml:waypointGimbalYawAngle>0</wpml:waypointGimbalYawAngle>
         </wpml:waypointGimbalHeadingParam>
       </Placemark>'''
+
+
+def _take_photo_action_group(group_id, index):
+    """Take one photo on reaching this waypoint (full-automatic capture)."""
+    return f'''        <wpml:actionGroup>
+          <wpml:actionGroupId>{group_id}</wpml:actionGroupId>
+          <wpml:actionGroupStartIndex>{index}</wpml:actionGroupStartIndex>
+          <wpml:actionGroupEndIndex>{index}</wpml:actionGroupEndIndex>
+          <wpml:actionGroupMode>parallel</wpml:actionGroupMode>
+          <wpml:actionTrigger>
+            <wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>
+          </wpml:actionTrigger>
+          <wpml:action>
+            <wpml:actionId>{group_id}</wpml:actionId>
+            <wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>
+            <wpml:actionActuatorFuncParam>
+              <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
+            </wpml:actionActuatorFuncParam>
+          </wpml:action>
+        </wpml:actionGroup>
+'''
 
 
 def _gimbal_action_group(group_id, pitch_angle=-90):

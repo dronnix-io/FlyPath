@@ -31,6 +31,10 @@ class MissionSpec:
     front_overlap: float = 0.7       # fraction 0..1
     direction_deg: float = 0.0
     margin_m: float = 0.0
+    # 'semi' (default): waypoints are flight-line turns; the pilot triggers
+    # interval capture manually. 'full': every waypoint is a photo location and
+    # the writer adds a takePhoto action to each (full-automatic 2D mapping).
+    capture_mode: str = 'semi'
 
 
 def esc(text):

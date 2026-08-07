@@ -79,6 +79,30 @@ def test_consumer_is_registered():
     assert 'consumer' in factory._WRITERS
 
 
+# ── Full-automatic capture (takePhoto per waypoint) ─────────────────────────
+
+def test_semi_auto_has_no_take_photo():
+    drone = registry.get('DJI Mini 4 Pro')
+    path = _write(drone, _spec())                     # capture_mode defaults to 'semi'
+    with zipfile.ZipFile(path) as z:
+        wl = z.read('wpmz/waylines.wpml').decode('utf-8')
+    assert 'takePhoto' not in wl
+
+
+def test_full_auto_takes_a_photo_at_every_waypoint():
+    drone = registry.get('DJI Mini 4 Pro')
+    path = _write(drone, _spec(capture_mode='full'))
+    with zipfile.ZipFile(path) as z:
+        wl = z.read('wpmz/waylines.wpml').decode('utf-8')
+    assert wl.count('<wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>') == len(WPS)
+    # Waypoint 0 keeps its gimbal action alongside the photo action.
+    assert 'gimbalRotate' in wl
+    # Action group ids stay unique (no duplicate <actionGroupId>N</...>).
+    import re
+    ids = re.findall(r'<wpml:actionGroupId>(\d+)</wpml:actionGroupId>', wl)
+    assert len(ids) == len(set(ids)), f'duplicate action group ids: {ids}'
+
+
 # ── Enterprise (mapping2d) ──────────────────────────────────────────────────
 
 def _ent_spec(**kw):
