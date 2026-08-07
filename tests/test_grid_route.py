@@ -102,6 +102,45 @@ def test_empty_input():
     assert boustrophedon_route([(0.0, [])]) == []
 
 
+# ── Densified passes (full-automatic capture: a waypoint per photo) ──────────
+
+def _assert_passes_within_segments(columns, route, tol=1e-6):
+    """Every vertical (same-x) leg must lie within a single segment of that
+    column. A densified pass is many short legs, each inside the real segment;
+    a gap-crossing leg would span two segments and fail this."""
+    lut = {}
+    for x, segs in columns:
+        lut.setdefault(round(x, 9), []).extend(segs)
+    for (x0, y0), (x1, y1) in zip(route, route[1:]):
+        if abs(x0 - x1) < 1e-9:
+            lo, hi = sorted((y0, y1))
+            segs = lut.get(round(x0, 9), [])
+            assert any(a - tol <= lo and hi <= b + tol for a, b in segs), (
+                f'vertical leg at x={x0} y {lo}->{hi} is not within a segment')
+
+
+def test_densify_convex_spacing_and_count():
+    cols = [(float(x), [(0.0, 10.0)]) for x in range(4)]
+    route = boustrophedon_route(cols, densify_spacing=2.5)
+    # 10 m pass at 2.5 m -> 4 steps -> 5 points per pass; 4 columns -> 20 points.
+    assert len(route) == 20
+    _assert_passes_within_segments(cols, route)
+    # No same-x leg longer than the spacing (+ float tolerance).
+    for (x0, y0), (x1, y1) in zip(route, route[1:]):
+        if abs(x0 - x1) < 1e-9:
+            assert abs(y1 - y0) <= 2.5 + 1e-6
+
+
+def test_densify_concave_stays_inside():
+    route = boustrophedon_route(_c_shape(), densify_spacing=3.0)
+    _assert_passes_within_segments(_c_shape(), route)
+
+
+def test_densify_none_is_endpoints_only():
+    cols = [(float(x), [(0.0, 10.0)]) for x in range(4)]
+    assert len(boustrophedon_route(cols)) == 8          # 2 points per pass
+
+
 if __name__ == '__main__':
     fns = [v for k, v in sorted(globals().items())
            if k.startswith('test_') and callable(v)]

@@ -35,7 +35,7 @@ except AttributeError:
 
 def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
                           shot_spacing_m, side_overlap, direction_deg,
-                          margin_m, drone_specs):
+                          margin_m, drone_specs, densify_spacing=None):
     """
     Generate a lawnmower (boustrophedon) flight grid for 2D mapping.
 
@@ -147,7 +147,7 @@ def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
         columns.append((x, segs))
         x += line_spacing
 
-    turn_pts_rot = _boustrophedon_route(columns)
+    turn_pts_rot = _boustrophedon_route(columns, densify_spacing)
 
     if not turn_pts_rot:
         raise ValueError(

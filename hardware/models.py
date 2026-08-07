@@ -23,6 +23,10 @@ class Camera:
     focal_length_mm: float
     image_width_px: int
     image_height_px: int
+    # Minimum time (s) the camera needs between shots. It bounds fly-through
+    # capture speed and is added per photo in full-automatic flight-time
+    # estimates. ~2 s for the 12 MP Minis; confirm per drone.
+    min_shoot_interval_s: float = 2.0
     # DJI payload identifiers, used by the enterprise (Pilot 2) WPML writer.
     # Consumer missions do not emit a payload block, so these stay at 0 there.
     payload_enum: int = 0

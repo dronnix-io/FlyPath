@@ -61,6 +61,7 @@ def _build(name, entry):
         focal_length_mm=float(cam['focal_length_mm']),
         image_width_px=int(cam['image_width_px']),
         image_height_px=int(cam['image_height_px']),
+        min_shoot_interval_s=float(cam.get('min_shoot_interval_s', 2.0)),
         payload_enum=int(cam.get('payload_enum', 0)),
         payload_sub_enum=int(cam.get('payload_sub_enum', 0)),
         payload_position_index=int(cam.get('payload_position_index', 0)),

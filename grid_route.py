@@ -9,22 +9,29 @@ scan-line segments and hands them here to be grouped into contiguous strips and
 snaked, so the drone never flies a pass across a gap in the survey area.
 """
 
+import math
+
 # Two segments on adjacent scan lines belong to the same strip when their
 # along-track (y) ranges overlap by more than this (metres). A real gap between
 # strips gives no overlap, so the strips are kept apart and never flown across.
 _OVERLAP_EPS = 1e-6
 
 
-def boustrophedon_route(columns):
+def boustrophedon_route(columns, densify_spacing=None):
     """Turn a swept set of scan-line segments into an ordered turn-point route
     that never flies a pass across a gap in the survey area.
 
     `columns` is a list of (x, segments), one per scan line left to right, where
-    each segment is (y_low, y_high) of an in-polygon piece of that line. Returns
-    a flat list of (x, y) turn points (two per pass) in the rotated frame.
+    each segment is (y_low, y_high) of an in-polygon piece of that line.
+
+    With `densify_spacing` set (metres), each pass is filled with points that
+    close together, so every photo location becomes its own waypoint (used by
+    full-automatic capture). Left as None (semi-automatic), only the pass
+    endpoints are returned. Returns a flat list of (x, y) points in the rotated
+    frame.
     """
     cells, adjacency = decompose_cells(columns)
-    return order_cells(cells, adjacency)
+    return order_cells(cells, adjacency, densify_spacing)
 
 
 def decompose_cells(columns):
@@ -80,11 +87,24 @@ def decompose_cells(columns):
     return cells, adjacency
 
 
-def cell_turns(cell):
-    """Snake one cell into turn points: up one line, down the next."""
+def _pass_points(x, ylo, yhi, densify_spacing):
+    """Points along one pass. Endpoints only when densify_spacing is None;
+    otherwise evenly spaced points no farther apart than densify_spacing, always
+    including both ends (so photo waypoints land on exact, regular spacing)."""
+    if not densify_spacing or densify_spacing <= 0:
+        return [(x, ylo), (x, yhi)]
+    length = yhi - ylo
+    n = max(1, int(math.ceil(length / densify_spacing)))
+    step = length / n
+    return [(x, ylo + i * step) for i in range(n + 1)]
+
+
+def cell_turns(cell, densify_spacing=None):
+    """Snake one cell into points: up one line, down the next."""
     turns = []
     for k, (x, ylo, yhi) in enumerate(cell):
-        turns.extend([(x, ylo), (x, yhi)] if k % 2 == 0 else [(x, yhi), (x, ylo)])
+        pts = _pass_points(x, ylo, yhi, densify_spacing)
+        turns.extend(pts if k % 2 == 0 else pts[::-1])
     return turns
 
 
@@ -116,14 +136,14 @@ def _visit_order(turnlists, adjacency):
     return order
 
 
-def order_cells(cells, adjacency):
+def order_cells(cells, adjacency, densify_spacing=None):
     """Concatenate the cells into one route in adjacency (graph) order, so the
     legs between strips run along the survey area's spine and stay inside it.
     Each cell is flown in whichever direction enters it closest to the previous
     cell's exit. Every pass itself lies within a single strip."""
     # Each cell has >= 1 segment, so cell_turns yields >= 2 points; indices stay
     # aligned with `adjacency`.
-    turnlists = [cell_turns(c) for c in cells]
+    turnlists = [cell_turns(c, densify_spacing) for c in cells]
     if not turnlists:
         return []
     route = []

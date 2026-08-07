@@ -44,6 +44,7 @@ def test_every_drone_is_complete_and_valid():
         ):
             assert val > 0, f'{d.name}: camera.{field} must be positive'
         assert c.image_width_px > 0 and c.image_height_px > 0
+        assert c.min_shoot_interval_s > 0, f'{d.name}: min_shoot_interval_s must be positive'
 
 
 def test_names_are_unique():
