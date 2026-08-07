@@ -23,6 +23,8 @@ from qgis.core import (
     QgsWkbTypes,
 )
 
+from .grid_route import boustrophedon_route as _boustrophedon_route
+
 try:
     _LineGeometry = QgsWkbTypes.GeometryType.LineGeometry
 except AttributeError:
@@ -123,30 +125,28 @@ def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
     y_lo    = bbox.yMinimum() - shot_spacing
     y_hi    = bbox.yMaximum() + shot_spacing
 
-    # 7 ── Sweep scan lines — collect only the turn points (line endpoints)
-    turn_pts_rot = []
-    line_idx = 0
+    # 7 ── Sweep scan lines. For each line, record only the in-polygon pieces
+    #      (a concave area splits one line into several). Simply concatenating a
+    #      line's pieces would fly the drone straight across the gaps between
+    #      them, so the pieces are grouped into contiguous strips and each strip
+    #      is snaked on its own (boustrophedon decomposition).
+    columns = []
     x = x_start
-
     while x <= x_end + line_spacing * 0.5:
         scan = QgsGeometry.fromPolylineXY([
             QgsPointXY(x, y_lo),
             QgsPointXY(x, y_hi),
         ])
         clipped = scan.intersection(rotated_poly)
-
+        segs = []
         if not clipped.isEmpty() and not clipped.isNull():
-            segments = _line_segments(clipped)
-            # Collect only the start and end of each segment (turn points)
-            line_turns = []
-            for (x1, y1), (x2, y2) in segments:
-                line_turns.extend([(x1, y1), (x2, y2)])
-            if line_idx % 2 == 1:
-                line_turns = line_turns[::-1]   # reverse alternate lines → snake
-            turn_pts_rot.extend(line_turns)
-
+            for (x1, y1), (x2, y2) in _line_segments(clipped):
+                segs.append((y1, y2) if y1 <= y2 else (y2, y1))
+            segs.sort()
+        columns.append((x, segs))
         x += line_spacing
-        line_idx += 1
+
+    turn_pts_rot = _boustrophedon_route(columns)
 
     if not turn_pts_rot:
         raise ValueError(
