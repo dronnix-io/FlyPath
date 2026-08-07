@@ -44,6 +44,8 @@ A walkthrough of installing and using FlyPath in QGIS: defining a survey area, s
 - Photo Interval parameter for planning along-track overlap, used as a reference to set the drone's auto interval capture mode manually before flying
 - Calculated front overlap display, showing effective along-track overlap from speed x interval with low-overlap warnings
 - Auto-optimised flight direction that minimises flight time for the survey area shape
+- Concave-aware flight lines: passes stay inside irregular (L, U, notched) survey areas instead of crossing the excluded gaps
+- Optional cross-hatch: fly the grid again perpendicular to the flight direction for better 3D reconstruction and LiDAR point-cloud stability
 - Editable GSD linked two-way with altitude, so you can plan by target resolution, with effective photo spacing synced to drone model, speed, and interval
 - Live map preview that redraws the flight path as you change parameters, so the route always matches the statistics
 - Flight statistics measured from the actual generated flight path, including the turns between lines: area, path distance, waypoint count, photo count, estimated batteries, and flight time. Battery estimates plan against a 30% reserve, so usable time per battery is 70% of the drone's rated endurance
@@ -135,6 +137,7 @@ Only one polygon can be active at a time. Switching methods automatically remove
 | Direction | Angle of flight lines, or click **Auto** to minimise flight time for the survey shape |
 | Margin | Buffer added around the survey polygon boundary in metres |
 | Split Missions | Number of separate missions to divide the survey into, one per battery; defaults to the estimated batteries and can be set to any value up to the flight-line count |
+| Cross-hatch | Optional. When on, flies the grid and then again perpendicular to the flight direction (double coverage; roughly doubles flight time, photos and battery use) |
 
 #### Camera Settings
 

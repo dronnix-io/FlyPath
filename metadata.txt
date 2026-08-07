@@ -3,8 +3,15 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D orthomosaic mapping directly from QGIS
-version=1.5.0
-changelog=1.5.0 - Split a large survey into multiple missions, one per battery. A new Split
+version=1.5.1
+changelog=1.5.1 - Fixed flight lines crossing outside concave survey areas: a scan line through
+    a concave shape used to fly straight across the excluded gap between its pieces. The planner
+    now decomposes the area into contiguous strips and snakes each on its own, so passes stay
+    inside the survey area. New optional Cross-hatch option flies the grid again perpendicular to
+    the flight direction, for better 3D reconstruction and LiDAR point clouds. Internal: drone
+    specifications moved to a single validated registry, and the mission writer is now a factory
+    split by drone category (foundation for future drones).
+    1.5.0 - Split a large survey into multiple missions, one per battery. A new Split
     Missions field defaults to the estimated number of batteries and can be set to any value; the
     map preview draws each mission in its own colour and Save to computer writes one KMZ per
     mission. Consecutive missions share a seam waypoint, so each one begins where the previous
