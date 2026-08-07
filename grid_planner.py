@@ -52,7 +52,8 @@ def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
     side_overlap   : float        — 0.0–1.0
     direction_deg : float        — flight-line direction, degrees CW from North
     margin_m      : float        — buffer to add around polygon (metres)
-    drone_specs   : dict         — entry from DRONE_SPECS in flypath_dialog.py
+    drone_specs   : dict         — camera optics {focal_length_mm, sensor_width_mm};
+                                    see Drone.grid_specs() in the hardware package
 
     Returns
     -------

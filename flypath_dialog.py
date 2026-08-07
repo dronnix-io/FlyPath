@@ -83,7 +83,8 @@ from .map_tools import PolygonDrawTool
 from .grid_planner import (
     generate_flight_grid, find_optimal_direction, split_waypoints
 )
-from .wpml_writer import write_kmz
+from .wpml import MissionSpec, write_mission
+from .hardware import registry
 
 try:
     _PolygonGeometry = QgsWkbTypes.GeometryType.PolygonGeometry
@@ -192,50 +193,14 @@ namespace FlyPathIFO {
 
 _IFILEOP_PS = "Add-Type -Language CSharp -TypeDefinition @'\n" + _IFILEOP_CS + "\n'@\n"
 
-# ── Drone / camera specifications ─────────────────────────────────────────
+# ── Battery reserve ───────────────────────────────────────────────────────
 # Fraction of each battery held in reserve when estimating how many batteries a
 # mission needs. Manufacturer "battery_time_min" figures are ideal hover-to-empty
 # numbers with no wind, turnarounds, or landing margin, so mapping plans are made
 # against usable time = rated * (1 - reserve).
+# Drone and camera specifications live in hardware/drones.json and are read via
+# `registry` (see the hardware package).
 _BATTERY_RESERVE = 0.30
-
-DRONE_SPECS = {
-    'DJI Mini 3 Pro': {
-        'sensor_width_mm':  9.6,
-        'sensor_height_mm': 7.2,
-        'focal_length_mm':  6.9,
-        'image_width_px':   4000,
-        'image_height_px':  3000,
-        'max_speed_ms':     12.0,
-        'battery_time_min': 34,
-        'info': '1/1.3" CMOS  ·  12 MP  ·  24 mm equiv',
-    },
-    'DJI Mini 4 Pro': {
-        'sensor_width_mm':  9.6,
-        'sensor_height_mm': 7.2,
-        'focal_length_mm':  6.9,
-        'image_width_px':   4000,
-        'image_height_px':  3000,
-        'max_speed_ms':     12.0,
-        'battery_time_min': 34,
-        'info': '1/1.3" CMOS  ·  12 MP  ·  24 mm equiv',
-    },
-    # Sensor dimensions use the standard Sony 1" format (13.2 × 8.8 mm).
-    # Focal length derived from 24 mm equiv on a 1" sensor (crop factor ≈ 2.73).
-    # Verify sensor_width_mm / focal_length_mm against official DJI EXIF data
-    # if precision better than ~2% is needed for GSD calculations.
-    # Drone enum (68) and mission compatibility community-verified on DJI RC2.
-    'DJI Mini 5 Pro': {
-        'sensor_width_mm':  13.2,
-        'sensor_height_mm':  8.8,
-        'focal_length_mm':   8.8,
-        'image_width_px':   8192,
-        'image_height_px':  6144,
-        'max_speed_ms':     15.0,
-        'battery_time_min':  45,
-        'info': '1" CMOS  ·  50 MP  ·  24 mm equiv',
-    },
-}
 
 # ── Dark stylesheet (Litchi-inspired) ─────────────────────────────────────
 STYLESHEET = """
@@ -627,6 +592,8 @@ class FlyPathDialog(QWidget):
         self._setup_combos()
         self._connect_signals()
         self._update_camera_info()
+        self._apply_speed_range()
+        self._apply_drone_capabilities()
         self._update_gsd()
         self._update_interval()
 
@@ -802,6 +769,7 @@ class FlyPathDialog(QWidget):
     def _build_flight_group(self):
         group = QGroupBox('Flight Parameters')
         form  = QFormLayout(group)
+        self._flight_form = form   # kept so capability logic can hide rows
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
 
@@ -1227,7 +1195,7 @@ class FlyPathDialog(QWidget):
     # ── Combo population ──────────────────────────────────────────────────
 
     def _setup_combos(self):
-        self.droneModelCombo.addItems(list(DRONE_SPECS.keys()))
+        self.droneModelCombo.addItems(registry.names())
         self.droneModelCombo.setCurrentText('DJI Mini 4 Pro')
 
 
@@ -1318,36 +1286,93 @@ class FlyPathDialog(QWidget):
 
     def _on_drone_changed(self):
         self._update_camera_info()
+        self._apply_speed_range()
+        self._apply_drone_capabilities()
         self._on_param_changed()
+
+    def _apply_drone_capabilities(self):
+        """Adapt the panel to the selected drone's category.
+
+        Consumer (DJI Fly) drones support multi-battery splitting and the direct
+        RC transfer. Enterprise (DJI Pilot 2) mapping missions are a single
+        polygon that Pilot 2 rebuilds, and are imported as a file, so those two
+        features are hidden/disabled rather than shown and then rejected."""
+        drone = self.droneModelCombo.currentText()
+        if not registry.has(drone):
+            return
+        consumer = registry.get(drone).category == 'consumer'
+
+        # Split Missions row (label + spin): consumer only.
+        self.splitSpin.setVisible(consumer)
+        lbl = self._flight_form.labelForField(self.splitSpin)
+        if lbl is not None:
+            lbl.setVisible(consumer)
+        if not consumer:
+            self._setting_split = True
+            self.splitSpin.blockSignals(True)
+            self.splitSpin.setValue(1)
+            self.splitSpin.blockSignals(False)
+            self._setting_split = False
+            self._split_overridden = False
+
+        # Send to DJI RC is a DJI Fly transfer; grey it out for enterprise.
+        self._set_destination_rc_enabled(consumer)
+
+    def _set_destination_rc_enabled(self, enabled):
+        """Enable/disable the 'Send to DJI RC' destination item (kept visible,
+        greyed when disabled). Falls back to 'Save to computer' if RC was active."""
+        idx = self.destCombo.findData('rc')
+        if idx < 0:
+            return
+        item = self.destCombo.model().item(idx)
+        if item is not None:
+            item.setEnabled(enabled)
+        if not enabled and self.destCombo.currentData() == 'rc':
+            local_idx = self.destCombo.findData('local')
+            if local_idx >= 0:
+                self.destCombo.setCurrentIndex(local_idx)
 
     def _update_camera_info(self):
         drone = self.droneModelCombo.currentText()
         self.cameraInfoLabel.setText(
-            DRONE_SPECS[drone]['info'] if drone in DRONE_SPECS else '—'
+            registry.get(drone).info if registry.has(drone) else '—'
         )
+
+    def _apply_speed_range(self):
+        """Set the Speed control's limits to the selected drone's own range.
+
+        The min/max come from hardware/drones.json, so adding a drone with a
+        different speed envelope needs no code change. Signals are blocked while
+        the range moves; the caller recomputes stats afterwards (setRange clamps
+        the current value into the new range automatically)."""
+        drone = self.droneModelCombo.currentText()
+        if not registry.has(drone):
+            return
+        lo, hi = registry.get(drone).speed_range()
+        self.speedSpin.blockSignals(True)
+        self.speedSpin.setRange(lo, hi)
+        self.speedSpin.blockSignals(False)
 
     # ── GSD ───────────────────────────────────────────────────────────────
 
     def _calc_gsd(self):
         drone = self.droneModelCombo.currentText()
-        if drone not in DRONE_SPECS:
+        if not registry.has(drone):
             return None
-        s = DRONE_SPECS[drone]
         return round(
-            (self.altitudeSpin.value() * s['sensor_width_mm'] * 100) /
-            (s['focal_length_mm'] * s['image_width_px']), 2
+            registry.get(drone).camera.gsd_cm_per_px(self.altitudeSpin.value()), 2
         )
 
     def _calc_altitude_from_gsd(self):
         """Inverse of _calc_gsd: altitude (m) needed to reach the current GSD."""
         drone = self.droneModelCombo.currentText()
-        if drone not in DRONE_SPECS:
+        if not registry.has(drone):
             return None
-        s   = DRONE_SPECS[drone]
+        cam = registry.get(drone).camera
         gsd = self.gsdSpin.value()
         if gsd <= 0:
             return None
-        return (gsd * s['focal_length_mm'] * s['image_width_px']) / (s['sensor_width_mm'] * 100.0)
+        return (gsd * cam.focal_length_mm * cam.image_width_px) / (cam.sensor_width_mm * 100.0)
 
     def _update_gsd(self):
         """Refresh the GSD field from the current altitude (altitude drives GSD)."""
@@ -1375,12 +1400,11 @@ class FlyPathDialog(QWidget):
 
     def _footprint(self):
         drone = self.droneModelCombo.currentText()
-        if drone not in DRONE_SPECS:
+        if not registry.has(drone):
             return None, None
-        s   = DRONE_SPECS[drone]
+        cam = registry.get(drone).camera
         alt = self.altitudeSpin.value()
-        return (alt * s['sensor_width_mm'] / s['focal_length_mm'],
-                alt * s['sensor_height_mm'] / s['focal_length_mm'])
+        return cam.footprint_across(alt), cam.footprint_along(alt)
 
     def _update_interval(self):
         _, fh = self._footprint()
@@ -1910,8 +1934,12 @@ class FlyPathDialog(QWidget):
         it, keep it tracking the battery estimate. Runs with signals blocked so
         the programmatic value change doesn't read as a user edit."""
         max_split = max(1, n_lines)
+        drone = self.droneModelCombo.currentText()
+        enterprise = registry.has(drone) and registry.get(drone).category == 'enterprise'
         target = self.splitSpin.value()
-        if not self._split_overridden:
+        if enterprise:
+            target = 1                       # enterprise missions are not split
+        elif not self._split_overridden:
             target = max(1, batteries)
         target = max(1, min(target, max_split))
         self._setting_split = True
@@ -1946,11 +1974,11 @@ class FlyPathDialog(QWidget):
             self._clear_stats()
             return
         drone = self.droneModelCombo.currentText()
-        if drone not in DRONE_SPECS:
+        if not registry.has(drone):
             self._clear_stats()
             return
 
-        s     = DRONE_SPECS[drone]
+        d     = registry.get(drone)
         speed = self.speedSpin.value()
 
         # Coverage area
@@ -1979,7 +2007,7 @@ class FlyPathDialog(QWidget):
                     side_overlap=self.sideOverlapSpin.value() / 100.0,
                     direction_deg=direction,
                     margin_m=self.marginSpin.value(),
-                    drone_specs=s,
+                    drone_specs=d.grid_specs(),
                 )
                 waypoints.extend(wps)
         except Exception:
@@ -1997,7 +2025,7 @@ class FlyPathDialog(QWidget):
         n_lines    = len(waypoints) // 2
         n_photos   = max(0, int(dist_m / actual_spacing))
         flight_min = dist_m / (speed * 60.0) if speed > 0 else 0.0
-        usable_min = s['battery_time_min'] * (1.0 - _BATTERY_RESERVE)
+        usable_min = d.battery_time_min * (1.0 - _BATTERY_RESERVE)
         batteries  = math.ceil(flight_min / usable_min) if flight_min > 0 else 0
 
         self.flightTimeLabel.setText(f'{flight_min:.1f} min')
@@ -2917,19 +2945,56 @@ class FlyPathDialog(QWidget):
             pass
 
     def _write_mission_kmz(self, filepath, waypoints, mission, create_time_ms=None):
-        """Write the KMZ file using current UI parameter values."""
-        write_kmz(
-            filepath=filepath,
+        """Write the KMZ file using current UI parameter values.
+
+        Builds the full MissionSpec; the consumer writer ignores the enterprise
+        fields (polygon, overlaps, direction, margin) and vice versa."""
+        drone = registry.get(self.droneModelCombo.currentText())
+        spec = MissionSpec(
             waypoints=waypoints,
-            drone_name=self.droneModelCombo.currentText(),
             altitude_m=self.altitudeSpin.value(),
             speed_ms=self.speedSpin.value(),
-            finish_action_label=self.finishActionCombo.currentText(),
-            rc_lost_action_label=self.rcLostActionCombo.currentText(),
+            finish_action=self.finishActionCombo.currentText(),
+            rc_lost_action=self.rcLostActionCombo.currentText(),
             gimbal_pitch=self.gimbalAngleSpin.value(),
             mission_name=mission,
             create_time_ms=create_time_ms,
+            polygon=self._survey_polygon_wgs84(),
+            side_overlap=self.sideOverlapSpin.value() / 100.0,
+            front_overlap=self._front_overlap_fraction(),
+            direction_deg=self.directionSpin.value(),
+            margin_m=self.marginSpin.value(),
         )
+        write_mission(drone, spec, filepath)
+
+    def _survey_polygon_wgs84(self):
+        """Survey boundary as [(lon, lat), ...] in WGS84, unclosed (DJI drops the
+        repeated first vertex). None if no polygon is defined."""
+        if self._survey_polygon is None or self._survey_polygon_crs is None:
+            return None
+        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
+        xform = QgsCoordinateTransform(self._survey_polygon_crs, wgs84,
+                                       QgsProject.instance())
+        g = QgsGeometry(self._survey_polygon)
+        g.transform(xform)
+        ring = g.asPolygon()[0] if g.asPolygon() else (
+            g.asMultiPolygon()[0][0] if g.asMultiPolygon() else None)
+        if not ring:
+            return None
+        coords = [(pt.x(), pt.y()) for pt in ring]
+        if len(coords) > 1 and coords[0] == coords[-1]:
+            coords = coords[:-1]
+        return coords
+
+    def _front_overlap_fraction(self):
+        """Current along-track (front) overlap as a fraction 0..0.99."""
+        _, footprint_along = self._footprint()
+        spd = self.speedSpin.value()
+        interval = self.photoIntervalSpin.value()
+        if not footprint_along or spd <= 0 or interval <= 0:
+            return 0.7
+        frac = 1.0 - (spd * interval) / footprint_along
+        return max(0.0, min(0.99, frac))
 
     @staticmethod
     def _default_kmz_name():
@@ -2951,6 +3016,23 @@ class FlyPathDialog(QWidget):
                 return
             waypoints, shot_spacing_m = result
 
+        drone = registry.get(self.droneModelCombo.currentText())
+
+        # Enterprise (DJI Pilot 2) missions are polygon-based mapping2d, exported
+        # as a single file and imported in Pilot 2. Splitting and the DJI Fly RC
+        # transfer do not apply to them.
+        if drone.category == 'enterprise':
+            if self.destCombo.currentData() == 'rc':
+                QMessageBox.information(
+                    self, 'Enterprise Mission',
+                    'Send to DJI RC is for DJI Fly consumer missions. A '
+                    f'{drone.name} mission exports as a KMZ file: save it, then '
+                    'import it in DJI Pilot 2 on the controller.'
+                )
+                return
+            self._export_local_enterprise(mission, waypoints)
+            return
+
         missions = split_waypoints(waypoints, self.splitSpin.value())
 
         if self.destCombo.currentData() == 'rc':
@@ -2966,6 +3048,51 @@ class FlyPathDialog(QWidget):
                 self._export_rc(mission, waypoints, shot_spacing_m)
         else:
             self._export_local(mission, missions)
+
+    def _export_local_enterprise(self, mission, waypoints):
+        """Save a single enterprise (DJI Pilot 2) mapping2d KMZ from the survey
+        polygon. No split: Pilot 2 rebuilds the grid from the polygon."""
+        folder = self.localFolderEdit.text().strip() or os.path.expanduser('~')
+        if not os.path.isdir(folder):
+            reply = QMessageBox.question(
+                self, 'Create Folder?',
+                f'The folder does not exist:\n{folder}\n\nCreate it?',
+                _MB_YES | _MB_NO, _MB_YES,
+            )
+            if reply != _MB_YES:
+                return
+            try:
+                os.makedirs(folder, exist_ok=True)
+            except Exception as exc:
+                QMessageBox.critical(self, 'Cannot Create Folder', str(exc))
+                return
+
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, 'Export Mission KMZ',
+            os.path.join(folder, self._default_kmz_name()),
+            'DJI Mission File (*.kmz)'
+        )
+        if not filepath:
+            return
+
+        try:
+            self._write_mission_kmz(filepath, waypoints, mission)
+        except Exception as exc:
+            QMessageBox.critical(self, 'Export Failed', str(exc))
+            return
+
+        QSettings('FlyPath', 'FlyPath').setValue(
+            'local_export_dir', os.path.dirname(filepath)
+        )
+        reply = QMessageBox.information(
+            self, 'Export Complete',
+            'Enterprise mapping mission saved.\n\n'
+            f'Waypoints: {len(waypoints):,}\n\nSaved to:\n{filepath}\n\n'
+            'Import it in DJI Pilot 2 on the controller. Open the folder?',
+            _MB_YES | _MB_NO, _MB_YES,
+        )
+        if reply == _MB_YES:
+            self._open_in_explorer(filepath)
 
     def _export_local(self, mission, missions):
         """Save the mission (or each split mission) as a .kmz in the folder."""
@@ -3338,7 +3465,7 @@ class FlyPathDialog(QWidget):
         waypoints is a list of (lon, lat) turn points only.
         """
         drone = self.droneModelCombo.currentText()
-        if drone not in DRONE_SPECS:
+        if not registry.has(drone):
             return None
         shot_spacing_m = max(
             self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5
@@ -3354,7 +3481,7 @@ class FlyPathDialog(QWidget):
                     side_overlap=self.sideOverlapSpin.value() / 100.0,
                     direction_deg=direction,
                     margin_m=self.marginSpin.value(),
-                    drone_specs=DRONE_SPECS[drone],
+                    drone_specs=registry.get(drone).grid_specs(),
                 )
                 waypoints.extend(wps)
         except ValueError as exc:
