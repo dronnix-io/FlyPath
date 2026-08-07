@@ -79,6 +79,61 @@ def test_consumer_is_registered():
     assert 'consumer' in factory._WRITERS
 
 
+# ── Enterprise (mapping2d) ──────────────────────────────────────────────────
+
+def _ent_spec(**kw):
+    poly = [(-114.070, 51.051), (-114.068, 51.051),
+            (-114.068, 51.049), (-114.070, 51.049)]
+    base = dict(waypoints=WPS, altitude_m=90.0, speed_ms=8.0,
+                finish_action='Return to Home', rc_lost_action='Return to Home',
+                gimbal_pitch=-90, mission_name='Ent', create_time_ms=1700000000000,
+                polygon=poly, side_overlap=0.75, front_overlap=0.75,
+                direction_deg=0.0, margin_m=0.0)
+    base.update(kw)
+    return MissionSpec(**base)
+
+
+def test_enterprise_is_registered():
+    assert 'enterprise' in factory._WRITERS
+
+
+def test_enterprise_mapping2d_structure():
+    drone = registry.get('DJI Matrice 4E')
+    assert drone.category == 'enterprise'
+    path = _write(drone, _ent_spec())
+    with zipfile.ZipFile(path) as z:
+        assert set(z.namelist()) == {'wpmz/template.kml', 'wpmz/waylines.wpml'}
+        tpl = z.read('wpmz/template.kml').decode('utf-8')
+        wl = z.read('wpmz/waylines.wpml').decode('utf-8')
+    assert 'http://www.dji.com/wpmz/1.0.6' in tpl
+    assert '<wpml:templateType>mapping2d</wpml:templateType>' in tpl
+    assert f'<wpml:droneEnumValue>{drone.drone_enum}</wpml:droneEnumValue>' in tpl
+    assert (f'<wpml:payloadEnumValue>{drone.camera.payload_enum}'
+            f'</wpml:payloadEnumValue>') in tpl
+    assert '<Polygon>' in tpl
+    assert '<wpml:orthoCameraOverlapH>75</wpml:orthoCameraOverlapH>' in tpl
+    assert 'startTimeLapse' in wl
+
+
+def test_enterprise_requires_polygon():
+    drone = registry.get('DJI Matrice 4E')
+    try:
+        _write(drone, _ent_spec(polygon=None))
+        assert False, 'expected ValueError without a polygon'
+    except ValueError:
+        pass
+
+
+def test_consumer_ignores_enterprise_fields():
+    # A consumer drone with enterprise fields set still emits the waypoint format.
+    drone = registry.get('DJI Mini 4 Pro')
+    path = _write(drone, _ent_spec())   # has polygon/overlaps, but consumer drone
+    with zipfile.ZipFile(path) as z:
+        tpl = z.read('wpmz/template.kml').decode('utf-8')
+    assert 'http://www.uav.com/wpmz/1.0.2' in tpl
+    assert '<wpml:templateType>waypoint</wpml:templateType>' in tpl
+
+
 if __name__ == '__main__':
     fns = [v for k, v in sorted(globals().items()) if k.startswith('test_') and callable(v)]
     failed = 0

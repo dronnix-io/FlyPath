@@ -9,10 +9,11 @@ later without touching the consumer path.
 """
 
 from . import consumer
+from . import enterprise
 
 _WRITERS = {
     'consumer': consumer.write,
-    # 'enterprise': enterprise.write,   # added in a later step
+    'enterprise': enterprise.write,
 }
 
 

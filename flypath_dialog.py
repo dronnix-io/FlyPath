@@ -2869,7 +2869,10 @@ class FlyPathDialog(QWidget):
             pass
 
     def _write_mission_kmz(self, filepath, waypoints, mission, create_time_ms=None):
-        """Write the KMZ file using current UI parameter values."""
+        """Write the KMZ file using current UI parameter values.
+
+        Builds the full MissionSpec; the consumer writer ignores the enterprise
+        fields (polygon, overlaps, direction, margin) and vice versa."""
         drone = registry.get(self.droneModelCombo.currentText())
         spec = MissionSpec(
             waypoints=waypoints,
@@ -2880,8 +2883,42 @@ class FlyPathDialog(QWidget):
             gimbal_pitch=self.gimbalAngleSpin.value(),
             mission_name=mission,
             create_time_ms=create_time_ms,
+            polygon=self._survey_polygon_wgs84(),
+            side_overlap=self.sideOverlapSpin.value() / 100.0,
+            front_overlap=self._front_overlap_fraction(),
+            direction_deg=self.directionSpin.value(),
+            margin_m=self.marginSpin.value(),
         )
         write_mission(drone, spec, filepath)
+
+    def _survey_polygon_wgs84(self):
+        """Survey boundary as [(lon, lat), ...] in WGS84, unclosed (DJI drops the
+        repeated first vertex). None if no polygon is defined."""
+        if self._survey_polygon is None or self._survey_polygon_crs is None:
+            return None
+        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
+        xform = QgsCoordinateTransform(self._survey_polygon_crs, wgs84,
+                                       QgsProject.instance())
+        g = QgsGeometry(self._survey_polygon)
+        g.transform(xform)
+        ring = g.asPolygon()[0] if g.asPolygon() else (
+            g.asMultiPolygon()[0][0] if g.asMultiPolygon() else None)
+        if not ring:
+            return None
+        coords = [(pt.x(), pt.y()) for pt in ring]
+        if len(coords) > 1 and coords[0] == coords[-1]:
+            coords = coords[:-1]
+        return coords
+
+    def _front_overlap_fraction(self):
+        """Current along-track (front) overlap as a fraction 0..0.99."""
+        _, footprint_along = self._footprint()
+        spd = self.speedSpin.value()
+        interval = self.photoIntervalSpin.value()
+        if not footprint_along or spd <= 0 or interval <= 0:
+            return 0.7
+        frac = 1.0 - (spd * interval) / footprint_along
+        return max(0.0, min(0.99, frac))
 
     @staticmethod
     def _default_kmz_name():
@@ -2903,6 +2940,23 @@ class FlyPathDialog(QWidget):
                 return
             waypoints, shot_spacing_m = result
 
+        drone = registry.get(self.droneModelCombo.currentText())
+
+        # Enterprise (DJI Pilot 2) missions are polygon-based mapping2d, exported
+        # as a single file and imported in Pilot 2. Splitting and the DJI Fly RC
+        # transfer do not apply to them.
+        if drone.category == 'enterprise':
+            if self.destCombo.currentData() == 'rc':
+                QMessageBox.information(
+                    self, 'Enterprise Mission',
+                    'Send to DJI RC is for DJI Fly consumer missions. A '
+                    f'{drone.name} mission exports as a KMZ file: save it, then '
+                    'import it in DJI Pilot 2 on the controller.'
+                )
+                return
+            self._export_local_enterprise(mission, waypoints)
+            return
+
         missions = split_waypoints(waypoints, self.splitSpin.value())
 
         if self.destCombo.currentData() == 'rc':
@@ -2918,6 +2972,51 @@ class FlyPathDialog(QWidget):
                 self._export_rc(mission, waypoints, shot_spacing_m)
         else:
             self._export_local(mission, missions)
+
+    def _export_local_enterprise(self, mission, waypoints):
+        """Save a single enterprise (DJI Pilot 2) mapping2d KMZ from the survey
+        polygon. No split: Pilot 2 rebuilds the grid from the polygon."""
+        folder = self.localFolderEdit.text().strip() or os.path.expanduser('~')
+        if not os.path.isdir(folder):
+            reply = QMessageBox.question(
+                self, 'Create Folder?',
+                f'The folder does not exist:\n{folder}\n\nCreate it?',
+                _MB_YES | _MB_NO, _MB_YES,
+            )
+            if reply != _MB_YES:
+                return
+            try:
+                os.makedirs(folder, exist_ok=True)
+            except Exception as exc:
+                QMessageBox.critical(self, 'Cannot Create Folder', str(exc))
+                return
+
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, 'Export Mission KMZ',
+            os.path.join(folder, self._default_kmz_name()),
+            'DJI Mission File (*.kmz)'
+        )
+        if not filepath:
+            return
+
+        try:
+            self._write_mission_kmz(filepath, waypoints, mission)
+        except Exception as exc:
+            QMessageBox.critical(self, 'Export Failed', str(exc))
+            return
+
+        QSettings('FlyPath', 'FlyPath').setValue(
+            'local_export_dir', os.path.dirname(filepath)
+        )
+        reply = QMessageBox.information(
+            self, 'Export Complete',
+            'Enterprise mapping mission saved.\n\n'
+            f'Waypoints: {len(waypoints):,}\n\nSaved to:\n{filepath}\n\n'
+            'Import it in DJI Pilot 2 on the controller. Open the folder?',
+            _MB_YES | _MB_NO, _MB_YES,
+        )
+        if reply == _MB_YES:
+            self._open_in_explorer(filepath)
 
     def _export_local(self, mission, missions):
         """Save the mission (or each split mission) as a .kmz in the folder."""

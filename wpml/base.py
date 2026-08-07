@@ -16,7 +16,7 @@ from dataclasses import dataclass
 @dataclass
 class MissionSpec:
     """Everything a writer needs to emit a mission, drone/format independent."""
-    waypoints: list                  # [(lon, lat), ...] in WGS84
+    waypoints: list                  # [(lon, lat), ...] in WGS84 (flight-line turns)
     altitude_m: float
     speed_ms: float
     finish_action: str               # human label, e.g. 'Return to Home'
@@ -24,6 +24,13 @@ class MissionSpec:
     gimbal_pitch: float = -90.0
     mission_name: str = 'FlyPath Mission'
     create_time_ms: int = None       # preserve an existing mission's date, or None
+    # Enterprise mapping2d needs the survey boundary and planned overlaps; Pilot 2
+    # rebuilds the grid from these. Ignored by the consumer waypoint writer.
+    polygon: list = None             # [(lon, lat), ...] survey boundary in WGS84
+    side_overlap: float = 0.7        # fraction 0..1
+    front_overlap: float = 0.7       # fraction 0..1
+    direction_deg: float = 0.0
+    margin_m: float = 0.0
 
 
 def esc(text):
