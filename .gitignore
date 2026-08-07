@@ -13,6 +13,8 @@ build/
 *.qgz
 *.qgs~
 *.pyc
+# QGIS runtime artifact written when running headless in the repo dir
+symbology-style.db
 
 # Virtual environments
 .venv/
