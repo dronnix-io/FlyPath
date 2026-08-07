@@ -578,6 +578,7 @@ class FlyPathDialog(QWidget):
         self._connect_signals()
         self._update_camera_info()
         self._apply_speed_range()
+        self._apply_drone_capabilities()
         self._update_gsd()
         self._update_interval()
 
@@ -753,6 +754,7 @@ class FlyPathDialog(QWidget):
     def _build_flight_group(self):
         group = QGroupBox('Flight Parameters')
         form  = QFormLayout(group)
+        self._flight_form = form   # kept so capability logic can hide rows
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
 
@@ -1261,7 +1263,50 @@ class FlyPathDialog(QWidget):
     def _on_drone_changed(self):
         self._update_camera_info()
         self._apply_speed_range()
+        self._apply_drone_capabilities()
         self._on_param_changed()
+
+    def _apply_drone_capabilities(self):
+        """Adapt the panel to the selected drone's category.
+
+        Consumer (DJI Fly) drones support multi-battery splitting and the direct
+        RC transfer. Enterprise (DJI Pilot 2) mapping missions are a single
+        polygon that Pilot 2 rebuilds, and are imported as a file, so those two
+        features are hidden/disabled rather than shown and then rejected."""
+        drone = self.droneModelCombo.currentText()
+        if not registry.has(drone):
+            return
+        consumer = registry.get(drone).category == 'consumer'
+
+        # Split Missions row (label + spin): consumer only.
+        self.splitSpin.setVisible(consumer)
+        lbl = self._flight_form.labelForField(self.splitSpin)
+        if lbl is not None:
+            lbl.setVisible(consumer)
+        if not consumer:
+            self._setting_split = True
+            self.splitSpin.blockSignals(True)
+            self.splitSpin.setValue(1)
+            self.splitSpin.blockSignals(False)
+            self._setting_split = False
+            self._split_overridden = False
+
+        # Send to DJI RC is a DJI Fly transfer; grey it out for enterprise.
+        self._set_destination_rc_enabled(consumer)
+
+    def _set_destination_rc_enabled(self, enabled):
+        """Enable/disable the 'Send to DJI RC' destination item (kept visible,
+        greyed when disabled). Falls back to 'Save to computer' if RC was active."""
+        idx = self.destCombo.findData('rc')
+        if idx < 0:
+            return
+        item = self.destCombo.model().item(idx)
+        if item is not None:
+            item.setEnabled(enabled)
+        if not enabled and self.destCombo.currentData() == 'rc':
+            local_idx = self.destCombo.findData('local')
+            if local_idx >= 0:
+                self.destCombo.setCurrentIndex(local_idx)
 
     def _update_camera_info(self):
         drone = self.droneModelCombo.currentText()
@@ -1865,8 +1910,12 @@ class FlyPathDialog(QWidget):
         it, keep it tracking the battery estimate. Runs with signals blocked so
         the programmatic value change doesn't read as a user edit."""
         max_split = max(1, n_lines)
+        drone = self.droneModelCombo.currentText()
+        enterprise = registry.has(drone) and registry.get(drone).category == 'enterprise'
         target = self.splitSpin.value()
-        if not self._split_overridden:
+        if enterprise:
+            target = 1                       # enterprise missions are not split
+        elif not self._split_overridden:
             target = max(1, batteries)
         target = max(1, min(target, max_split))
         self._setting_split = True
