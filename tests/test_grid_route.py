@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from grid_route import (  # noqa: E402
-    boustrophedon_route, decompose_cells,
+    boustrophedon_route, decompose_cells, split_by_waypoint_count,
 )
 
 
@@ -139,6 +139,51 @@ def test_densify_concave_stays_inside():
 def test_densify_none_is_endpoints_only():
     cols = [(float(x), [(0.0, 10.0)]) for x in range(4)]
     assert len(boustrophedon_route(cols)) == 8          # 2 points per pass
+
+
+# ── Waypoint-count split (full-automatic multi-battery / cap) ────────────────
+
+def _wps(n):
+    return [(float(i), 0.0) for i in range(n)]
+
+
+def _assert_seam_shared_and_complete(pts, missions):
+    # Consecutive missions share a seam point; concatenating without the shared
+    # duplicates reproduces the original list, in order, with nothing lost.
+    rebuilt = list(missions[0])
+    for m in missions[1:]:
+        assert m[0] == rebuilt[-1], 'missions must share a seam waypoint'
+        rebuilt.extend(m[1:])
+    assert rebuilt == list(pts)
+
+
+def test_split_count_honours_battery_minimum():
+    pts = _wps(100)
+    missions = split_by_waypoint_count(pts, n_missions=3, max_waypoints=70)
+    assert len(missions) == 3                          # cap (ceil(99/69)=2) < battery 3
+    _assert_seam_shared_and_complete(pts, missions)
+
+
+def test_split_count_raised_by_waypoint_cap():
+    pts = _wps(300)
+    missions = split_by_waypoint_count(pts, n_missions=2, max_waypoints=70)
+    # ceil(299/69) = 5 missions needed to stay under the cap, above battery 2.
+    assert len(missions) == 5
+    assert all(len(m) <= 70 for m in missions)
+    _assert_seam_shared_and_complete(pts, missions)
+
+
+def test_split_never_exceeds_cap_various_sizes():
+    for w in (2, 71, 139, 140, 141, 500, 999):
+        pts = _wps(w)
+        missions = split_by_waypoint_count(pts, n_missions=1, max_waypoints=70)
+        assert all(len(m) <= 70 for m in missions), f'w={w} exceeded cap'
+        _assert_seam_shared_and_complete(pts, missions)
+
+
+def test_split_single_mission_when_small():
+    assert split_by_waypoint_count(_wps(1), 5, 70) == [_wps(1)]
+    assert len(split_by_waypoint_count(_wps(40), 1, 70)) == 1
 
 
 if __name__ == '__main__':

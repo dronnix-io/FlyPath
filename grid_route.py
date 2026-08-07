@@ -159,3 +159,46 @@ def order_cells(cells, adjacency, densify_spacing=None):
         route.extend(chosen)
         cur = route[-1]
     return route
+
+
+def split_by_waypoint_count(waypoints, n_missions, max_waypoints=None):
+    """Split a dense (one-waypoint-per-photo) route into contiguous sub-missions
+    for full-automatic capture.
+
+    Unlike split_waypoints (which divides by flight line, two points each), a
+    full-auto pass has many waypoints, so this divides by waypoint count. The
+    edges between waypoints are shared out across the missions as evenly as
+    possible, and consecutive missions share a seam waypoint so the coloured
+    paths join up with no gap.
+
+    `n_missions` is treated as a minimum (usually the battery count) and raised
+    if needed so no sub-mission exceeds `max_waypoints` (DJI caps waypoints per
+    mission). With max_waypoints set, every returned mission has at most that
+    many waypoints. Returns a list of waypoint sub-lists.
+    """
+    pts = list(waypoints)
+    w = len(pts)
+    try:
+        n = int(n_missions)
+    except (TypeError, ValueError):
+        n = 1
+    n = max(1, n)
+    if max_waypoints and max_waypoints >= 2 and w > 1:
+        # Each mission spans at most max_waypoints points including its shared
+        # seam, so it adds at most (max_waypoints - 1) edges. This is the fewest
+        # missions that keeps every one within the cap.
+        need = -(-(w - 1) // (max_waypoints - 1))
+        n = max(n, need)
+    n = min(n, max(1, w - 1))
+    if n <= 1 or w <= 1:
+        return [pts]
+
+    base, rem = divmod(w - 1, n)          # distribute the w-1 edges evenly
+    missions = []
+    start = 0
+    for g in range(n):
+        span = base + (1 if g < rem else 0)
+        end = start + span                # inclusive index of this mission's last point
+        missions.append(pts[start:end + 1])
+        start = end                       # next mission shares this seam waypoint
+    return missions
