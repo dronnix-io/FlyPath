@@ -80,8 +80,9 @@
       "payload_sub_enum": 0,
       "payload_position_index": 0
     },
+    "available": false,
     "verified": "UNVERIFIED - estimated values, confirm from a native M4E mission and DJI specs",
-    "notes": "drone_enum 99 and payload_enum 88 from the DJI Cloud API enum table; camera optics (17.3 x 13.0 mm, 12.29 mm focal, 5280 x 3956) are estimates. The mapping2d KMZ format needs on-hardware verification with an M4E + DJI Pilot 2.",
+    "notes": "Hidden from the UI (available=false) until verified. drone_enum 99 and payload_enum 88 from the DJI Cloud API enum table; camera optics (17.3 x 13.0 mm, 12.29 mm focal, 5280 x 3956) are estimates. The mapping2d KMZ format needs on-hardware verification with an M4E + DJI Pilot 2.",
     "info": "4/3 CMOS  ·  20 MP  ·  24 mm equiv (enterprise)"
   }
 }

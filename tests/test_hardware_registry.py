@@ -81,6 +81,16 @@ def test_speed_range():
     assert registry.get('DJI Mini 5 Pro').speed_range() == (1.0, 15.0)
 
 
+def test_unavailable_drone_hidden_from_list_but_still_registered():
+    # The Matrice 4E is kept in the registry (writer/tests use it) but hidden
+    # from the UI list until verified.
+    assert 'DJI Matrice 4E' not in registry.names()
+    assert registry.has('DJI Matrice 4E')
+    assert registry.get('DJI Matrice 4E').available is False
+    # Every name offered in the UI is an available drone.
+    assert all(registry.get(n).available for n in registry.names())
+
+
 def test_has_and_missing():
     assert registry.has('DJI Mini 4 Pro')
     assert not registry.has('Nonexistent Drone')

@@ -77,6 +77,7 @@ def _build(name, entry):
         camera=camera,
         info=entry['info'],
         verified=entry.get('verified', ''),
+        available=bool(entry.get('available', True)),
     )
 
 
@@ -94,12 +95,15 @@ _DRONES = _load()
 
 
 def names():
-    """Drone names in display order."""
-    return list(_DRONES.keys())
+    """Names of drones offered in the UI, in display order.
+
+    Excludes drones flagged available=false (kept in the registry but not shown
+    to users yet). Use all_drones()/get() to reach every registered drone."""
+    return [name for name, d in _DRONES.items() if d.available]
 
 
 def has(name):
-    """True if a drone by this name is known."""
+    """True if a drone by this name is registered (available or not)."""
     return name in _DRONES
 
 

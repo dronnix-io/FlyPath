@@ -59,6 +59,10 @@ class Drone:
     # because not every drone documents a minimum.
     min_speed_ms: float = 1.0
     verified: str = ''
+    # Whether the drone is offered in the UI. Kept in the registry (and tested)
+    # even when False, so unfinished/unverified drones stay in the code but out
+    # of the user's drop-down until they're ready.
+    available: bool = True
 
     def speed_range(self):
         """(min, max) waypoint speed in m/s for this drone."""
