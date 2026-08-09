@@ -575,6 +575,20 @@ class FlyPathDialog(QWidget):
         super().__init__(parent)
         self.iface = iface
 
+        # One-line mission summary in the QGIS status bar (permanent area, right
+        # side), mirroring the panel Statistics at a glance. Shown/hidden with
+        # the panel and removed on unload.
+        self._statusSummary = QLabel('')
+        self._statusSummary.setObjectName('flypathStatusSummary')
+        self._statusSummary.setToolTip(
+            'FlyPath mission estimate: flight time, batteries and photos.')
+        try:
+            self.iface.mainWindow().statusBar().addPermanentWidget(self._statusSummary)
+        except Exception:
+            self._statusSummary = None
+        if self._statusSummary:
+            self._statusSummary.hide()
+
         # State
         self._survey_polygon     = None
         self._survey_polygon_crs = None
@@ -2153,6 +2167,7 @@ class FlyPathDialog(QWidget):
             for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
                          'linesLabel', 'batteriesLabel'):
                 getattr(self, attr).setText('—')
+            self._clear_status_summary()
             return
 
         self._live_waypoints = waypoints
@@ -2176,6 +2191,7 @@ class FlyPathDialog(QWidget):
         self.photosLabel.setText(f'{n_photos:,}')
         self.linesLabel.setText(str(n_lines))
         self.batteriesLabel.setText(str(batteries))
+        self._set_status_summary(flight_min, batteries, n_photos)
 
         # Split Missions is the MINIMUM number of missions, defaulting to (and
         # tracking) the battery estimate until the user sets their own value. In
@@ -2207,10 +2223,40 @@ class FlyPathDialog(QWidget):
                      'linesLabel', 'batteriesLabel', 'coverageLabel'):
             getattr(self, attr).setText('—')
         self.areaLabel.setText('—')
+        self._clear_status_summary()
         # GSD and Interval depend only on drone + altitude, not on a survey
         # polygon — always recompute them rather than blanking them out.
         self._update_gsd()
         self._update_interval()
+
+    # ── Status-bar summary (one-line mirror of the panel Statistics) ──────
+
+    def _set_status_summary(self, flight_min, batteries, n_photos):
+        """Fill the status-bar summary from the current estimate."""
+        w = getattr(self, '_statusSummary', None)
+        if not w:
+            return
+        batt = f"{batteries} batter{'y' if batteries == 1 else 'ies'}"
+        w.setText(f'FlyPath:  {flight_min:.1f} min  ·  {batt}  ·  {n_photos:,} photos')
+        w.setVisible(self.isVisible())
+
+    def _clear_status_summary(self):
+        w = getattr(self, '_statusSummary', None)
+        if w:
+            w.setText('')
+            w.hide()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        w = getattr(self, '_statusSummary', None)
+        if w:
+            w.setVisible(bool(w.text()))
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        w = getattr(self, '_statusSummary', None)
+        if w:
+            w.hide()
 
     # ── Map preview ───────────────────────────────────────────────────────
 
@@ -3599,6 +3645,15 @@ class FlyPathDialog(QWidget):
         if self._thumb_dir:
             shutil.rmtree(self._thumb_dir, ignore_errors=True)
             self._thumb_dir = None
+        # Remove the status-bar summary so it doesn't linger after unload.
+        w = getattr(self, '_statusSummary', None)
+        if w:
+            try:
+                self.iface.mainWindow().statusBar().removeWidget(w)
+            except Exception:
+                pass
+            w.deleteLater()
+            self._statusSummary = None
 
     def closeEvent(self, event):
         self.cleanup()
