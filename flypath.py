@@ -73,7 +73,10 @@ class FlyPath:
             self.dock_widget.setParent(None)
             self.dock_widget = None
         if self.toolbar:
+            # Detach from the main window so no leftover FlyPathToolbar child
+            # lingers for the next load (Plugin Reloader warns otherwise).
             self.iface.mainWindow().removeToolBar(self.toolbar)
+            self.toolbar.setParent(None)
             self.toolbar.deleteLater()
             self.toolbar = None
 
