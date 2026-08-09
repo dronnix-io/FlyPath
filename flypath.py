@@ -21,6 +21,7 @@ class FlyPath:
         self.iface = iface
         self.plugin_dir = os.path.dirname(__file__)
         self.action = None
+        self.toolbar = None
         self.dock_widget = None
         self.panel = None
 
@@ -31,7 +32,12 @@ class FlyPath:
         self.action.setToolTip('Open FlyPath mission planner')
         self.action.triggered.connect(self.toggle_panel)
 
-        self.iface.addToolBarIcon(self.action)
+        # Dedicated FlyPath toolbar: the launch button plus the live Statistics
+        # bar beside it, so the mission estimate stays visible at all times
+        # without taking up space in the panel.
+        self.toolbar = self.iface.addToolBar('FlyPath')
+        self.toolbar.setObjectName('FlyPathToolbar')
+        self.toolbar.addAction(self.action)
         self.iface.addPluginToMenu('FlyPath', self.action)
 
         self.dock_widget = QDockWidget('FlyPath', self.iface.mainWindow())
@@ -42,6 +48,9 @@ class FlyPath:
 
         self.panel = FlyPathDialog(self.iface, self.dock_widget)
         self.dock_widget.setWidget(self.panel)
+
+        # Place the panel's Statistics bar on the FlyPath toolbar.
+        self.toolbar.addWidget(self.panel.statsBar)
 
         # Lock the dock to the panel's natural width so it can't be dragged
         # wider or narrower. The two-column layout is designed for one width,
@@ -55,7 +64,6 @@ class FlyPath:
         self.dock_widget.visibilityChanged.connect(self.action.setChecked)
 
     def unload(self):
-        self.iface.removeToolBarIcon(self.action)
         self.iface.removePluginMenu('FlyPath', self.action)
         if self.dock_widget:
             if self.panel:
@@ -64,6 +72,10 @@ class FlyPath:
             self.iface.mainWindow().removeDockWidget(self.dock_widget)
             self.dock_widget.setParent(None)
             self.dock_widget = None
+        if self.toolbar:
+            self.iface.mainWindow().removeToolBar(self.toolbar)
+            self.toolbar.deleteLater()
+            self.toolbar = None
 
     def toggle_panel(self, checked):
         if checked:

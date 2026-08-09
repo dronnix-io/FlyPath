@@ -575,20 +575,6 @@ class FlyPathDialog(QWidget):
         super().__init__(parent)
         self.iface = iface
 
-        # One-line mission summary in the QGIS status bar (permanent area, right
-        # side), mirroring the panel Statistics at a glance. Shown/hidden with
-        # the panel and removed on unload.
-        self._statusSummary = QLabel('')
-        self._statusSummary.setObjectName('flypathStatusSummary')
-        self._statusSummary.setToolTip(
-            'FlyPath mission estimate: flight time, batteries and photos.')
-        try:
-            self.iface.mainWindow().statusBar().addPermanentWidget(self._statusSummary)
-        except Exception:
-            self._statusSummary = None
-        if self._statusSummary:
-            self._statusSummary.hide()
-
         # State
         self._survey_polygon     = None
         self._survey_polygon_crs = None
@@ -686,8 +672,10 @@ class FlyPathDialog(QWidget):
         # How the grid becomes deliverable mission files (split, cap, cross-hatch).
         scroll_layout.addWidget(self._build_organizer_group())
 
-        # Statistics full width below, itself split into two columns.
-        scroll_layout.addWidget(self._build_stats_group())
+        # Statistics live on the FlyPath toolbar (outside the panel) so they stay
+        # visible at all times; the plugin places this bar there. Built here so
+        # the stat labels exist for _update_stats.
+        self.statsBar = self._build_stats_bar()
         scroll_layout.addStretch()
 
         scroll.setWidget(content)
@@ -1035,12 +1023,12 @@ class FlyPathDialog(QWidget):
 
         return group
 
-    def _build_stats_group(self):
-        group = QGroupBox('Statistics')
-        outer = QHBoxLayout(group)
-        outer.setSpacing(14)
-
-        left_stats = [
+    def _build_stats_bar(self):
+        """Compact one-row Statistics readout, meant to sit on the FlyPath
+        toolbar (outside the panel) so the numbers stay visible at all times.
+        Creates the same label attributes _update_stats writes to. Carries its
+        own dark styling so it reads correctly on any toolbar background."""
+        fields = [
             ('flightTimeLabel', 'Flight Time',
              'Estimated total flight duration based on path length and speed. '
              'Does not include takeoff, landing, or battery swap time.'),
@@ -1048,9 +1036,7 @@ class FlyPathDialog(QWidget):
              'Total distance the drone will fly along all flight lines.'),
             ('coverageLabel',   'Coverage',
              'Total survey area in hectares as calculated from the polygon.'),
-        ]
-        right_stats = [
-            ('linesLabel',      'Flight Lines',
+            ('linesLabel',      'Lines',
              'Number of parallel flight lines needed to cover the survey area.'),
             ('batteriesLabel',  'Batteries',
              'Estimated battery charges needed for the mission. Planned against a '
@@ -1061,19 +1047,38 @@ class FlyPathDialog(QWidget):
             ('photosLabel',     'Photos',
              'Estimated number of photos the camera will take during the mission.'),
         ]
-        for stats in (left_stats, right_stats):
-            form = QFormLayout()
-            form.setLabelAlignment(_AlignLeft | _AlignVCenter)
-            form.setSpacing(6)
-            for attr, caption, tip in stats:
-                lbl = QLabel('—')
-                lbl.setObjectName(attr)
-                self._tip(lbl, tip)
-                setattr(self, attr, lbl)
-                form.addRow(caption, lbl)
-            outer.addLayout(form, 1)
-
-        return group
+        bar = QWidget()
+        bar.setObjectName('flypathStatsBar')
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(8, 2, 8, 2)
+        h.setSpacing(6)
+        for i, (attr, caption, tip) in enumerate(fields):
+            if i:
+                sep = QLabel('·')
+                sep.setObjectName('statSep')
+                h.addWidget(sep)
+            cap = QLabel(f'{caption}:')
+            cap.setObjectName('statCaption')
+            val = QLabel('—')
+            val.setObjectName(attr)
+            val.setToolTip(tip)
+            setattr(self, attr, val)
+            h.addWidget(cap)
+            h.addWidget(val)
+        bar.setStyleSheet(
+            '#flypathStatsBar { background-color: #21242B; border: 1px solid '
+            '#3A3D45; border-radius: 4px; }'
+            '#flypathStatsBar QLabel { color: #C7CBD1; font-size: 11px; }'
+            '#flypathStatsBar QLabel#statSep { color: #565A63; }'
+            '#flypathStatsBar QLabel#flightTimeLabel, '
+            '#flypathStatsBar QLabel#distanceLabel, '
+            '#flypathStatsBar QLabel#coverageLabel, '
+            '#flypathStatsBar QLabel#linesLabel, '
+            '#flypathStatsBar QLabel#batteriesLabel, '
+            '#flypathStatsBar QLabel#photosLabel '
+            '{ color: #F0A500; font-weight: bold; }'
+        )
+        return bar
 
     def _build_action_bar(self):
         bar = QWidget()
@@ -2167,7 +2172,6 @@ class FlyPathDialog(QWidget):
             for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
                          'linesLabel', 'batteriesLabel'):
                 getattr(self, attr).setText('—')
-            self._clear_status_summary()
             return
 
         self._live_waypoints = waypoints
@@ -2191,7 +2195,6 @@ class FlyPathDialog(QWidget):
         self.photosLabel.setText(f'{n_photos:,}')
         self.linesLabel.setText(str(n_lines))
         self.batteriesLabel.setText(str(batteries))
-        self._set_status_summary(flight_min, batteries, n_photos)
 
         # Split Missions is the MINIMUM number of missions, defaulting to (and
         # tracking) the battery estimate until the user sets their own value. In
@@ -2223,40 +2226,10 @@ class FlyPathDialog(QWidget):
                      'linesLabel', 'batteriesLabel', 'coverageLabel'):
             getattr(self, attr).setText('—')
         self.areaLabel.setText('—')
-        self._clear_status_summary()
         # GSD and Interval depend only on drone + altitude, not on a survey
         # polygon — always recompute them rather than blanking them out.
         self._update_gsd()
         self._update_interval()
-
-    # ── Status-bar summary (one-line mirror of the panel Statistics) ──────
-
-    def _set_status_summary(self, flight_min, batteries, n_photos):
-        """Fill the status-bar summary from the current estimate."""
-        w = getattr(self, '_statusSummary', None)
-        if not w:
-            return
-        batt = f"{batteries} batter{'y' if batteries == 1 else 'ies'}"
-        w.setText(f'FlyPath:  {flight_min:.1f} min  ·  {batt}  ·  {n_photos:,} photos')
-        w.setVisible(self.isVisible())
-
-    def _clear_status_summary(self):
-        w = getattr(self, '_statusSummary', None)
-        if w:
-            w.setText('')
-            w.hide()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        w = getattr(self, '_statusSummary', None)
-        if w:
-            w.setVisible(bool(w.text()))
-
-    def hideEvent(self, event):
-        super().hideEvent(event)
-        w = getattr(self, '_statusSummary', None)
-        if w:
-            w.hide()
 
     # ── Map preview ───────────────────────────────────────────────────────
 
@@ -3645,15 +3618,6 @@ class FlyPathDialog(QWidget):
         if self._thumb_dir:
             shutil.rmtree(self._thumb_dir, ignore_errors=True)
             self._thumb_dir = None
-        # Remove the status-bar summary so it doesn't linger after unload.
-        w = getattr(self, '_statusSummary', None)
-        if w:
-            try:
-                self.iface.mainWindow().statusBar().removeWidget(w)
-            except Exception:
-                pass
-            w.deleteLater()
-            self._statusSummary = None
 
     def closeEvent(self, event):
         self.cleanup()
