@@ -75,9 +75,13 @@ class FlyPath:
         if self.toolbar:
             # Detach from the main window so no leftover FlyPathToolbar child
             # lingers for the next load (Plugin Reloader warns otherwise).
-            self.iface.mainWindow().removeToolBar(self.toolbar)
-            self.toolbar.setParent(None)
-            self.toolbar.deleteLater()
+            # Guarded in case the reloader already deleted the C++ toolbar.
+            try:
+                self.iface.mainWindow().removeToolBar(self.toolbar)
+                self.toolbar.setParent(None)
+                self.toolbar.deleteLater()
+            except (RuntimeError, AttributeError):
+                pass
             self.toolbar = None
 
     def toggle_panel(self, checked):
