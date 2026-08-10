@@ -171,10 +171,10 @@ def _placemark(idx, lon, lat, altitude_m, speed_ms, action_groups_xml,
           <wpml:waypointHeadingPoiIndex>0</wpml:waypointHeadingPoiIndex>
         </wpml:waypointHeadingParam>
         <wpml:waypointTurnParam>
-          <wpml:waypointTurnMode>toPointAndStopWithContinuityCurvature</wpml:waypointTurnMode>
+          <wpml:waypointTurnMode>toPointAndStopWithDiscontinuityCurvature</wpml:waypointTurnMode>
           <wpml:waypointTurnDampingDist>0</wpml:waypointTurnDampingDist>
         </wpml:waypointTurnParam>
-        <wpml:useStraightLine>0</wpml:useStraightLine>
+        <wpml:useStraightLine>1</wpml:useStraightLine>
 {action_groups_xml}        <wpml:waypointGimbalHeadingParam>
           <wpml:waypointGimbalPitchAngle>{gimbal_pitch}</wpml:waypointGimbalPitchAngle>
           <wpml:waypointGimbalYawAngle>0</wpml:waypointGimbalYawAngle>
