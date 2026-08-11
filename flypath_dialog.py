@@ -353,9 +353,6 @@ QLabel#linesLabel, QLabel#batteriesLabel, QLabel#coverageLabel {
 QLabel#frontOverlapWarnLabel {
     color: #E05050; font-weight: bold;
 }
-/* Vertical padding so the derived Front Overlap read-out matches the height of
-   the spin-box rows in the Flight Parameters column. */
-QLabel#frontOverlapLabel, QLabel#frontOverlapWarnLabel { padding: 4px 6px; }
 QLabel#cameraInfoLabel { color: #7FB3E8; font-size: 10px; }
 QWidget#actionBar {
     border-top: 1px solid #3A3D45; background-color: #181B22;
@@ -858,9 +855,9 @@ class FlyPathDialog(QWidget):
         form.addRow('Side Overlap', self.sideOverlapSpin)
 
         # Front (along-track) overlap sits with Side Overlap since both are
-        # overlap settings. Full-automatic: a direct input (frontOverlapSpin).
-        # Semi-automatic: a derived read-out (frontOverlapLabel) plus the
-        # resulting Shot Spacing. Only the rows for the active mode are shown.
+        # overlap settings. It is one row that swaps content by mode via a
+        # stacked widget: a derived read-out in semi-automatic, a direct input in
+        # full-automatic. (One row, so hiding a mode leaves no blank gap.)
         self.frontOverlapSpin = QSpinBox()
         self.frontOverlapSpin.setRange(50, 95)
         self.frontOverlapSpin.setValue(70)
@@ -870,16 +867,20 @@ class FlyPathDialog(QWidget):
             'Target front (along-track) overlap between consecutive photos. '
             'A waypoint is placed every footprint x (1 - overlap) metres along '
             'each line. Aim for 75-85% for mapping, 85-90% for 3D models.')
-        form.addRow('Front Overlap', self.frontOverlapSpin)
 
         self.frontOverlapLabel = QLabel('—')
         self.frontOverlapLabel.setObjectName('frontOverlapLabel')
+        self.frontOverlapLabel.setAlignment(_AlignLeft | _AlignVCenter)
         self._tip(self.frontOverlapLabel,
             'Calculated front overlap between consecutive photos along the flight line. '
             'Based on speed, interval, altitude and drone sensor. '
             'Aim for 75–85% for mapping, 85–90% for 3D models. '
             'Reduce speed or increase interval to raise overlap.')
-        form.addRow('Front Overlap', self.frontOverlapLabel)
+
+        self.frontOverlapStack = QStackedWidget()
+        self.frontOverlapStack.addWidget(self.frontOverlapLabel)   # index 0: semi
+        self.frontOverlapStack.addWidget(self.frontOverlapSpin)    # index 1: full
+        form.addRow('Front Overlap', self.frontOverlapStack)
 
         self.speedSpin = QDoubleSpinBox()
         self.speedSpin.setRange(1.0, 12.0)
@@ -1453,8 +1454,7 @@ class FlyPathDialog(QWidget):
         cap)."""
         full = self._mission_type() == 'full'
         self._set_row_visible(self._camera_form, self.photoIntervalSpin, not full)
-        self._set_row_visible(self._flight_form, self.frontOverlapLabel, not full)
-        self._set_row_visible(self._flight_form, self.frontOverlapSpin, full)
+        self.frontOverlapStack.setCurrentIndex(1 if full else 0)
         self._set_row_visible(self._organizer_form, self.maxWaypointsSpin, full)
 
     def _set_destination_rc_enabled(self, enabled):
