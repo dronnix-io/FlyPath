@@ -854,9 +854,10 @@ class FlyPathDialog(QWidget):
             'Recommended: 60–75% for flat terrain, 70–80% for hilly terrain.')
         form.addRow('Side Overlap', self.sideOverlapSpin)
 
-        # Full-automatic only: front (along-track) overlap is a direct input,
-        # sitting with Side Overlap since both are overlap settings. In semi mode
-        # front overlap is derived and shown in Camera Settings instead.
+        # Front (along-track) overlap sits with Side Overlap since both are
+        # overlap settings. Full-automatic: a direct input (frontOverlapSpin).
+        # Semi-automatic: a derived read-out (frontOverlapLabel) plus the
+        # resulting Shot Spacing. Only the rows for the active mode are shown.
         self.frontOverlapSpin = QSpinBox()
         self.frontOverlapSpin.setRange(50, 95)
         self.frontOverlapSpin.setValue(70)
@@ -867,6 +868,22 @@ class FlyPathDialog(QWidget):
             'A waypoint is placed every footprint x (1 - overlap) metres along '
             'each line. Aim for 75-85% for mapping, 85-90% for 3D models.')
         form.addRow('Front Overlap', self.frontOverlapSpin)
+
+        self.frontOverlapLabel = QLabel('—')
+        self.frontOverlapLabel.setObjectName('frontOverlapLabel')
+        self._tip(self.frontOverlapLabel,
+            'Calculated front overlap between consecutive photos along the flight line. '
+            'Based on speed, interval, altitude and drone sensor. '
+            'Aim for 75–85% for mapping, 85–90% for 3D models. '
+            'Reduce speed or increase interval to raise overlap.')
+        form.addRow('Front Overlap', self.frontOverlapLabel)
+
+        self.intervalLabel = QLabel('—')
+        self.intervalLabel.setObjectName('intervalLabel')
+        self._tip(self.intervalLabel,
+            'Effective along-track distance between photos: speed × interval. '
+            'Smaller spacing means more photos and higher overlap.')
+        form.addRow('Shot Spacing', self.intervalLabel)
 
         self.speedSpin = QDoubleSpinBox()
         self.speedSpin.setRange(1.0, 12.0)
@@ -996,22 +1013,6 @@ class FlyPathDialog(QWidget):
             'shooting — minimum 2 s at 12 MP JPEG (DJI Mini 4 Pro / Mini 3 Pro). '
             'Actual along-track spacing = speed × interval.')
         form.addRow('Photo Interval', self.photoIntervalSpin)
-
-        self.intervalLabel = QLabel('—')
-        self.intervalLabel.setObjectName('intervalLabel')
-        self._tip(self.intervalLabel,
-            'Effective along-track distance between photos: speed × interval. '
-            'Smaller spacing means more photos and higher overlap.')
-        form.addRow('Shot Spacing', self.intervalLabel)
-
-        self.frontOverlapLabel = QLabel('—')
-        self.frontOverlapLabel.setObjectName('frontOverlapLabel')
-        self._tip(self.frontOverlapLabel,
-            'Calculated front overlap between consecutive photos along the flight line. '
-            'Based on speed, interval, altitude and drone sensor. '
-            'Aim for 75–85% for mapping, 85–90% for 3D models. '
-            'Reduce speed or increase interval to raise overlap.')
-        form.addRow('Front Overlap', self.frontOverlapLabel)
 
         return group
 
@@ -1449,16 +1450,15 @@ class FlyPathDialog(QWidget):
     def _apply_mission_type_capabilities(self):
         """Swap the panel between semi- and full-automatic layouts.
 
-        Semi-automatic: the pilot sets interval capture, so Photo Interval and
-        the derived Shot Spacing / Front Overlap live in Camera Settings.
-        Full-automatic: a waypoint is placed per photo, so Front Overlap becomes
-        a direct input (in Flight Parameters, by Side Overlap), Photo Interval
-        and Shot Spacing are irrelevant and hidden, and Max Waypoints (the
-        per-mission cap) appears."""
+        Front Overlap sits under Side Overlap in Flight Parameters in both modes:
+        a derived read-out (with Shot Spacing) in semi, a direct input in full.
+        Semi-automatic keeps Photo Interval in Camera Settings; full-automatic
+        hides it, drops Shot Spacing, and shows Max Waypoints (the per-mission
+        cap)."""
         full = self._mission_type() == 'full'
         self._set_row_visible(self._camera_form, self.photoIntervalSpin, not full)
-        self._set_row_visible(self._camera_form, self.intervalLabel, not full)
-        self._set_row_visible(self._camera_form, self.frontOverlapLabel, not full)
+        self._set_row_visible(self._flight_form, self.intervalLabel, not full)
+        self._set_row_visible(self._flight_form, self.frontOverlapLabel, not full)
         self._set_row_visible(self._flight_form, self.frontOverlapSpin, full)
         self._set_row_visible(self._organizer_form, self.maxWaypointsSpin, full)
 
