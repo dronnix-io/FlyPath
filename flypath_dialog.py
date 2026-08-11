@@ -353,6 +353,9 @@ QLabel#linesLabel, QLabel#batteriesLabel, QLabel#coverageLabel {
 QLabel#frontOverlapWarnLabel {
     color: #E05050; font-weight: bold;
 }
+/* Vertical padding so the derived Front Overlap read-out matches the height of
+   the spin-box rows in the Flight Parameters column. */
+QLabel#frontOverlapLabel, QLabel#frontOverlapWarnLabel { padding: 4px 6px; }
 QLabel#cameraInfoLabel { color: #7FB3E8; font-size: 10px; }
 QWidget#actionBar {
     border-top: 1px solid #3A3D45; background-color: #181B22;
@@ -1568,14 +1571,20 @@ class FlyPathDialog(QWidget):
             return
         actual_spacing = spd * interval
         overlap_pct = (1.0 - actual_spacing / fh) * 100.0
+        # Show the aircraft's minimum shutter interval alongside the value, so
+        # the pilot knows the floor the Photo Interval must respect.
+        drone = self.droneModelCombo.currentText()
+        min_int = (registry.get(drone).camera.min_shoot_interval_s
+                   if registry.has(drone) else None)
+        tail = f'   ·   min {min_int:g} s' if min_int else ''
         if overlap_pct < 60:
-            self.frontOverlapLabel.setText(f'{overlap_pct:.0f} %  — too low, reduce speed or interval')
+            self.frontOverlapLabel.setText(f'{overlap_pct:.0f} %  — too low{tail}')
             self.frontOverlapLabel.setObjectName('frontOverlapWarnLabel')
         elif overlap_pct < 70:
-            self.frontOverlapLabel.setText(f'{overlap_pct:.0f} %  — marginal')
+            self.frontOverlapLabel.setText(f'{overlap_pct:.0f} %  — marginal{tail}')
             self.frontOverlapLabel.setObjectName('frontOverlapWarnLabel')
         else:
-            self.frontOverlapLabel.setText(f'{overlap_pct:.0f} %')
+            self.frontOverlapLabel.setText(f'{overlap_pct:.0f} %{tail}')
             self.frontOverlapLabel.setObjectName('frontOverlapLabel')
         self.frontOverlapLabel.style().unpolish(self.frontOverlapLabel)
         self.frontOverlapLabel.style().polish(self.frontOverlapLabel)
