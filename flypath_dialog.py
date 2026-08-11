@@ -11,7 +11,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QGroupBox, QScrollArea, QFrame,
     QLabel, QLineEdit, QPushButton, QComboBox,
-    QSpinBox, QDoubleSpinBox, QCheckBox,
+    QSpinBox, QDoubleSpinBox, QCheckBox, QRadioButton, QButtonGroup,
     QMessageBox, QFileDialog, QApplication,
     QStackedWidget, QDialog, QTreeWidget, QTreeWidgetItem, QDialogButtonBox,
     QGraphicsView, QGraphicsScene,
@@ -699,17 +699,37 @@ class FlyPathDialog(QWidget):
         form.setSpacing(6)
 
         self.missionTypeCombo = QComboBox()
-        self.missionTypeCombo.addItem('Semi-automatic 2D mapping')
-        self.missionTypeCombo.addItem('Full-automatic 2D mapping')
+        self.missionTypeCombo.addItem('2D Mapping')
         self._tip(self.missionTypeCombo,
-            'The kind of mission to plan.\n'
-            'Semi-automatic 2D mapping flies a grid of flight lines; you set the '
-            'camera to interval capture before takeoff.\n'
-            'Full-automatic 2D mapping places a waypoint at every photo and the '
-            'drone shoots automatically (stop-and-shoot), so no manual interval '
-            'is needed. It is slower and uses more battery because the drone '
-            'stops at each photo.')
+            'The kind of mission to plan. 2D Mapping flies a grid over the '
+            'survey area for orthomosaic mapping. More mission types will be '
+            'added here.')
         form.addRow('Mission Type', self.missionTypeCombo)
+
+        # Capture mode for mapping missions: how the camera is triggered.
+        self.captureSemiRadio = QRadioButton('Semi')
+        self.captureFullRadio = QRadioButton('Full')
+        self.captureSemiRadio.setChecked(True)
+        self._captureGroup = QButtonGroup(self)
+        self._captureGroup.addButton(self.captureSemiRadio)
+        self._captureGroup.addButton(self.captureFullRadio)
+        self._tip(self.captureSemiRadio,
+            'Semi-automatic: flies a grid of flight lines; you set the camera to '
+            'interval capture before takeoff.')
+        self._tip(self.captureFullRadio,
+            'Full-automatic: places a waypoint at every photo and the drone '
+            'shoots automatically (stop-and-shoot), so no manual interval is '
+            'needed. Slower and uses more battery because the drone stops at '
+            'each photo.')
+        capture_row = QWidget()
+        capture_layout = QHBoxLayout(capture_row)
+        capture_layout.setContentsMargins(0, 0, 0, 0)
+        capture_layout.setSpacing(12)
+        capture_layout.addWidget(self.captureSemiRadio)
+        capture_layout.addWidget(self.captureFullRadio)
+        capture_layout.addStretch()
+        self._captureRow = capture_row
+        form.addRow('Capture', capture_row)
 
         self.droneModelCombo = QComboBox()
         self._tip(self.droneModelCombo,
@@ -1319,6 +1339,7 @@ class FlyPathDialog(QWidget):
         QgsProject.instance().layersRemoved.connect(self._refresh_layer_combo)
 
         self.missionTypeCombo.currentIndexChanged.connect(self._on_mission_type_changed)
+        self.captureSemiRadio.toggled.connect(self._on_mission_type_changed)
         self.frontOverlapSpin.valueChanged.connect(self._on_param_changed)
         self.maxWaypointsSpin.valueChanged.connect(self._on_param_changed)
         self.droneModelCombo.currentIndexChanged.connect(self._on_drone_changed)
@@ -1411,7 +1432,7 @@ class FlyPathDialog(QWidget):
 
     def _mission_type(self):
         """'full' for full-automatic capture (a waypoint per photo), else 'semi'."""
-        return 'full' if self.missionTypeCombo.currentIndex() == 1 else 'semi'
+        return 'full' if self.captureFullRadio.isChecked() else 'semi'
 
     def _on_mission_type_changed(self):
         self._apply_mission_type_capabilities()
