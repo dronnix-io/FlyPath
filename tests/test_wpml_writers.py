@@ -79,6 +79,22 @@ def test_consumer_is_registered():
     assert 'consumer' in factory._WRITERS
 
 
+# ── Straight flight lines (turn mode) ───────────────────────────────────────
+
+def test_waypoints_fly_straight_lines_with_stops():
+    # Both semi- and full-auto must use discontinuity curvature + straight lines
+    # so mapping lines stay straight instead of bowing at the turnarounds.
+    drone = registry.get('DJI Mini 4 Pro')
+    for spec in (_spec(), _spec(capture_mode='full')):
+        path = _write(drone, spec)
+        with zipfile.ZipFile(path) as z:
+            wl = z.read('wpmz/waylines.wpml').decode('utf-8')
+        assert 'toPointAndStopWithDiscontinuityCurvature' in wl
+        assert 'toPointAndStopWithContinuityCurvature' not in wl
+        assert '<wpml:useStraightLine>1</wpml:useStraightLine>' in wl
+        assert '<wpml:useStraightLine>0</wpml:useStraightLine>' not in wl
+
+
 # ── Full-automatic capture (takePhoto per waypoint) ─────────────────────────
 
 def test_semi_auto_has_no_take_photo():
