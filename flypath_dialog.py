@@ -816,6 +816,7 @@ class FlyPathDialog(QWidget):
     def _build_flight_group(self):
         group = QGroupBox('Flight Parameters')
         form  = QFormLayout(group)
+        self._flight_form = form   # kept so mission-type logic can hide rows
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
 
@@ -852,6 +853,20 @@ class FlyPathDialog(QWidget):
             'Higher → fewer gaps, better stitching, but more flight lines. '
             'Recommended: 60–75% for flat terrain, 70–80% for hilly terrain.')
         form.addRow('Side Overlap', self.sideOverlapSpin)
+
+        # Full-automatic only: front (along-track) overlap is a direct input,
+        # sitting with Side Overlap since both are overlap settings. In semi mode
+        # front overlap is derived and shown in Camera Settings instead.
+        self.frontOverlapSpin = QSpinBox()
+        self.frontOverlapSpin.setRange(50, 95)
+        self.frontOverlapSpin.setValue(70)
+        self.frontOverlapSpin.setSingleStep(5)
+        self.frontOverlapSpin.setSuffix(' %')
+        self._tip(self.frontOverlapSpin,
+            'Target front (along-track) overlap between consecutive photos. '
+            'A waypoint is placed every footprint x (1 - overlap) metres along '
+            'each line. Aim for 75-85% for mapping, 85-90% for 3D models.')
+        form.addRow('Front Overlap', self.frontOverlapSpin)
 
         self.speedSpin = QDoubleSpinBox()
         self.speedSpin.setRange(1.0, 12.0)
@@ -997,21 +1012,6 @@ class FlyPathDialog(QWidget):
             'Aim for 75–85% for mapping, 85–90% for 3D models. '
             'Reduce speed or increase interval to raise overlap.')
         form.addRow('Front Overlap', self.frontOverlapLabel)
-
-        # Full-automatic: front overlap is a direct input (we control where each
-        # photo is taken, not just how often). Shares the 'Front Overlap' row
-        # with the derived label above; only one is visible at a time.
-        self.frontOverlapSpin = QSpinBox()
-        self.frontOverlapSpin.setRange(50, 95)
-        self.frontOverlapSpin.setValue(70)
-        self.frontOverlapSpin.setSingleStep(5)
-        self.frontOverlapSpin.setSuffix(' %')
-        self.frontOverlapSpin.setMaximumWidth(110)
-        self._tip(self.frontOverlapSpin,
-            'Target front (along-track) overlap between consecutive photos. '
-            'A waypoint is placed every footprint x (1 - overlap) metres along '
-            'each line. Aim for 75-85% for mapping, 85-90% for 3D models.')
-        form.addRow('Front Overlap', self.frontOverlapSpin)
 
         return group
 
@@ -1449,15 +1449,17 @@ class FlyPathDialog(QWidget):
     def _apply_mission_type_capabilities(self):
         """Swap the panel between semi- and full-automatic layouts.
 
-        Semi-automatic: the pilot sets interval capture, so Photo Interval is an
-        input and Front Overlap is the resulting (derived) value.
+        Semi-automatic: the pilot sets interval capture, so Photo Interval and
+        the derived Shot Spacing / Front Overlap live in Camera Settings.
         Full-automatic: a waypoint is placed per photo, so Front Overlap becomes
-        the input, Photo Interval is irrelevant and hidden, and Max Waypoints
-        (the per-mission cap) appears."""
+        a direct input (in Flight Parameters, by Side Overlap), Photo Interval
+        and Shot Spacing are irrelevant and hidden, and Max Waypoints (the
+        per-mission cap) appears."""
         full = self._mission_type() == 'full'
         self._set_row_visible(self._camera_form, self.photoIntervalSpin, not full)
+        self._set_row_visible(self._camera_form, self.intervalLabel, not full)
         self._set_row_visible(self._camera_form, self.frontOverlapLabel, not full)
-        self._set_row_visible(self._camera_form, self.frontOverlapSpin, full)
+        self._set_row_visible(self._flight_form, self.frontOverlapSpin, full)
         self._set_row_visible(self._organizer_form, self.maxWaypointsSpin, full)
 
     def _set_destination_rc_enabled(self, enabled):
@@ -1559,11 +1561,9 @@ class FlyPathDialog(QWidget):
         return max(footprint_along * (1.0 - front), 0.5)
 
     def _update_interval(self):
-        # Full-automatic: Shot Spacing is the waypoint spacing set by front
-        # overlap; the derived front-overlap label is hidden in this mode.
+        # Full-automatic: Shot Spacing and the derived Front Overlap are hidden
+        # (front overlap is a direct input), so there is nothing to recompute.
         if self._mission_type() == 'full':
-            spacing = self._full_auto_spacing()
-            self.intervalLabel.setText(f'{spacing:.1f} m' if spacing else '—')
             return
         _, fh = self._footprint()
         spd = self.speedSpin.value()
