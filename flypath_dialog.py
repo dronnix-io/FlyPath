@@ -288,6 +288,21 @@ QCheckBox::indicator:checked {
     background-color: #2D6DB5;
     border: 1px solid #7FB3E8;
 }
+QRadioButton {
+    color: #D0D0D0;
+    spacing: 6px;
+}
+QRadioButton::indicator {
+    width: 14px; height: 14px;
+    border: 1px solid #D0D0D0;
+    border-radius: 8px;
+    background-color: #2A2D35;
+}
+QRadioButton::indicator:hover { border: 1px solid #7FB3E8; }
+QRadioButton::indicator:checked {
+    background-color: #2D6DB5;
+    border: 1px solid #7FB3E8;
+}
 QPushButton {
     background-color: #2D6DB5;
     color: white; border: none; border-radius: 4px;
@@ -649,28 +664,30 @@ class FlyPathDialog(QWidget):
         scroll_layout.addWidget(self._build_mission_group())
         scroll_layout.addWidget(self._build_area_group())
 
-        # Flight Parameters (left) beside Camera Settings + Safety Actions
-        # (right), which together are about the same height.
+        # Flight Parameters (left) beside Adv. Mission Organizers + Safety
+        # Actions (right).
         params_row = QHBoxLayout()
         params_row.setSpacing(8)
+
+        # Gimbal angle and photo interval are fixed for 2D mapping and do not
+        # affect the waypoints, so they are kept internally rather than shown.
+        self._init_internal_camera_widgets()
 
         flight_col = QVBoxLayout()
         flight_col.setSpacing(8)
         flight_col.addWidget(self._build_flight_group())
         flight_col.addStretch()
 
-        cam_col = QVBoxLayout()
-        cam_col.setSpacing(8)
-        cam_col.addWidget(self._build_camera_group())
-        cam_col.addWidget(self._build_advanced_group())
-        cam_col.addStretch()
+        # Right column: how the grid becomes deliverable missions, then safety.
+        right_col = QVBoxLayout()
+        right_col.setSpacing(8)
+        right_col.addWidget(self._build_organizer_group())
+        right_col.addWidget(self._build_advanced_group())
+        right_col.addStretch()
 
         params_row.addLayout(flight_col, 1)
-        params_row.addLayout(cam_col, 1)
+        params_row.addLayout(right_col, 1)
         scroll_layout.addLayout(params_row)
-
-        # How the grid becomes deliverable mission files (split, cap, cross-hatch).
-        scroll_layout.addWidget(self._build_organizer_group())
 
         # Statistics live on the FlyPath toolbar (outside the panel) so they stay
         # visible at all times; the plugin places this bar there. Built here so
@@ -979,39 +996,21 @@ class FlyPathDialog(QWidget):
 
         return group
 
-    def _build_camera_group(self):
-        group = QGroupBox('Camera Settings')
-        group.setMaximumWidth(210)
-        form  = QFormLayout(group)
-        form.setLabelAlignment(_AlignLeft | _AlignVCenter)
-        form.setSpacing(6)
-        self._camera_form = form   # kept so mission-type logic can hide rows
-
+    def _init_internal_camera_widgets(self):
+        """Camera settings are constant for 2D mapping and do not change the
+        waypoints or flight route, so they are kept as internal (non-UI) widgets
+        rather than a Camera Settings section:
+          - Gimbal Angle stays nadir (-90 degrees), written into every mission.
+          - Photo Interval holds the shutter floor, feeding the semi-auto front
+            overlap read-out and photo-count estimate.
+        Both remain live objects so the existing read sites keep working."""
         self.gimbalAngleSpin = QSpinBox()
         self.gimbalAngleSpin.setRange(-90, -30)
         self.gimbalAngleSpin.setValue(-90)
-        self.gimbalAngleSpin.setSingleStep(5)
-        self.gimbalAngleSpin.setSuffix(' °')
-        self.gimbalAngleSpin.setMaximumWidth(110)
-        self._tip(self.gimbalAngleSpin,
-            'Gimbal pitch angle. -90° points straight down (nadir) for '
-            '2D orthomosaic mapping. Tilt toward 0° for oblique photography.')
-        form.addRow('Gimbal Angle', self.gimbalAngleSpin)
 
         self.photoIntervalSpin = QDoubleSpinBox()
         self.photoIntervalSpin.setRange(2.0, 60.0)
         self.photoIntervalSpin.setValue(2.0)
-        self.photoIntervalSpin.setSingleStep(0.5)
-        self.photoIntervalSpin.setDecimals(1)
-        self.photoIntervalSpin.setSuffix(' s')
-        self.photoIntervalSpin.setMaximumWidth(110)
-        self._tip(self.photoIntervalSpin,
-            'Time between each photo in seconds. The drone uses auto interval '
-            'shooting — minimum 2 s at 12 MP JPEG (DJI Mini 4 Pro / Mini 3 Pro). '
-            'Actual along-track spacing = speed × interval.')
-        form.addRow('Photo Interval', self.photoIntervalSpin)
-
-        return group
 
     def _build_advanced_group(self):
         group = QGroupBox('Safety Actions')
@@ -1345,8 +1344,6 @@ class FlyPathDialog(QWidget):
         self.gsdSpin.valueChanged.connect(self._on_gsd_changed)
         self.sideOverlapSpin.valueChanged.connect(self._on_param_changed)
         self.speedSpin.valueChanged.connect(self._on_param_changed)
-        self.photoIntervalSpin.valueChanged.connect(self._on_param_changed)
-        self.gimbalAngleSpin.valueChanged.connect(self._update_stats)
         self.directionSpin.valueChanged.connect(self._on_param_changed)
         self.crossHatchCheck.toggled.connect(self._on_param_changed)
         self.splitSpin.valueChanged.connect(self._on_split_changed)
@@ -1447,13 +1444,10 @@ class FlyPathDialog(QWidget):
     def _apply_mission_type_capabilities(self):
         """Swap the panel between semi- and full-automatic layouts.
 
-        Front Overlap sits under Side Overlap in Flight Parameters in both modes:
-        a derived read-out (with Shot Spacing) in semi, a direct input in full.
-        Semi-automatic keeps Photo Interval in Camera Settings; full-automatic
-        hides it, drops Shot Spacing, and shows Max Waypoints (the per-mission
-        cap)."""
+        The Front Overlap row (under Side Overlap in Flight Parameters) shows a
+        derived read-out in semi-automatic and a direct input in full-automatic,
+        and Max Waypoints (the per-mission cap) appears only in full-automatic."""
         full = self._mission_type() == 'full'
-        self._set_row_visible(self._camera_form, self.photoIntervalSpin, not full)
         self.frontOverlapStack.setCurrentIndex(1 if full else 0)
         self._set_row_visible(self._organizer_form, self.maxWaypointsSpin, full)
 
