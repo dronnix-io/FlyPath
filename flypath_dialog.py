@@ -980,10 +980,10 @@ class FlyPathDialog(QWidget):
         self.maxWaypointsSpin.setValue(_DEFAULT_MAX_WAYPOINTS)
         self.maxWaypointsSpin.setMaximumWidth(110)
         self._tip(self.maxWaypointsSpin,
-            'Maximum waypoints per mission (full-automatic only). A full-auto '
-            'mission places one waypoint per photo, and DJI caps a mission at '
-            'about 200 waypoints, so the survey is split so no mission exceeds '
-            'this. Lower it for shorter, more manageable missions.')
+            'Maximum waypoints per mission. DJI caps a mission at about 200 '
+            'waypoints, so the survey is split so no mission exceeds this. '
+            'Full-automatic places one waypoint per photo; semi-automatic uses '
+            'two per flight line. Lower it for shorter, more manageable missions.')
         form.addRow('Max Waypoints', self.maxWaypointsSpin)
 
         self.crossHatchCheck = QCheckBox('Cross-hatch')
@@ -1445,11 +1445,10 @@ class FlyPathDialog(QWidget):
         """Swap the panel between semi- and full-automatic layouts.
 
         The Front Overlap row (under Side Overlap in Flight Parameters) shows a
-        derived read-out in semi-automatic and a direct input in full-automatic,
-        and Max Waypoints (the per-mission cap) appears only in full-automatic."""
+        derived read-out in semi-automatic and a direct input in full-automatic.
+        Max Waypoints applies to both modes, so it stays visible."""
         full = self._mission_type() == 'full'
         self.frontOverlapStack.setCurrentIndex(1 if full else 0)
-        self._set_row_visible(self._organizer_form, self.maxWaypointsSpin, full)
 
     def _set_destination_rc_enabled(self, enabled):
         """Enable/disable the 'Send to DJI RC' destination item (kept visible,
@@ -2220,12 +2219,21 @@ class FlyPathDialog(QWidget):
         self._refresh_split_part_combo()
 
     def _split_missions(self, waypoints):
-        """Split waypoints for the current mission type: by flight line
-        (semi-automatic) or by waypoint count under the cap (full-automatic)."""
+        """Split waypoints for the current mission type, honouring the Max
+        Waypoints cap so no exported mission exceeds it. Full-automatic splits by
+        waypoint count; semi-automatic splits by whole flight lines."""
+        n = self.splitSpin.value()
+        maxwp = self.maxWaypointsSpin.value()
         if self._mission_type() == 'full':
-            return split_by_waypoint_count(
-                waypoints, self.splitSpin.value(), self.maxWaypointsSpin.value())
-        return split_waypoints(waypoints, self.splitSpin.value())
+            return split_by_waypoint_count(waypoints, n, maxwp)
+        # Semi: two waypoints per line, plus a shared seam on every mission after
+        # the first, so a mission of L lines holds up to 2L + 1 waypoints. Raise
+        # the split count so each mission stays within the cap.
+        n_lines = len(waypoints) // 2
+        if maxwp >= 3 and n_lines >= 1:
+            max_lines = max(1, (maxwp - 1) // 2)
+            n = max(n, -(-n_lines // max_lines))       # ceil(n_lines / max_lines)
+        return split_waypoints(waypoints, n)
 
     def _path_length_m(self, waypoints):
         """Ellipsoidal length of the (lon, lat) flight path in metres."""
