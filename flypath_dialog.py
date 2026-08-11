@@ -344,7 +344,7 @@ QScrollBar::handle:vertical {
 }
 QScrollBar::handle:vertical:hover  { background-color: #5A5D65; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QLabel#areaLabel, QLabel#intervalLabel,
+QLabel#areaLabel,
 QLabel#frontOverlapLabel,
 QLabel#flightTimeLabel, QLabel#distanceLabel, QLabel#photosLabel,
 QLabel#linesLabel, QLabel#batteriesLabel, QLabel#coverageLabel {
@@ -877,13 +877,6 @@ class FlyPathDialog(QWidget):
             'Aim for 75–85% for mapping, 85–90% for 3D models. '
             'Reduce speed or increase interval to raise overlap.')
         form.addRow('Front Overlap', self.frontOverlapLabel)
-
-        self.intervalLabel = QLabel('—')
-        self.intervalLabel.setObjectName('intervalLabel')
-        self._tip(self.intervalLabel,
-            'Effective along-track distance between photos: speed × interval. '
-            'Smaller spacing means more photos and higher overlap.')
-        form.addRow('Shot Spacing', self.intervalLabel)
 
         self.speedSpin = QDoubleSpinBox()
         self.speedSpin.setRange(1.0, 12.0)
@@ -1457,7 +1450,6 @@ class FlyPathDialog(QWidget):
         cap)."""
         full = self._mission_type() == 'full'
         self._set_row_visible(self._camera_form, self.photoIntervalSpin, not full)
-        self._set_row_visible(self._flight_form, self.intervalLabel, not full)
         self._set_row_visible(self._flight_form, self.frontOverlapLabel, not full)
         self._set_row_visible(self._flight_form, self.frontOverlapSpin, full)
         self._set_row_visible(self._organizer_form, self.maxWaypointsSpin, full)
@@ -1569,7 +1561,6 @@ class FlyPathDialog(QWidget):
         spd = self.speedSpin.value()
         interval = self.photoIntervalSpin.value()
         if fh is None or spd <= 0 or interval <= 0:
-            self.intervalLabel.setText('—')
             self.frontOverlapLabel.setText('—')
             self.frontOverlapLabel.setObjectName('frontOverlapLabel')
             self.frontOverlapLabel.style().unpolish(self.frontOverlapLabel)
@@ -1577,7 +1568,6 @@ class FlyPathDialog(QWidget):
             return
         actual_spacing = spd * interval
         overlap_pct = (1.0 - actual_spacing / fh) * 100.0
-        self.intervalLabel.setText(f'{actual_spacing:.1f} m')
         if overlap_pct < 60:
             self.frontOverlapLabel.setText(f'{overlap_pct:.0f} %  — too low, reduce speed or interval')
             self.frontOverlapLabel.setObjectName('frontOverlapWarnLabel')
