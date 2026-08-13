@@ -182,7 +182,8 @@ def _placemark(idx, lon, lat, altitude_m, speed_ms, action_groups_xml,
         <wpml:waypointTurnParam>
           <!-- Straight legs with a full stop at each point. Discontinuity (not
                continuity) curvature keeps mapping lines straight instead of
-               bowing/rounding, especially at the line-end turnarounds. -->
+               bowing/rounding, especially at the line-end turnarounds.
+               (Fix contributed by CallumGreenwald, PR #7; tested on a Mini 5 Pro.) -->
           <wpml:waypointTurnMode>toPointAndStopWithDiscontinuityCurvature</wpml:waypointTurnMode>
           <wpml:waypointTurnDampingDist>0</wpml:waypointTurnDampingDist>
         </wpml:waypointTurnParam>
