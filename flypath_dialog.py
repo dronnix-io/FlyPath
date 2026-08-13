@@ -3702,7 +3702,7 @@ class FlyPathDialog(QWidget):
         if self._hud is not None:
             try:
                 self.iface.mapCanvas().removeEventFilter(self)
-            except Exception:
+            except (TypeError, RuntimeError):
                 pass
             self._hud.deleteLater()
             self._hud = None
