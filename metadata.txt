@@ -74,3 +74,4 @@ category=Plugins
 icon=icon.png
 experimental=False
 deprecated=False
+supportsQt6=True
