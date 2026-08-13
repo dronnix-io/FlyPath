@@ -8,7 +8,7 @@ import tempfile
 import zipfile
 
 from qgis.PyQt.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
+    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QGroupBox, QScrollArea, QFrame,
     QLabel, QLineEdit, QPushButton, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QRadioButton, QButtonGroup,
@@ -27,6 +27,8 @@ try:
     _AlignCenter  = Qt.AlignmentFlag.AlignCenter
     _EventEnter   = QEvent.Type.Enter
     _EventLeave   = QEvent.Type.Leave
+    _EventResize  = QEvent.Type.Resize
+    _WA_MouseTransparent = Qt.WidgetAttribute.WA_TransparentForMouseEvents
     _FrameNoFrame = QFrame.Shape.NoFrame
     _FontBold     = QFont.Weight.Bold
     _WaitCursor   = Qt.CursorShape.WaitCursor
@@ -47,6 +49,8 @@ except AttributeError:
     _AlignCenter  = getattr(Qt, 'AlignCenter')
     _EventEnter   = getattr(QEvent, 'Enter')
     _EventLeave   = getattr(QEvent, 'Leave')
+    _EventResize  = getattr(QEvent, 'Resize')
+    _WA_MouseTransparent = getattr(Qt, 'WA_TransparentForMouseEvents')
     _FrameNoFrame = getattr(QFrame, 'NoFrame')
     _FontBold     = getattr(QFont, 'Bold')
     _WaitCursor   = getattr(Qt, 'WaitCursor')
@@ -591,6 +595,7 @@ class FlyPathDialog(QWidget):
         self.iface = iface
 
         # State
+        self._hud                = None   # flight-stats card overlaid on the map
         self._survey_polygon     = None
         self._survey_polygon_crs = None
         self._draw_tool          = None
@@ -689,10 +694,10 @@ class FlyPathDialog(QWidget):
         params_row.addLayout(right_col, 1)
         scroll_layout.addLayout(params_row)
 
-        # Statistics live on the FlyPath toolbar (outside the panel) so they stay
-        # visible at all times; the plugin places this bar there. Built here so
-        # the stat labels exist for _update_stats.
-        self.statsBar = self._build_stats_bar()
+        # Statistics live in a HUD card overlaid on the map canvas (outside the
+        # panel), shown when a plan exists. Built here so the stat labels exist
+        # for _update_stats.
+        self._hud = self._build_stats_hud()
         scroll_layout.addStretch()
 
         scroll.setWidget(content)
@@ -1040,62 +1045,102 @@ class FlyPathDialog(QWidget):
 
         return group
 
-    def _build_stats_bar(self):
-        """Compact one-row Statistics readout, meant to sit on the FlyPath
-        toolbar (outside the panel) so the numbers stay visible at all times.
-        Creates the same label attributes _update_stats writes to. Carries its
-        own dark styling so it reads correctly on any toolbar background."""
+    def _build_stats_hud(self):
+        """Flight-stats HUD: a compact, semi-transparent card overlaid on a
+        corner of the map canvas, shown only when a plan exists. Sits by the
+        flight lines, keeps the panel and toolbars free, and never shrinks the
+        map. It is click-through so it never blocks map interaction. Creates the
+        same label attributes _update_stats writes to."""
         fields = [
             ('flightTimeLabel', 'Flight Time',
              'Estimated total flight duration based on path length and speed. '
              'Does not include takeoff, landing, or battery swap time.'),
-            ('distanceLabel',   'Distance',
-             'Total distance the drone will fly along all flight lines.'),
-            ('coverageLabel',   'Coverage',
-             'Total survey area in hectares as calculated from the polygon.'),
             ('linesLabel',      'Lines',
              'Number of parallel flight lines needed to cover the survey area.'),
+            ('distanceLabel',   'Distance',
+             'Total distance the drone will fly along all flight lines.'),
             ('batteriesLabel',  'Batteries',
              'Estimated battery charges needed for the mission. Planned against a '
              f'{int(round(_BATTERY_RESERVE * 100))}% reserve, so usable time per '
              f'battery is {int(round((1 - _BATTERY_RESERVE) * 100))}% of the '
              'drone\'s rated endurance, leaving margin for wind, turnarounds and '
              'a safe return.'),
+            ('coverageLabel',   'Coverage',
+             'Total survey area in hectares as calculated from the polygon.'),
             ('photosLabel',     'Photos',
              'Estimated number of photos the camera will take during the mission.'),
         ]
-        bar = QWidget()
-        bar.setObjectName('flypathStatsBar')
-        h = QHBoxLayout(bar)
-        h.setContentsMargins(8, 2, 8, 2)
-        h.setSpacing(6)
+        canvas = self.iface.mapCanvas()
+        try:
+            hud = QFrame(canvas)                  # child of the map canvas
+        except TypeError:
+            hud = QFrame()                        # headless / mock fallback
+        hud.setObjectName('flypathHud')
+        hud.setAttribute(_WA_MouseTransparent, True)   # clicks pass to the map
+        grid = QGridLayout(hud)
+        grid.setContentsMargins(12, 9, 12, 9)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(4)
+        title = QLabel('FlyPath')
+        title.setObjectName('hudTitle')
+        grid.addWidget(title, 0, 0, 1, 4)
         for i, (attr, caption, tip) in enumerate(fields):
-            if i:
-                sep = QLabel('·')
-                sep.setObjectName('statSep')
-                h.addWidget(sep)
-            cap = QLabel(f'{caption}:')
-            cap.setObjectName('statCaption')
+            r = 1 + i % 3
+            c = (i // 3) * 2
+            cap = QLabel(f'{caption}')
+            cap.setObjectName('hudCaption')
             val = QLabel('—')
             val.setObjectName(attr)
             val.setToolTip(tip)
             setattr(self, attr, val)
-            h.addWidget(cap)
-            h.addWidget(val)
-        bar.setStyleSheet(
-            '#flypathStatsBar { background-color: #21242B; border: 1px solid '
-            '#3A3D45; border-radius: 4px; }'
-            '#flypathStatsBar QLabel { color: #C7CBD1; font-size: 11px; }'
-            '#flypathStatsBar QLabel#statSep { color: #565A63; }'
-            '#flypathStatsBar QLabel#flightTimeLabel, '
-            '#flypathStatsBar QLabel#distanceLabel, '
-            '#flypathStatsBar QLabel#coverageLabel, '
-            '#flypathStatsBar QLabel#linesLabel, '
-            '#flypathStatsBar QLabel#batteriesLabel, '
-            '#flypathStatsBar QLabel#photosLabel '
+            grid.addWidget(cap, r, c)
+            grid.addWidget(val, r, c + 1)
+        hud.setStyleSheet(
+            '#flypathHud { background-color: rgba(24, 27, 34, 0.86); '
+            'border: 1px solid #3A3D45; border-radius: 6px; }'
+            '#flypathHud QLabel { color: #C7CBD1; font-size: 11px; }'
+            '#flypathHud QLabel#hudTitle { color: #7FB3E8; font-weight: bold; '
+            'font-size: 10px; }'
+            '#flypathHud QLabel#flightTimeLabel, #flypathHud QLabel#distanceLabel, '
+            '#flypathHud QLabel#coverageLabel, #flypathHud QLabel#linesLabel, '
+            '#flypathHud QLabel#batteriesLabel, #flypathHud QLabel#photosLabel '
             '{ color: #F0A500; font-weight: bold; }'
         )
-        return bar
+        hud.hide()
+        if hasattr(canvas, 'installEventFilter'):
+            try:
+                canvas.installEventFilter(self)   # reposition on canvas resize
+            except TypeError:
+                pass
+        return hud
+
+    # ── Flight-stats HUD placement / visibility ───────────────────────────
+
+    def _position_hud(self):
+        """Pin the HUD to the top-right corner of the map canvas."""
+        canvas = self.iface.mapCanvas()
+        if not self._hud or not hasattr(canvas, 'width'):
+            return
+        self._hud.adjustSize()
+        margin = 12
+        x = canvas.width() - self._hud.width() - margin
+        self._hud.move(max(margin, int(x)), margin)
+
+    def _show_hud(self):
+        if self._hud and self.isVisible():
+            self._position_hud()
+            self._hud.show()
+            self._hud.raise_()
+
+    def _hide_hud(self):
+        if self._hud:
+            self._hud.hide()
+
+    def eventFilter(self, obj, event):
+        if (self._hud and obj is self.iface.mapCanvas()
+                and event.type() == _EventResize and self._hud.isVisible()):
+            self._position_hud()
+        return super().eventFilter(obj, event)
 
     def _build_action_bar(self):
         bar = QWidget()
@@ -2185,6 +2230,7 @@ class FlyPathDialog(QWidget):
             for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
                          'linesLabel', 'batteriesLabel'):
                 getattr(self, attr).setText('—')
+            self._hide_hud()
             return
 
         self._live_waypoints = waypoints
@@ -2208,6 +2254,7 @@ class FlyPathDialog(QWidget):
         self.photosLabel.setText(f'{n_photos:,}')
         self.linesLabel.setText(str(n_lines))
         self.batteriesLabel.setText(str(batteries))
+        self._show_hud()
 
         # Split Missions is the MINIMUM number of missions, defaulting to (and
         # tracking) the battery estimate until the user sets their own value. In
@@ -2248,10 +2295,21 @@ class FlyPathDialog(QWidget):
                      'linesLabel', 'batteriesLabel', 'coverageLabel'):
             getattr(self, attr).setText('—')
         self.areaLabel.setText('—')
+        self._hide_hud()
         # GSD and Interval depend only on drone + altitude, not on a survey
         # polygon — always recompute them rather than blanking them out.
         self._update_gsd()
         self._update_interval()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Bring the HUD back when the panel reopens, if there is a live plan.
+        if self._hud is not None and self._live_waypoints:
+            self._show_hud()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._hide_hud()
 
     # ── Map preview ───────────────────────────────────────────────────────
 
@@ -3640,6 +3698,14 @@ class FlyPathDialog(QWidget):
         if self._thumb_dir:
             shutil.rmtree(self._thumb_dir, ignore_errors=True)
             self._thumb_dir = None
+        # Remove the map-canvas HUD and its resize hook.
+        if self._hud is not None:
+            try:
+                self.iface.mapCanvas().removeEventFilter(self)
+            except Exception:
+                pass
+            self._hud.deleteLater()
+            self._hud = None
 
     def closeEvent(self, event):
         self.cleanup()
