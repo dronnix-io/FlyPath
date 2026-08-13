@@ -1061,14 +1061,18 @@ class FlyPathDialog(QWidget):
              'Total survey area in hectares as calculated from the polygon.'),
             ('linesLabel',      'Lines',
              'Number of parallel flight lines needed to cover the survey area.'),
+            ('waypointsLabel',  'Waypoints',
+             'Total waypoints in the mission: turn points in semi-automatic, one '
+             'per photo in full-automatic. DJI Fly caps a mission near 200, so '
+             'the survey is split to stay under the Max Waypoints value.'),
+            ('photosLabel',     'Photos',
+             'Estimated number of photos the camera will take during the mission.'),
             ('batteriesLabel',  'Batteries',
              'Estimated battery charges needed for the mission. Planned against a '
              f'{int(round(_BATTERY_RESERVE * 100))}% reserve, so usable time per '
              f'battery is {int(round((1 - _BATTERY_RESERVE) * 100))}% of the '
              'drone\'s rated endurance, leaving margin for wind, turnarounds and '
              'a safe return.'),
-            ('photosLabel',     'Photos',
-             'Estimated number of photos the camera will take during the mission.'),
         ]
         canvas = self.iface.mapCanvas()
         try:
@@ -1078,10 +1082,10 @@ class FlyPathDialog(QWidget):
         hud.setObjectName('flypathHud')
         hud.setAttribute(_WA_MouseTransparent, True)   # clicks pass to the map
         grid = QGridLayout(hud)
-        grid.setContentsMargins(12, 9, 12, 9)
-        grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(4)
-        title = QLabel('FlyPath')
+        grid.setContentsMargins(16, 12, 16, 12)
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(7)
+        title = QLabel('Mission Stats')
         title.setObjectName('hudTitle')
         grid.addWidget(title, 0, 0, 1, 2)
         for i, (attr, caption, tip) in enumerate(fields):
@@ -1094,14 +1098,15 @@ class FlyPathDialog(QWidget):
             grid.addWidget(cap, 1 + i, 0)
             grid.addWidget(val, 1 + i, 1)
         hud.setStyleSheet(
-            '#flypathHud { background-color: rgba(24, 27, 34, 0.86); '
-            'border: 1px solid #3A3D45; border-radius: 6px; }'
-            '#flypathHud QLabel { color: #C7CBD1; font-size: 11px; }'
+            '#flypathHud { background-color: rgba(24, 27, 34, 0.88); '
+            'border: 1px solid #3A3D45; border-radius: 7px; }'
+            '#flypathHud QLabel { color: #C7CBD1; font-size: 13px; }'
             '#flypathHud QLabel#hudTitle { color: #7FB3E8; font-weight: bold; '
-            'font-size: 10px; }'
+            'font-size: 13px; padding-bottom: 2px; }'
             '#flypathHud QLabel#flightTimeLabel, #flypathHud QLabel#distanceLabel, '
             '#flypathHud QLabel#coverageLabel, #flypathHud QLabel#linesLabel, '
-            '#flypathHud QLabel#batteriesLabel, #flypathHud QLabel#photosLabel '
+            '#flypathHud QLabel#waypointsLabel, #flypathHud QLabel#photosLabel, '
+            '#flypathHud QLabel#batteriesLabel '
             '{ color: #F0A500; font-weight: bold; }'
         )
         hud.hide()
@@ -2226,7 +2231,7 @@ class FlyPathDialog(QWidget):
 
         if not waypoints or len(waypoints) < 2:
             for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
-                         'linesLabel', 'batteriesLabel'):
+                         'waypointsLabel', 'linesLabel', 'batteriesLabel'):
                 getattr(self, attr).setText('—')
             self._hide_hud()
             return
@@ -2250,6 +2255,7 @@ class FlyPathDialog(QWidget):
         self.flightTimeLabel.setText(f'{flight_min:.1f} min')
         self.distanceLabel.setText(f'{dist_m / 1000:.2f} km')
         self.photosLabel.setText(f'{n_photos:,}')
+        self.waypointsLabel.setText(f'{len(waypoints):,}')
         self.linesLabel.setText(str(n_lines))
         self.batteriesLabel.setText(str(batteries))
         self._show_hud()
@@ -2290,7 +2296,8 @@ class FlyPathDialog(QWidget):
 
     def _clear_stats(self):
         for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
-                     'linesLabel', 'batteriesLabel', 'coverageLabel'):
+                     'waypointsLabel', 'linesLabel', 'batteriesLabel',
+                     'coverageLabel'):
             getattr(self, attr).setText('—')
         self.areaLabel.setText('—')
         self._hide_hud()
