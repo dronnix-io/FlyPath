@@ -730,7 +730,7 @@ class FlyPathDialog(QWidget):
 
         # Capture mode for mapping missions: how the camera is triggered.
         self.captureSemiRadio = QRadioButton('Semi')
-        self.captureFullRadio = QRadioButton('Full (beta)')
+        self.captureFullRadio = QRadioButton('Full')
         self.captureSemiRadio.setChecked(True)
         self._captureGroup = QButtonGroup(self)
         self._captureGroup.addButton(self.captureSemiRadio)
@@ -739,11 +739,10 @@ class FlyPathDialog(QWidget):
             'Semi-automatic: flies a grid of flight lines; you set the camera to '
             'interval capture before takeoff.')
         self._tip(self.captureFullRadio,
-            'Full-automatic (experimental): places a waypoint at every photo and '
-            'the drone shoots automatically (stop-and-shoot), so no manual '
-            'interval is needed. Slower and uses more battery because the drone '
-            'stops at each photo. Per-waypoint auto-capture is new, so verify '
-            'your first flight actually takes photos.')
+            'Full-automatic: places a waypoint at every photo and the drone '
+            'shoots automatically (stop-and-shoot), so no manual interval is '
+            'needed. Slower and uses more battery because the drone stops at '
+            'each photo.')
         capture_row = QWidget()
         capture_layout = QHBoxLayout(capture_row)
         capture_layout.setContentsMargins(0, 0, 0, 0)
@@ -1056,18 +1055,18 @@ class FlyPathDialog(QWidget):
             ('flightTimeLabel', 'Flight Time',
              'Estimated total flight duration based on path length and speed. '
              'Does not include takeoff, landing, or battery swap time.'),
-            ('linesLabel',      'Lines',
-             'Number of parallel flight lines needed to cover the survey area.'),
             ('distanceLabel',   'Distance',
              'Total distance the drone will fly along all flight lines.'),
+            ('coverageLabel',   'Coverage',
+             'Total survey area in hectares as calculated from the polygon.'),
+            ('linesLabel',      'Lines',
+             'Number of parallel flight lines needed to cover the survey area.'),
             ('batteriesLabel',  'Batteries',
              'Estimated battery charges needed for the mission. Planned against a '
              f'{int(round(_BATTERY_RESERVE * 100))}% reserve, so usable time per '
              f'battery is {int(round((1 - _BATTERY_RESERVE) * 100))}% of the '
              'drone\'s rated endurance, leaving margin for wind, turnarounds and '
              'a safe return.'),
-            ('coverageLabel',   'Coverage',
-             'Total survey area in hectares as calculated from the polygon.'),
             ('photosLabel',     'Photos',
              'Estimated number of photos the camera will take during the mission.'),
         ]
@@ -1084,18 +1083,16 @@ class FlyPathDialog(QWidget):
         grid.setVerticalSpacing(4)
         title = QLabel('FlyPath')
         title.setObjectName('hudTitle')
-        grid.addWidget(title, 0, 0, 1, 4)
+        grid.addWidget(title, 0, 0, 1, 2)
         for i, (attr, caption, tip) in enumerate(fields):
-            r = 1 + i % 3
-            c = (i // 3) * 2
-            cap = QLabel(f'{caption}')
+            cap = QLabel(f'{caption}')          # single column: one stat per row
             cap.setObjectName('hudCaption')
             val = QLabel('—')
             val.setObjectName(attr)
             val.setToolTip(tip)
             setattr(self, attr, val)
-            grid.addWidget(cap, r, c)
-            grid.addWidget(val, r, c + 1)
+            grid.addWidget(cap, 1 + i, 0)
+            grid.addWidget(val, 1 + i, 1)
         hud.setStyleSheet(
             '#flypathHud { background-color: rgba(24, 27, 34, 0.86); '
             'border: 1px solid #3A3D45; border-radius: 6px; }'

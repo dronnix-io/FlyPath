@@ -40,7 +40,7 @@ A walkthrough of installing and using FlyPath in QGIS: defining a survey area, s
 
 - Draw the survey area directly on the QGIS map canvas using a native polygon drawing tool
 - Import a survey area from any polygon layer or active QGIS selection
-- Two capture modes: **Semi-automatic** (you set the drone's auto interval capture before takeoff) and **Full-automatic** (experimental: a waypoint per photo with automatic shooting, stop-and-shoot, so no manual interval is needed)
+- Two capture modes: **Semi-automatic** (you set the drone's auto interval capture before takeoff) and **Full-automatic** (a waypoint per photo with automatic shooting, stop-and-shoot, so no manual interval is needed)
 - Configurable flight altitude, speed, side overlap, front overlap, and flight direction
 - Straight flight lines with a clean stop at each waypoint, instead of bowing at the line-end turnarounds
 - Auto-optimised flight direction that minimises flight time for the survey area shape
@@ -130,7 +130,7 @@ Only one polygon can be active at a time. Switching methods automatically remove
 | Parameter | Description |
 |---|---|
 | Mission Type | The kind of mission to plan. Currently **2D Mapping** (more types will be added) |
-| Capture | **Semi** (you set the drone's interval capture before takeoff) or **Full (beta)** (experimental: a waypoint per photo, the drone shoots automatically) |
+| Capture | **Semi** (you set the drone's interval capture before takeoff) or **Full** (a waypoint per photo, the drone shoots automatically) |
 | Drone | Sets camera specs used for GSD and spacing calculations |
 
 #### Flight Parameters
@@ -162,7 +162,7 @@ The gimbal is fixed at nadir (-90 degrees) for 2D mapping, so there is no Camera
 | Finish Action | What the drone does after the last waypoint (Return to Home / Hover / Land) |
 | RC Lost Action | What the drone does if RC signal is lost (Return to Home / Hover / Land / Continue) |
 
-> **Photo triggering:** In **Semi** capture, DJI consumer drones do not trigger from the mission file, so before takeoff manually enable auto interval capture on the drone (its minimum is shown beside Front Overlap). In **Full (beta)** capture, the mission itself triggers a photo at every waypoint, so no manual setup is needed. Full-automatic capture is experimental, so verify your first flight actually takes photos.
+> **Photo triggering:** In **Semi** capture, DJI consumer drones do not trigger from the mission file, so before takeoff manually enable auto interval capture on the drone (its minimum is shown beside Front Overlap). In **Full** capture, the mission itself triggers a photo at every waypoint, so no manual setup is needed.
 
 GSD and front overlap update live as you adjust parameters.
 
@@ -263,7 +263,6 @@ FlyPath/
 
 ## Known Limitations
 
-- **Full-automatic capture is experimental**: per-waypoint auto-triggering (the mission telling the drone to shoot at each waypoint) is new for DJI consumer drones, so confirm your first full-auto flight actually captures photos before relying on it. Semi-automatic (manual interval capture) is the proven path
 - Tested and verified on Windows 10 / 11 only, Linux and macOS support is planned for a future release
 - Direct RC export requires a DJI RC2 connected via USB with at least one existing mission
 - DJI Mini 3 Pro droneEnumValue (`97`) is community-verified, not confirmed from a native mission file
