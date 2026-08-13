@@ -40,15 +40,15 @@ A walkthrough of installing and using FlyPath in QGIS: defining a survey area, s
 
 - Draw the survey area directly on the QGIS map canvas using a native polygon drawing tool
 - Import a survey area from any polygon layer or active QGIS selection
-- Configurable flight altitude, speed, gimbal angle, photo interval, side overlap, and flight direction
-- Photo Interval parameter for planning along-track overlap, used as a reference to set the drone's auto interval capture mode manually before flying
-- Calculated front overlap display, showing effective along-track overlap from speed x interval with low-overlap warnings
+- Two capture modes: **Semi-automatic** (you set the drone's auto interval capture before takeoff) and **Full-automatic** (experimental: a waypoint per photo with automatic shooting, stop-and-shoot, so no manual interval is needed)
+- Configurable flight altitude, speed, side overlap, front overlap, and flight direction
+- Straight flight lines with a clean stop at each waypoint, instead of bowing at the line-end turnarounds
 - Auto-optimised flight direction that minimises flight time for the survey area shape
 - Concave-aware flight lines: passes stay inside irregular (L, U, notched) survey areas instead of crossing the excluded gaps
 - Optional cross-hatch: fly the grid again perpendicular to the flight direction for better 3D reconstruction and LiDAR point-cloud stability
 - Editable GSD linked two-way with altitude, so you can plan by target resolution, with effective photo spacing synced to drone model, speed, and interval
 - Live map preview that redraws the flight path as you change parameters, so the route always matches the statistics
-- Flight statistics measured from the actual generated flight path, including the turns between lines: area, path distance, waypoint count, photo count, estimated batteries, and flight time. Battery estimates plan against a 30% reserve, so usable time per battery is 70% of the drone's rated endurance
+- Flight statistics shown in a compact card overlaid on the map next to the flight lines, measured from the actual generated flight path including the turns between lines: distance, coverage, flight-line count, photo count, estimated batteries, and flight time. Battery estimates plan against a 30% reserve, so usable time per battery is 70% of the drone's rated endurance. In full-automatic mode the flight-time and battery estimates also account for the stop at each photo
 - **Multi-battery mission splitting**: divide a large survey into several missions, one per battery, with the split count defaulting to the estimated batteries and editable to any value. Each mission is drawn in its own colour on the preview, and Save to computer writes one KMZ file per mission. Consecutive missions share a seam waypoint, so each mission begins exactly where the previous one ended
 - Configurable safety actions: finish action and RC lost action
 - Exports native DJI WPML KMZ, compatible with DJI Fly on DJI RC2
@@ -125,32 +125,35 @@ Only one polygon can be active at a time. Switching methods automatically remove
 
 ### Step 2 - Configure flight parameters
 
+#### Mission Setup
+
+| Parameter | Description |
+|---|---|
+| Mission Type | The kind of mission to plan. Currently **2D Mapping** (more types will be added) |
+| Capture | **Semi** (you set the drone's interval capture before takeoff) or **Full (beta)** (experimental: a waypoint per photo, the drone shoots automatically) |
+| Drone | Sets camera specs used for GSD and spacing calculations |
+
 #### Flight Parameters
 
 | Parameter | Description |
 |---|---|
-| Drone Model | Sets camera specs used for GSD and spacing calculations |
 | Altitude | Flight altitude above ground level (AGL) in metres |
 | GSD | Target ground sampling distance in cm/px, editable and linked two-way with altitude |
-| Side Overlap | Cross-track strip spacing overlap, controls distance between flight lines |
+| Side Overlap | Cross-track overlap, controls the distance between flight lines |
+| Front Overlap | In **Full** capture: a direct input for the along-track overlap (sets the photo spacing). In **Semi** capture: a derived read-out of the effective along-track overlap, with the drone's minimum shutter interval shown beside it and a warning if it is too low |
 | Speed | Waypoint flight speed in m/s (max varies by drone model) |
 | Direction | Angle of flight lines, or click **Auto** to minimise flight time for the survey shape |
 | Margin | Buffer added around the survey polygon boundary in metres |
-| Split Missions | Number of separate missions to divide the survey into, one per battery; defaults to the estimated batteries and can be set to any value up to the flight-line count |
-| Cross-hatch | Optional. When on, flies the grid and then again perpendicular to the flight direction (double coverage; roughly doubles flight time, photos and battery use) |
 
-#### Camera Settings
+The gimbal is fixed at nadir (-90 degrees) for 2D mapping, so there is no Camera Settings section.
+
+#### Adv. Mission Organizers
 
 | Parameter | Description |
 |---|---|
-| Gimbal Angle | Camera tilt: -90 degrees points straight down (nadir) for 2D mapping |
-| Photo Interval | Time between photos in seconds (minimum 2 s at 12 MP JPEG) |
-| Shot Spacing | Calculated: speed x interval in metres, updates live |
-| Front Overlap | Calculated: effective along-track overlap percentage, turns red if too low |
-
-> **Note:** Front overlap is a derived value, not a manual input. Adjust speed or interval to control it.
-
-> **Important - Photo triggering on DJI Mini 3 Pro, Mini 4 Pro, and Mini 5 Pro:** DJI consumer drones do not support WPML-based camera auto-triggering. Before starting the mission, manually enable auto interval capture mode on the drone and set it to match the Photo Interval value shown in FlyPath. The Photo Interval parameter is a planning reference that lets you estimate front overlap and tune your speed and altitude accordingly.
+| Split Missions | Minimum number of separate missions to divide the survey into, one per battery; defaults to the estimated batteries. The Max Waypoints cap can raise the actual count above this, never below |
+| Max Waypoints | Maximum waypoints per mission (DJI caps a mission at about 200); the survey is split so no mission exceeds it. Applies to both capture modes |
+| Cross-hatch | Optional. Flies the grid and then again perpendicular to the flight direction (double coverage; roughly doubles flight time, photos and battery use) |
 
 #### Safety Actions
 
@@ -159,7 +162,9 @@ Only one polygon can be active at a time. Switching methods automatically remove
 | Finish Action | What the drone does after the last waypoint (Return to Home / Hover / Land) |
 | RC Lost Action | What the drone does if RC signal is lost (Return to Home / Hover / Land / Continue) |
 
-GSD, shot spacing, and front overlap update live as you adjust parameters.
+> **Photo triggering:** In **Semi** capture, DJI consumer drones do not trigger from the mission file, so before takeoff manually enable auto interval capture on the drone (its minimum is shown beside Front Overlap). In **Full (beta)** capture, the mission itself triggers a photo at every waypoint, so no manual setup is needed. Full-automatic capture is experimental, so verify your first flight actually takes photos.
+
+GSD and front overlap update live as you adjust parameters.
 
 ### Step 3 - Preview on Map
 
@@ -173,7 +178,7 @@ Click **Preview on Map** to generate the flight grid and display it on the canva
 
 When you set **Split Missions** above 1, each mission's flight path is drawn in its own colour, with its own start and end markers, so you can see how the survey divides across batteries. The missions join at shared seam waypoints where one ends and the next begins.
 
-Flight statistics (area, distance, photos, batteries, flight time) update below the parameters, measured from the actual flight path including the turns between lines. Once a preview is on the map, changing any parameter redraws the path live and recalculates the statistics, so the numbers always match what you see.
+Flight statistics (distance, coverage, flight lines, photos, batteries, flight time) appear in a compact card overlaid on the top-right of the map, next to the flight lines, measured from the actual flight path including the turns between lines. The card is click-through, so it never blocks map interaction. Once a preview is on the map, changing any parameter redraws the path live and recalculates the statistics, so the numbers always match what you see.
 
 ![Export bar](docs/images/export_bar.png)
 
@@ -242,8 +247,11 @@ FlyPath/
 ├── flypath.py            # QGIS plugin entry point
 ├── flypath_dialog.py     # Main UI panel and export logic
 ├── map_tools.py          # Interactive polygon drawing tool
-├── grid_planner.py       # Flight grid and waypoint generation
-├── wpml_writer.py        # DJI WPML KMZ file writer
+├── grid_planner.py       # Flight grid generation (QGIS geometry)
+├── grid_route.py         # Concave-safe route ordering, densify, split (pure Python)
+├── wpml/                 # DJI WPML KMZ writers (consumer / enterprise) via a factory
+├── hardware/             # Drone registry (drones.json + models)
+├── tests/                # Pure-Python unit tests
 ├── metadata.txt          # QGIS plugin metadata
 ├── icon.png              # Plugin icon
 ├── icon.svg              # Plugin icon source
@@ -255,6 +263,7 @@ FlyPath/
 
 ## Known Limitations
 
+- **Full-automatic capture is experimental**: per-waypoint auto-triggering (the mission telling the drone to shoot at each waypoint) is new for DJI consumer drones, so confirm your first full-auto flight actually captures photos before relying on it. Semi-automatic (manual interval capture) is the proven path
 - Tested and verified on Windows 10 / 11 only, Linux and macOS support is planned for a future release
 - Direct RC export requires a DJI RC2 connected via USB with at least one existing mission
 - DJI Mini 3 Pro droneEnumValue (`97`) is community-verified, not confirmed from a native mission file

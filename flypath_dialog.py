@@ -730,7 +730,7 @@ class FlyPathDialog(QWidget):
 
         # Capture mode for mapping missions: how the camera is triggered.
         self.captureSemiRadio = QRadioButton('Semi')
-        self.captureFullRadio = QRadioButton('Full')
+        self.captureFullRadio = QRadioButton('Full (beta)')
         self.captureSemiRadio.setChecked(True)
         self._captureGroup = QButtonGroup(self)
         self._captureGroup.addButton(self.captureSemiRadio)
@@ -739,10 +739,11 @@ class FlyPathDialog(QWidget):
             'Semi-automatic: flies a grid of flight lines; you set the camera to '
             'interval capture before takeoff.')
         self._tip(self.captureFullRadio,
-            'Full-automatic: places a waypoint at every photo and the drone '
-            'shoots automatically (stop-and-shoot), so no manual interval is '
-            'needed. Slower and uses more battery because the drone stops at '
-            'each photo.')
+            'Full-automatic (experimental): places a waypoint at every photo and '
+            'the drone shoots automatically (stop-and-shoot), so no manual '
+            'interval is needed. Slower and uses more battery because the drone '
+            'stops at each photo. Per-waypoint auto-capture is new, so verify '
+            'your first flight actually takes photos.')
         capture_row = QWidget()
         capture_layout = QHBoxLayout(capture_row)
         capture_layout.setContentsMargins(0, 0, 0, 0)

@@ -3,8 +3,18 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D orthomosaic mapping directly from QGIS
-version=1.5.1
-changelog=1.5.1 - Fixed flight lines crossing outside concave survey areas: a scan line through
+version=1.6.0
+changelog=1.6.0 - New Full-automatic 2D mapping mode (experimental): places a waypoint at every
+    photo and the drone captures automatically (stop-and-shoot), so no manual interval capture is
+    needed; the flight-time and battery estimates account for the per-photo stops. Mission Type is
+    now 2D Mapping with a Semi / Full capture switch. Straighter flight lines: the drone flies
+    straight legs and stops cleanly at each waypoint instead of bowing at the turnarounds (thanks to
+    community contributor CallumGreenwald). Flight statistics moved to a compact card overlaid on the
+    map, shown next to the flight lines. Panel cleanup: overlap read-outs grouped under Side Overlap
+    in Flight Parameters, split and cross-hatch grouped under Adv. Mission Organizers, and the
+    constant Camera Settings section was removed. The Max Waypoints per-mission cap now applies in
+    both modes, and Split Missions is treated as a minimum the cap can raise.
+    1.5.1 - Fixed flight lines crossing outside concave survey areas: a scan line through
     a concave shape used to fly straight across the excluded gap between its pieces. The planner
     now decomposes the area into contiguous strips and snakes each on its own, so passes stay
     inside the survey area. New optional Cross-hatch option flies the grid again perpendicular to
@@ -47,10 +57,12 @@ about=FlyPath is a QGIS plugin for planning autonomous drone mapping missions an
     them as native DJI WPML KMZ files, loadable directly in the DJI Fly app.
     Supported drones: DJI Mini 3 Pro, Mini 4 Pro, Mini 5 Pro (community-verified).
     Draw your survey area on the map, set flight altitude and overlap, preview
-    the flight path, and export a ready-to-fly mission file. Flight lines stay
-    inside irregular (L, U, notched) areas, an optional cross-hatch adds a
-    perpendicular pass for 3D and LiDAR, and large surveys can be split into
-    several missions, one per battery.
+    the flight path, and export a ready-to-fly mission file. Choose semi-automatic
+    capture (you set interval capture before takeoff) or full-automatic capture
+    (a waypoint per photo with automatic shooting, experimental). Flight lines fly
+    straight and stay inside irregular (L, U, notched) areas, an optional
+    cross-hatch adds a perpendicular pass for 3D and LiDAR, and large surveys can
+    be split into several missions, one per battery.
 
 tracker=https://github.com/dronnix-io/FlyPath/issues
 repository=https://github.com/dronnix-io/FlyPath
