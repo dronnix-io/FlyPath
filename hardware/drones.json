@@ -63,6 +63,75 @@
     "notes": "Sensor dimensions use the standard 1\" format (13.2 x 8.8 mm); focal length derived from 24 mm equiv on a 1\" sensor (crop factor ~2.73). Verify against official DJI EXIF if better than ~2% GSD precision is needed. Drone enum 68 and RC2 compatibility community-verified.",
     "info": "1\" CMOS  ·  50 MP  ·  24 mm equiv"
   },
+  "DJI Air 3": {
+    "category": "consumer",
+    "app": "DJI Fly",
+    "aircraft": {
+      "drone_enum": 0,
+      "drone_sub_enum": 0,
+      "min_speed_ms": 1.0,
+      "max_speed_ms": 15.0,
+      "battery_time_min": 46
+    },
+    "camera": {
+      "sensor_width_mm": 9.6,
+      "sensor_height_mm": 7.2,
+      "focal_length_mm": 6.9,
+      "image_width_px": 4000,
+      "image_height_px": 3000,
+      "min_shoot_interval_s": 2.0
+    },
+    "available": false,
+    "verified": "UNVERIFIED - drone_enum is a placeholder (0); confirm from a native Air 3 mission dump before enabling",
+    "notes": "Hidden (available=false) until verified. Native DJI Fly waypoint support, pairs with DJI RC2. drone_enum is a PLACEHOLDER and MUST be confirmed from a native Air 3 waylines.wpml before enabling. Dual-camera (wide + 70 mm tele); mapping uses the 1/1.3\" 48 MP wide lens, camera values reused from the DJI Mini 4 Pro (same 1/1.3\" class, 12 MP mode). The consumer writer emits a single camera, so wide-lens selection may need adding so DJI Fly shoots the wide lens.",
+    "info": "1/1.3\" CMOS  ·  48 MP wide  ·  24 mm equiv"
+  },
+  "DJI Air 3S": {
+    "category": "consumer",
+    "app": "DJI Fly",
+    "aircraft": {
+      "drone_enum": 0,
+      "drone_sub_enum": 0,
+      "min_speed_ms": 1.0,
+      "max_speed_ms": 15.0,
+      "battery_time_min": 45
+    },
+    "camera": {
+      "sensor_width_mm": 13.2,
+      "sensor_height_mm": 8.8,
+      "focal_length_mm": 8.8,
+      "image_width_px": 8192,
+      "image_height_px": 6144,
+      "min_shoot_interval_s": 5.0
+    },
+    "available": false,
+    "verified": "UNVERIFIED - drone_enum is a placeholder (0); confirm from a native Air 3S mission dump before enabling",
+    "notes": "Hidden (available=false) until verified. Native DJI Fly waypoint support, pairs with DJI RC2. drone_enum is a PLACEHOLDER and MUST be confirmed from a native Air 3S waylines.wpml before enabling. Dual-camera; mapping uses the 1\" 50 MP main lens, camera values reused from the DJI Mini 5 Pro (same 1\" 50 MP 24 mm class). Multi-camera lens selection may need adding to the consumer writer.",
+    "info": "1\" CMOS  ·  50 MP main  ·  24 mm equiv"
+  },
+  "DJI Mavic 4 Pro": {
+    "category": "consumer",
+    "app": "DJI Fly",
+    "aircraft": {
+      "drone_enum": 0,
+      "drone_sub_enum": 0,
+      "min_speed_ms": 1.0,
+      "max_speed_ms": 15.0,
+      "battery_time_min": 51
+    },
+    "camera": {
+      "sensor_width_mm": 17.4,
+      "sensor_height_mm": 13.0,
+      "focal_length_mm": 14.0,
+      "image_width_px": 12288,
+      "image_height_px": 8192,
+      "min_shoot_interval_s": 5.0
+    },
+    "available": false,
+    "verified": "UNVERIFIED - drone_enum is a placeholder (0) and camera/interval are estimates; confirm from a native Mavic 4 Pro mission dump before enabling",
+    "notes": "Hidden (available=false) until verified. Native DJI Fly waypoint support, pairs with DJI RC2 / RC Pro 2. drone_enum is a PLACEHOLDER and MUST be confirmed from a native Mavic 4 Pro waylines.wpml before enabling. Triple-camera Hasselblad; mapping uses the 4/3 100 MP wide lens (17.4 x 13.0 mm, 28 mm equiv, ~14 mm focal). The 100 MP shutter interval is an estimate. Multi-camera lens selection likely needed in the consumer writer.",
+    "info": "4/3 CMOS  ·  100 MP Hasselblad  ·  28 mm equiv"
+  },
   "DJI Matrice 4E": {
     "category": "enterprise",
     "app": "DJI Pilot 2",

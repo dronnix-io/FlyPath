@@ -92,6 +92,21 @@ def test_unavailable_drone_hidden_from_list_but_still_registered():
     assert all(registry.get(n).available for n in registry.names())
 
 
+def test_staged_drones_hidden_until_enum_verified():
+    # Air 3 / Air 3S / Mavic 4 Pro are staged in the registry (native DJI Fly
+    # waypoint drones) but stay hidden until their drone_enum is confirmed from a
+    # real mission dump. The placeholder enum (0) guards against shipping a wrong
+    # value: this test fails if one is enabled without setting a real enum.
+    for name in ('DJI Air 3', 'DJI Air 3S', 'DJI Mavic 4 Pro'):
+        assert registry.has(name), f'{name} should be registered'
+        d = registry.get(name)
+        assert d.available is False, f'{name} must stay hidden until verified'
+        assert name not in registry.names()
+        assert (d.drone_enum != 0) == d.available, (
+            f'{name}: do not enable (available=true) with the placeholder enum 0; '
+            f'set a verified drone_enum first')
+
+
 def test_has_and_missing():
     assert registry.has('DJI Mini 4 Pro')
     assert not registry.has('Nonexistent Drone')
