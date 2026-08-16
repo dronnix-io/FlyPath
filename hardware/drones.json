@@ -129,6 +129,28 @@
     "notes": "Native DJI Fly waypoint support, pairs with DJI RC2 / RC Pro 2. drone_enum set to 68, the shared consumer value used by the Mini 4 Pro and Mini 5 Pro; if DJI Fly rejects a mission on this model, the enum needs a model-specific value. Triple-camera Hasselblad; the consumer KMZ does not name a lens, so DJI Fly uses the drone's active camera, so select the wide lens for mapping. GSD assumes the 4/3 100 MP wide lens (17.4 x 13.0 mm, 28 mm equiv, ~14 mm focal); the 100 MP shutter interval is an estimate.",
     "info": "4/3 CMOS  ·  100 MP Hasselblad  ·  28 mm equiv"
   },
+  "DJI Mavic 3 Classic": {
+    "category": "consumer",
+    "app": "DJI Fly",
+    "aircraft": {
+      "drone_enum": 68,
+      "drone_sub_enum": 0,
+      "min_speed_ms": 1.0,
+      "max_speed_ms": 15.0,
+      "battery_time_min": 46
+    },
+    "camera": {
+      "sensor_width_mm": 17.3,
+      "sensor_height_mm": 13.0,
+      "focal_length_mm": 12.29,
+      "image_width_px": 5280,
+      "image_height_px": 3956,
+      "min_shoot_interval_s": 2.0
+    },
+    "verified": "Enum assumed 68 (shared with the verified Mini 4 Pro / Mini 5 Pro); awaiting a field-test report on this exact model.",
+    "notes": "Single-camera Mavic 3 (the only one without a tele lens); native DJI Fly waypoint support, pairs with DJI RC / RC-N1 / RC Pro (Save to computer; direct RC transfer is built for RC2 and unverified on these controllers). drone_enum set to 68, the shared consumer value used by the Mini 4 Pro and Mini 5 Pro; if DJI Fly rejects a mission on this model, the enum needs a model-specific value. Camera is the 4/3 20 MP Hasselblad L2D-20c (17.3 x 13.0 mm, 24 mm equiv, 12.29 mm focal, 5280 x 3956); shutter interval is an estimate.",
+    "info": "4/3 CMOS  ·  20 MP Hasselblad  ·  24 mm equiv"
+  },
   "DJI Matrice 4E": {
     "category": "enterprise",
     "app": "DJI Pilot 2",

@@ -67,7 +67,7 @@ A walkthrough of installing and using FlyPath in QGIS: defining a survey area, s
 | Operating System | Windows 10 / 11 |
 | QGIS | 3.16 or later (4.x supported) |
 | Python | 3.9+ (bundled with QGIS) |
-| Drone | DJI Mini 3 Pro, Mini 4 Pro, Mini 5 Pro, Air 3, Air 3S, or Mavic 4 Pro |
+| Drone | DJI Mini 3 Pro, Mini 4 Pro, Mini 5 Pro, Air 3, Air 3S, Mavic 3 Classic, or Mavic 4 Pro |
 | Controller | DJI RC2 (for direct USB export) |
 
 > Linux and macOS support is planned for a future release.
@@ -237,11 +237,12 @@ The replaced mission as it appears in the DJI Fly app on the RC:
 | DJI Mini 5 Pro | Yes | 68 | Community-verified |
 | DJI Air 3 | Yes | 68 (assumed) | Field-test reports wanted |
 | DJI Air 3S | Yes | 68 (assumed) | Field-test reports wanted |
+| DJI Mavic 3 Classic | Yes | 68 (assumed) | Field-test reports wanted |
 | DJI Mavic 4 Pro | Yes | 68 (assumed) | Field-test reports wanted |
 
-> **Note:** DJI Mini 3 (standard) does **not** support waypoint missions and is not supported by FlyPath.
+> **Note:** DJI Mini 3 (standard) does **not** support waypoint missions and is not supported by FlyPath. Of the Mavic 3 family, only the single-camera **Mavic 3 Classic** is supported; the Mavic 3, Mavic 3 Cine and Mavic 3 Pro have multiple cameras and are not yet supported.
 
-> **Air 3 / Air 3S / Mavic 4 Pro:** these use the same consumer waypoint enum (`68`) as the verified Mini 4 Pro and Mini 5 Pro. If a mission is rejected by DJI Fly on one of these models, please [open an issue](https://github.com/dronnix-io/FlyPath/issues) so we can set a model-specific value. They are multi-camera drones, so select the wide/main lens for mapping (the mission file does not force a lens).
+> **Air 3 / Air 3S / Mavic 3 Classic / Mavic 4 Pro:** these use the same consumer waypoint enum (`68`) as the verified Mini 4 Pro and Mini 5 Pro. If a mission is rejected by DJI Fly on one of these models, please [open an issue](https://github.com/dronnix-io/FlyPath/issues) so we can set a model-specific value. The Air and Mavic 4 are multi-camera, so select the wide/main lens for mapping (the mission file does not force a lens).
 
 ---
 
