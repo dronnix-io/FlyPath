@@ -3,8 +3,13 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D orthomosaic mapping directly from QGIS
-version=1.6.1
-changelog=1.6.1 - Added three more consumer drones: DJI Air 3, Air 3S and Mavic 4 Pro. They use
+version=1.6.2
+changelog=1.6.2 - Added the DJI Mavic 3 Classic, the single-camera drone in the consumer Mavic 3
+    family (4/3 20 MP Hasselblad). Like the other recently added drones it uses the shared DJI Fly
+    waypoint enum; please open an issue if a mission is rejected on this model so a model-specific
+    value can be set. Note: the Mavic 3 Classic pairs with a DJI RC / RC-N1 / RC Pro rather than
+    RC2, so use Save to computer if the direct RC transfer does not detect the controller.
+    1.6.1 - Added three more consumer drones: DJI Air 3, Air 3S and Mavic 4 Pro. They use
     the shared DJI Fly waypoint enum verified on the Mini 4 Pro and Mini 5 Pro; if a mission is
     rejected on one of these models, please open an issue so a model-specific value can be set. These
     are multi-camera drones, so select the wide/main lens for mapping. The on-map Mission Stats card
