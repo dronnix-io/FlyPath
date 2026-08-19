@@ -669,7 +669,8 @@ class FlyPathDialog(QWidget):
         self._terrain            = _TerrainSampler()  # in-memory DEM, no disk cache
         self._terrain_warned     = False  # only warn once when elevation is down
         self._live_elevations    = None   # ground elevations parallel to _live_waypoints
-        self._live_heights       = None   # per-mission terrain heights for the preview
+        self._live_heights       = None   # per-mission flight heights for the preview
+        self._live_ground        = None   # per-mission ground elevations for the preview
         self._gen_elevations     = None   # elevations from the last _generate_waypoints
         self._survey_polygon     = None
         self._survey_polygon_crs = None
@@ -2406,8 +2407,9 @@ class FlyPathDialog(QWidget):
         max_split = max(1, len(waypoints) - 1) if (full or terrain) else n_lines
         self._apply_split_default(max_split, batteries)
         missions_h = self._missions_with_heights(waypoints, self._live_elevations)
-        self._live_missions = [wps for wps, _ in missions_h]
-        self._live_heights  = [h for _, h in missions_h]
+        self._live_missions = [wps for wps, _, _ in missions_h]
+        self._live_heights  = [h for _, h, _ in missions_h]
+        self._live_ground   = [g for _, _, g in missions_h]
         self._refresh_split_part_combo()
 
     def _split_missions(self, waypoints):
@@ -2469,14 +2471,15 @@ class FlyPathDialog(QWidget):
             return
         waypoints, shot_spacing_m = result
         missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
-        missions = [wps for wps, _ in missions_h]
-        heights  = [h for _, h in missions_h]
+        missions = [wps for wps, _, _ in missions_h]
+        heights  = [h for _, h, _ in missions_h]
+        ground   = [g for _, _, g in missions_h]
         self._waypoints      = waypoints
         self._shot_spacing_m = shot_spacing_m
         self._missions       = missions
         self._on_clear_preview(reset_area=False)
         line_layer = self._build_path_layer(missions)
-        wp_layer   = self._build_waypoints_layer(missions, heights)
+        wp_layer   = self._build_waypoints_layer(missions, heights, ground)
         self._preview_layer_ids = [line_layer.id(), wp_layer.id()]
         self.iface.mapCanvas().refresh()
 
@@ -2528,17 +2531,18 @@ class FlyPathDialog(QWidget):
         dp.addFeatures(feats)
         layer.triggerRepaint()
 
-    def _build_waypoints_layer(self, missions, heights=None):
+    def _build_waypoints_layer(self, missions, heights=None, ground=None):
         """Create and register a rule-based Point layer for waypoint markers.
-        `heights` (terrain follow) is a per-mission list of per-waypoint heights,
-        or None for a flat mission."""
+        The map label is the waypoint number; with terrain follow, each waypoint's
+        attribute table also carries its ground elevation (m) and its flight
+        height H (m, relative to the launch point, as shown on the RC)."""
         layer = QgsVectorLayer(
             'Point?crs=EPSG:4326&field=seq:integer&field=wp_type:string(10)'
-            '&field=mission:integer&field=height:double',
+            '&field=mission:integer&field=ground_elev_m:double&field=flight_h_m:double',
             'FlyPath — Waypoints', 'memory'
         )
         layer.setCustomProperty('flypath_internal', True)
-        self._populate_waypoints_layer(layer, missions, heights)
+        self._populate_waypoints_layer(layer, missions, heights, ground)
 
         root = QgsRuleBasedRenderer.Rule(None)
         for expr, color, border, size, label in [
@@ -2553,22 +2557,9 @@ class FlyPathDialog(QWidget):
             })
             root.appendChild(QgsRuleBasedRenderer.Rule(sym, filterExp=expr, label=label))
         layer.setRenderer(QgsRuleBasedRenderer(root))
-        self._apply_waypoint_labeling(layer)
 
-        QgsProject.instance().addMapLayer(layer)
-        return layer
-
-    def _apply_waypoint_labeling(self, layer):
-        """Label markers with their height (metres above launch) when terrain
-        follow is on, so the varying heights are visible on the map; otherwise
-        label the per-mission waypoint number."""
         lbl = QgsPalLayerSettings()
-        if self.terrainFollowCheck.isChecked():
-            lbl.fieldName = "format_number(\"height\", 0) || ' m'"
-            lbl.isExpression = True
-        else:
-            lbl.fieldName = 'seq'
-            lbl.isExpression = False
+        lbl.fieldName = 'seq'
         try:
             lbl.placement = Qgis.LabelPlacement.OverPoint
         except AttributeError:
@@ -2582,17 +2573,21 @@ class FlyPathDialog(QWidget):
         layer.setLabeling(QgsVectorLayerSimpleLabeling(lbl))
         layer.setLabelsEnabled(True)
 
-    def _populate_waypoints_layer(self, layer, missions, heights=None):
+        QgsProject.instance().addMapLayer(layer)
+        return layer
+
+    def _populate_waypoints_layer(self, layer, missions, heights=None, ground=None):
         """(Re)fill the waypoint markers, in place. Each mission is numbered
-        from 1 on its own and gets its own start and end marker. Each waypoint
-        carries its height (terrain executeHeight, or the flat altitude)."""
-        flat_alt = self.altitudeSpin.value()
+        from 1 on its own and gets its own start and end marker. With terrain
+        follow, each waypoint also carries its ground elevation and flight height
+        H (both NULL for a flat, non-terrain mission)."""
         dp = layer.dataProvider()
         dp.truncate()
         wp_feats = []
         for m, wps in enumerate(missions):
             last_idx = len(wps) - 1
-            mission_heights = heights[m] if heights and m < len(heights) else None
+            m_h = heights[m] if heights and m < len(heights) else None
+            m_g = ground[m] if ground and m < len(ground) else None
             for i, (lon, lat) in enumerate(wps):
                 f = QgsFeature()
                 f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(lon, lat)))
@@ -2602,9 +2597,9 @@ class FlyPathDialog(QWidget):
                     wp_type = 'end'
                 else:
                     wp_type = 'mid'
-                height = (mission_heights[i] if mission_heights
-                          and i < len(mission_heights) else flat_alt)
-                f.setAttributes([i + 1, wp_type, m, height])
+                g = m_g[i] if m_g and i < len(m_g) else None
+                h = m_h[i] if m_h and i < len(m_h) else None
+                f.setAttributes([i + 1, wp_type, m, g, h])
                 wp_feats.append(f)
         dp.addFeatures(wp_feats)
         layer.triggerRepaint()
@@ -2629,9 +2624,9 @@ class FlyPathDialog(QWidget):
         self._shot_spacing_m = max(
             self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5
         )
-        self._redraw_preview_layers(missions, self._live_heights)
+        self._redraw_preview_layers(missions, self._live_heights, self._live_ground)
 
-    def _redraw_preview_layers(self, missions, heights=None):
+    def _redraw_preview_layers(self, missions, heights=None, ground=None):
         """Refresh the existing preview layers in place from new missions."""
         proj = QgsProject.instance()
         line_layer = (proj.mapLayer(self._preview_layer_ids[0])
@@ -2642,16 +2637,14 @@ class FlyPathDialog(QWidget):
             # Layers were removed outside the plugin — rebuild from scratch.
             self._on_clear_preview(reset_area=False)
             line_layer = self._build_path_layer(missions)
-            wp_layer   = self._build_waypoints_layer(missions, heights)
+            wp_layer   = self._build_waypoints_layer(missions, heights, ground)
             self._preview_layer_ids = [line_layer.id(), wp_layer.id()]
         else:
             # The mission count can change between syncs (the split value or the
             # line count moved), so rebuild the colour rules before refilling.
             line_layer.setRenderer(self._path_renderer(len(missions)))
             self._populate_path_layer(line_layer, missions)
-            self._populate_waypoints_layer(wp_layer, missions, heights)
-            # Terrain follow may have toggled, so refresh the height/seq label.
-            self._apply_waypoint_labeling(wp_layer)
+            self._populate_waypoints_layer(wp_layer, missions, heights, ground)
         self.iface.mapCanvas().refresh()
 
     def _on_clear_preview(self, reset_area=True):
@@ -3394,11 +3387,12 @@ class FlyPathDialog(QWidget):
         write_mission(drone, spec, filepath)
 
     def _missions_with_heights(self, waypoints, elevations):
-        """Split into missions and pair each with its per-waypoint terrain heights
-        (rebased to that mission's own launch point), or None per mission when
-        terrain follow is off. Returns [(waypoints, heights), ...]."""
+        """Split into missions and return [(waypoints, flight_heights, ground_elevs)].
+        `flight_heights` are executeHeights rebased to each mission's own launch
+        point (the flight height H shown on the RC); `ground_elevs` are the DEM
+        ground elevations. Both are None per mission when terrain follow is off."""
         if not elevations or len(elevations) != len(waypoints):
-            return [(part, None) for part in self._split_missions(waypoints)]
+            return [(part, None, None) for part in self._split_missions(waypoints)]
         altitude = self.altitudeSpin.value()
         triples = [(lon, lat, elev)
                    for (lon, lat), elev in zip(waypoints, elevations)]
@@ -3406,7 +3400,8 @@ class FlyPathDialog(QWidget):
         for part in self._split_missions(triples):
             part_wps = [(lon, lat) for lon, lat, _ in part]
             part_elevs = [elev for _, _, elev in part]
-            out.append((part_wps, heights_above_takeoff(part_elevs, altitude)))
+            out.append((part_wps, heights_above_takeoff(part_elevs, altitude),
+                        part_elevs))
         return out
 
     def _survey_polygon_wgs84(self):
@@ -3488,11 +3483,11 @@ class FlyPathDialog(QWidget):
                 part = self.splitPartCombo.currentData()
                 if part is None:
                     part = 0
-                part_wps, part_heights = missions_h[part]
+                part_wps, part_heights, _ = missions_h[part]
                 part_name = f'{mission} {part + 1} of {len(missions_h)}'
                 self._export_rc(part_name, part_wps, shot_spacing_m, part_heights)
             else:
-                part_wps, part_heights = missions_h[0]
+                part_wps, part_heights, _ = missions_h[0]
                 self._export_rc(mission, part_wps, shot_spacing_m, part_heights)
         else:
             self._export_local(mission, missions_h)
@@ -3544,7 +3539,8 @@ class FlyPathDialog(QWidget):
 
     def _export_local(self, mission, missions):
         """Save the mission (or each split mission) as a .kmz in the folder.
-        `missions` is a list of (waypoints, heights) from _missions_with_heights."""
+        `missions` is a list of (waypoints, heights, ground) from
+        _missions_with_heights; only the flight heights are written."""
         folder = self.localFolderEdit.text().strip() or os.path.expanduser('~')
         if not os.path.isdir(folder):
             reply = QMessageBox.question(
@@ -3574,12 +3570,12 @@ class FlyPathDialog(QWidget):
         # One file when unsplit; otherwise name them <base>_1_of_N … so they
         # stay in order and never overwrite one another.
         if n <= 1:
-            wps0, heights0 = missions[0]
+            wps0, heights0, _ = missions[0]
             targets = [(filepath, wps0, mission, heights0)]
         else:
             width = len(str(n))
             targets = []
-            for i, (wps, heights) in enumerate(missions, start=1):
+            for i, (wps, heights, _) in enumerate(missions, start=1):
                 path = f'{base}_{str(i).zfill(width)}_of_{n}{ext}'
                 targets.append((path, wps, f'{mission} {i} of {n}', heights))
 
