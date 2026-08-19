@@ -46,6 +46,7 @@ A walkthrough of installing and using FlyPath in QGIS: defining a survey area, s
 - Auto-optimised flight direction that minimises flight time for the survey area shape
 - Concave-aware flight lines: passes stay inside irregular (L, U, notched) survey areas instead of crossing the excluded gaps
 - Optional cross-hatch: fly the grid again perpendicular to the flight direction for better 3D reconstruction and LiDAR point-cloud stability
+- **Terrain follow** (optional): hold a constant height above ground by varying each waypoint's height from free global elevation data (AWS Terrarium DEM, no key). Full-automatic sets a height at every photo; semi-automatic adds waypoints along the flight lines where the ground rises or falls by more than a tolerance you set. Elevation tiles are fetched into memory only and never written to disk. It follows the bare-earth terrain, not trees or buildings, so keep a safe margin
 - Editable GSD linked two-way with altitude, so you can plan by target resolution, with effective photo spacing synced to drone model, speed, and interval
 - Live map preview that redraws the flight path as you change parameters, so the route always matches the statistics
 - Flight statistics shown in a compact card overlaid on the map next to the flight lines, measured from the actual generated flight path including the turns between lines: distance, coverage, flight-line count, photo count, estimated batteries, and flight time. Battery estimates plan against a 30% reserve, so usable time per battery is 70% of the drone's rated endurance. In full-automatic mode the flight-time and battery estimates also account for the stop at each photo
@@ -154,6 +155,8 @@ The gimbal is fixed at nadir (-90 degrees) for 2D mapping, so there is no Camera
 | Split Missions | Minimum number of separate missions to divide the survey into, one per battery; defaults to the estimated batteries. The Max Waypoints cap can raise the actual count above this, never below |
 | Max Waypoints | Maximum waypoints per mission (DJI caps a mission at about 200); the survey is split so no mission exceeds it. Applies to both capture modes |
 | Cross-hatch | Optional. Flies the grid and then again perpendicular to the flight direction (double coverage; roughly doubles flight time, photos and battery use) |
+| Terrain Follow | Optional. Vary each waypoint's height so the drone holds a constant height above ground, using free global elevation data fetched into memory only (never saved to disk). Needs an internet connection while planning |
+| Terrain Tolerance | Semi-automatic terrain follow only. Adds a waypoint whenever the ground has risen or fallen by more than this since the last waypoint. Smaller means tighter terrain following and more waypoints |
 
 #### Safety Actions
 
@@ -177,6 +180,8 @@ Click **Preview on Map** to generate the flight grid and display it on the canva
 - **Blue filled circle**: end waypoint
 
 When you set **Split Missions** above 1, each mission's flight path is drawn in its own colour, with its own start and end markers, so you can see how the survey divides across batteries. The missions join at shared seam waypoints where one ends and the next begins.
+
+Waypoint markers are labelled with their number. With **Terrain Follow** on, each waypoint also carries two values in its attribute table (open the Waypoints layer's attribute table or use Identify): `ground_elevation_m` (the ground elevation from the DEM) and `flight_height_m` (the flight height above the launch point, as shown on the RC).
 
 Flight statistics (distance, coverage, flight lines, photos, batteries, flight time) appear in a compact card overlaid on the top-right of the map, next to the flight lines, measured from the actual flight path including the turns between lines. The card is click-through, so it never blocks map interaction. Once a preview is on the map, changing any parameter redraws the path live and recalculates the statistics, so the numbers always match what you see.
 
@@ -272,7 +277,8 @@ FlyPath/
 - Tested and verified on Windows 10 / 11 only, Linux and macOS support is planned for a future release
 - Direct RC export requires a DJI RC2 connected via USB with at least one existing mission
 - DJI Mini 3 Pro droneEnumValue (`97`) is community-verified, not confirmed from a native mission file
-- 2D grid missions only, no terrain following, 3D facade, or orbit missions
+- 2D grid missions only (with optional terrain follow); 3D facade and orbit missions are planned for a future release
+- **Terrain follow** uses a bare-earth ~30 m DEM, so it follows the ground, not trees or buildings; keep a safe margin, and it needs an internet connection while planning. It assumes takeoff at the first waypoint of each exported flight (where the relative heights are referenced)
 - Mission splitting divides the survey into whole flight-line groups by battery count; sending split missions to the RC replaces one existing mission slot per part, so create enough slots in DJI Fly first
 
 ---

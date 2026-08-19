@@ -2173,6 +2173,12 @@ class FlyPathDialog(QWidget):
                     # Signals were never connected, or the layer's C++ object
                     # is already gone; nothing to disconnect.
                     pass
+                # If Edit was left on, the layer has an open edit buffer, which
+                # makes QGIS pop a "save changes?" prompt on removal. Discard the
+                # edits and leave the vertex tool first so removal is silent.
+                if layer.isEditable():
+                    layer.rollBack()
+                    self._finish_polygon_edit()
                 QgsProject.instance().removeMapLayer(self._survey_area_layer_id)
             self._survey_area_layer_id = None
         self.editPolygonBtn.setVisible(False)

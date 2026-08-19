@@ -3,8 +3,19 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D orthomosaic mapping directly from QGIS
-version=1.6.2
-changelog=1.6.2 - Added four more consumer drones: DJI Air 3, Air 3S, Mavic 3 Classic (the
+version=1.7.0
+changelog=1.7.0 - New Terrain follow option (optional): the drone holds a constant height above
+    the ground by varying each waypoint's height, using free global elevation data (AWS Terrarium
+    DEM, no API key). Elevation tiles are fetched into memory only and never written to disk. In
+    full-automatic mode every photo waypoint is sampled; in semi-automatic mode a Terrain Tolerance
+    field adds waypoints along the flight lines wherever the ground rises or falls beyond the set
+    threshold. It follows bare-earth terrain (not trees or buildings), so keep a safe margin, and it
+    needs an internet connection while planning. Waypoint markers are now labelled with their number,
+    and with terrain follow on each waypoint carries two attributes in its table: the ground
+    elevation and the flight height above the launch point. Also fixed: removing a survey area while
+    it was still in edit mode used to ask whether to save or discard the edits; it is now removed
+    silently.
+    1.6.2 - Added four more consumer drones: DJI Air 3, Air 3S, Mavic 3 Classic (the
     single-camera model of the Mavic 3 family) and Mavic 4 Pro. They use the shared DJI Fly waypoint
     enum verified on the Mini 4 Pro and Mini 5 Pro; please open an issue if a mission is rejected by
     DJI Fly on one of these models so a model-specific value can be set. The Air and Mavic 4 are
@@ -68,10 +79,11 @@ about=FlyPath is a QGIS plugin for planning autonomous drone mapping missions an
     Draw your survey area on the map, set flight altitude and overlap, preview
     the flight path, and export a ready-to-fly mission file. Choose semi-automatic
     capture (you set interval capture before takeoff) or full-automatic capture
-    (a waypoint per photo with automatic shooting). Flight lines fly straight and
-    stay inside irregular (L, U, notched) areas, an optional
-    cross-hatch adds a perpendicular pass for 3D and LiDAR, and large surveys can
-    be split into several missions, one per battery.
+    (a waypoint per photo with automatic shooting). An optional terrain follow
+    mode holds a constant height above ground from free global elevation data.
+    Flight lines fly straight and stay inside irregular (L, U, notched) areas, an
+    optional cross-hatch adds a perpendicular pass for 3D and LiDAR, and large
+    surveys can be split into several missions, one per battery.
 
 tracker=https://github.com/dronnix-io/FlyPath/issues
 repository=https://github.com/dronnix-io/FlyPath
