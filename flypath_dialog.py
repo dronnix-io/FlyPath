@@ -2538,7 +2538,8 @@ class FlyPathDialog(QWidget):
         height H (m, relative to the launch point, as shown on the RC)."""
         layer = QgsVectorLayer(
             'Point?crs=EPSG:4326&field=seq:integer&field=wp_type:string(10)'
-            '&field=mission:integer&field=ground_elev_m:double&field=flight_h_m:double',
+            '&field=mission:integer&field=ground_elevation_m:double'
+            '&field=flight_height_m:double',
             'FlyPath — Waypoints', 'memory'
         )
         layer.setCustomProperty('flypath_internal', True)
