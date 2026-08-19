@@ -1,3 +1,4 @@
+import contextlib
 import datetime
 import math
 import os
@@ -17,9 +18,12 @@ from qgis.PyQt.QtWidgets import (
     QGraphicsView, QGraphicsScene,
 )
 from qgis.PyQt.QtCore import (
-    Qt, QObject, QEvent, QSettings, QVariant, QSize, QPointF, pyqtSignal,
+    Qt, QObject, QEvent, QSettings, QVariant, QSize, QPointF, QUrl, pyqtSignal,
 )
-from qgis.PyQt.QtGui import QColor, QFont, QPixmap, QPainter, QPen, QPolygonF
+from qgis.PyQt.QtGui import (
+    QColor, QFont, QPixmap, QPainter, QPen, QPolygonF, QImage,
+)
+from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
 try:
     _AlignLeft    = Qt.AlignmentFlag.AlignLeft
@@ -41,6 +45,9 @@ try:
     _MB_NO        = QMessageBox.StandardButton.No
     _DBB_OK       = QDialogButtonBox.StandardButton.Ok
     _DBB_CANCEL   = QDialogButtonBox.StandardButton.Cancel
+    _UA_HEADER    = QNetworkRequest.KnownHeaders.UserAgentHeader
+    _NET_NO_ERROR = QNetworkReply.NetworkError.NoError
+    _IMG_RGB32    = QImage.Format.Format_RGB32
 except AttributeError:
     # Old PyQt5 without scoped enums; fetch unscoped names dynamically so the
     # scoped forms above remain the only static enum references in the file.
@@ -63,6 +70,9 @@ except AttributeError:
     _MB_NO        = getattr(QMessageBox, 'No')
     _DBB_OK       = getattr(QDialogButtonBox, 'Ok')
     _DBB_CANCEL   = getattr(QDialogButtonBox, 'Cancel')
+    _UA_HEADER    = getattr(QNetworkRequest, 'UserAgentHeader')
+    _NET_NO_ERROR = getattr(QNetworkReply, 'NoError')
+    _IMG_RGB32    = getattr(QImage, 'Format_RGB32')
 
 from qgis.core import (
     Qgis,
@@ -82,12 +92,17 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsDistanceArea,
+    QgsNetworkAccessManager,
 )
 from .map_tools import PolygonDrawTool
 from .grid_planner import (
     generate_flight_grid, find_optimal_direction, split_waypoints
 )
 from .grid_route import split_by_waypoint_count
+from .terrain import (
+    TERRARIUM_URL, ZOOM, TILE_SIZE, tile_coords, elevation_from_rgb,
+    sample_elevations, densify_by_terrain, heights_above_takeoff,
+)
 from .wpml import MissionSpec, write_mission
 from .hardware import registry
 
@@ -95,6 +110,61 @@ try:
     _PolygonGeometry = QgsWkbTypes.GeometryType.PolygonGeometry
 except AttributeError:
     _PolygonGeometry = getattr(QgsWkbTypes, 'PolygonGeometry')
+
+
+class _TerrainError(Exception):
+    """Elevation data could not be fetched or decoded."""
+
+
+class _TerrainSampler:
+    """Samples ground elevation from the free AWS Terrarium DEM tiles.
+
+    Tiles are fetched over the network and held in memory only (never written to
+    disk); a survey spans a handful of tiles, so the footprint is tiny. Held for
+    the session and dropped on clear(); a failed tile is remembered so a dead
+    network is not retried on every keystroke."""
+
+    def __init__(self):
+        self._tiles = {}                 # (x, y) -> QImage, or None if it failed
+
+    def clear(self):
+        self._tiles.clear()
+
+    def sample(self, lon, lat):
+        """Ground elevation (m) at a (lon, lat) point. Raises _TerrainError if
+        the covering tile cannot be fetched/decoded."""
+        x, y, px, py = tile_coords(lat, lon, ZOOM)
+        key = (x, y)
+        if key in self._tiles:
+            image = self._tiles[key]
+            if image is None:
+                raise _TerrainError('Elevation data is currently unavailable.')
+        else:
+            try:
+                image = self._fetch_tile(x, y)
+            except _TerrainError:
+                if len(self._tiles) < 256:
+                    self._tiles[key] = None      # remember the failure
+                raise
+            if len(self._tiles) >= 64:           # backstop against a runaway grid
+                self._tiles.clear()
+            self._tiles[key] = image
+        rgb = image.pixel(px, py)
+        return elevation_from_rgb((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF)
+
+    def _fetch_tile(self, x, y):
+        request = QNetworkRequest(QUrl(TERRARIUM_URL.format(z=ZOOM, x=x, y=y)))
+        request.setHeader(_UA_HEADER, 'FlyPath')
+        with contextlib.suppress(AttributeError):
+            request.setTransferTimeout(10000)    # ms; Qt 5.15+/6 only
+        reply = QgsNetworkAccessManager.blockingGet(request)
+        if reply.error() != _NET_NO_ERROR:
+            raise _TerrainError('Elevation data is currently unavailable.')
+        image = QImage()
+        if (not image.loadFromData(bytes(reply.content()))
+                or image.width() != TILE_SIZE or image.height() != TILE_SIZE):
+            raise _TerrainError('Elevation tile could not be decoded.')
+        return image.convertToFormat(_IMG_RGB32)
 
 
 # ── MTP PowerShell exit codes ─────────────────────────────────────────────
@@ -596,6 +666,10 @@ class FlyPathDialog(QWidget):
 
         # State
         self._hud                = None   # flight-stats card overlaid on the map
+        self._terrain            = _TerrainSampler()  # in-memory DEM, no disk cache
+        self._terrain_warned     = False  # only warn once when elevation is down
+        self._live_elevations    = None   # ground elevations parallel to _live_waypoints
+        self._gen_elevations     = None   # elevations from the last _generate_waypoints
         self._survey_polygon     = None
         self._survey_polygon_crs = None
         self._draw_tool          = None
@@ -999,6 +1073,29 @@ class FlyPathDialog(QWidget):
             'and battery use.')
         form.addRow('', self.crossHatchCheck)
 
+        self.terrainFollowCheck = QCheckBox('Terrain follow')
+        self._tip(self.terrainFollowCheck,
+            'Vary each waypoint height to hold a constant height above ground, '
+            'using free global elevation data sampled on the fly (nothing is '
+            'saved to disk). Full-automatic sets a height at every photo; '
+            'semi-automatic adds waypoints along the flight lines where the '
+            'ground rises or falls by more than the tolerance. It follows the '
+            'bare-earth terrain, not trees or buildings, so keep a safe margin.')
+        form.addRow('', self.terrainFollowCheck)
+
+        self.terrainToleranceSpin = QDoubleSpinBox()
+        self.terrainToleranceSpin.setRange(1.0, 100.0)
+        self.terrainToleranceSpin.setValue(5.0)
+        self.terrainToleranceSpin.setSingleStep(1.0)
+        self.terrainToleranceSpin.setDecimals(0)
+        self.terrainToleranceSpin.setSuffix(' m')
+        self.terrainToleranceSpin.setMaximumWidth(110)
+        self._tip(self.terrainToleranceSpin,
+            'Semi-automatic terrain follow adds a waypoint whenever the ground '
+            'has risen or fallen by more than this since the last waypoint. '
+            'Smaller means tighter terrain following and more waypoints.')
+        form.addRow('Terrain Tolerance', self.terrainToleranceSpin)
+
         return group
 
     def _init_internal_camera_widgets(self):
@@ -1394,6 +1491,8 @@ class FlyPathDialog(QWidget):
         self.speedSpin.valueChanged.connect(self._on_param_changed)
         self.directionSpin.valueChanged.connect(self._on_param_changed)
         self.crossHatchCheck.toggled.connect(self._on_param_changed)
+        self.terrainFollowCheck.toggled.connect(self._on_terrain_toggled)
+        self.terrainToleranceSpin.valueChanged.connect(self._on_param_changed)
         self.splitSpin.valueChanged.connect(self._on_split_changed)
         self.layerCombo.currentIndexChanged.connect(self._on_layer_changed)
         self.featureCombo.currentIndexChanged.connect(self._on_feature_changed)
@@ -1497,6 +1596,41 @@ class FlyPathDialog(QWidget):
         Max Waypoints applies to both modes, so it stays visible."""
         full = self._mission_type() == 'full'
         self.frontOverlapStack.setCurrentIndex(1 if full else 0)
+        # The terrain tolerance only densifies in semi-automatic (full already has
+        # a waypoint per photo); show it when terrain follow is on in semi mode.
+        self._set_row_visible(self._organizer_form, self.terrainToleranceSpin,
+                              self.terrainFollowCheck.isChecked() and not full)
+
+    # ── Terrain follow ────────────────────────────────────────────────────
+
+    def _on_terrain_toggled(self):
+        # Retry a fresh network the next time it is turned on, and re-apply.
+        self._terrain.clear()
+        self._terrain_warned = False
+        self._apply_mission_type_capabilities()
+        self._on_param_changed()
+
+    def _apply_terrain(self, waypoints):
+        """When terrain follow is on, return (waypoints, elevations): the route
+        densified where the ground moves (semi) or sampled as-is (full). Returns
+        (waypoints, None) when off, or on an elevation failure (falls back to a
+        flat mission and warns once)."""
+        if not self.terrainFollowCheck.isChecked() or not waypoints:
+            return waypoints, None
+        try:
+            if self._mission_type() == 'full':
+                return waypoints, sample_elevations(waypoints, self._terrain.sample)
+            return densify_by_terrain(waypoints, self._terrain.sample,
+                                      self.terrainToleranceSpin.value())
+        except _TerrainError as exc:
+            if not self._terrain_warned:
+                self._terrain_warned = True
+                QMessageBox.warning(
+                    self, 'Terrain data unavailable',
+                    f'{exc}\n\nThe mission will use a single flat altitude. '
+                    'Check your internet connection and toggle Terrain Follow '
+                    'again to retry.')
+            return waypoints, None
 
     def _set_destination_rc_enabled(self, enabled):
         """Enable/disable the 'Send to DJI RC' destination item (kept visible,
@@ -2236,6 +2370,9 @@ class FlyPathDialog(QWidget):
             self._hide_hud()
             return
 
+        # Terrain follow: densify the flight lines where the ground moves (semi)
+        # or sample the dense route (full); waypoints/heights follow the terrain.
+        waypoints, self._live_elevations = self._apply_terrain(waypoints)
         self._live_waypoints = waypoints
 
         dist_m     = self._path_length_m(turn_pts)
@@ -2264,7 +2401,8 @@ class FlyPathDialog(QWidget):
         # tracking) the battery estimate until the user sets their own value. In
         # full-auto the waypoint cap can raise the actual count above it, but the
         # spin itself stays the user's minimum. Then split for the preview.
-        max_split = max(1, len(waypoints) - 1) if full else n_lines
+        terrain = self.terrainFollowCheck.isChecked()
+        max_split = max(1, len(waypoints) - 1) if (full or terrain) else n_lines
         self._apply_split_default(max_split, batteries)
         self._live_missions = self._split_missions(waypoints)
         self._refresh_split_part_combo()
@@ -2275,7 +2413,9 @@ class FlyPathDialog(QWidget):
         waypoint count; semi-automatic splits by whole flight lines."""
         n = self.splitSpin.value()
         maxwp = self.maxWaypointsSpin.value()
-        if self._mission_type() == 'full':
+        # Full-auto, or terrain follow (which densifies the lines), splits by
+        # waypoint count; plain semi splits by whole flight lines.
+        if self._mission_type() == 'full' or self.terrainFollowCheck.isChecked():
             return split_by_waypoint_count(waypoints, n, maxwp)
         # Semi: two waypoints per line, plus a shared seam on every mission after
         # the first, so a mission of L lines holds up to 2L + 1 waypoints. Raise
@@ -3202,11 +3342,13 @@ class FlyPathDialog(QWidget):
         except OSError:
             pass
 
-    def _write_mission_kmz(self, filepath, waypoints, mission, create_time_ms=None):
+    def _write_mission_kmz(self, filepath, waypoints, mission, create_time_ms=None,
+                           heights=None):
         """Write the KMZ file using current UI parameter values.
 
         Builds the full MissionSpec; the consumer writer ignores the enterprise
-        fields (polygon, overlaps, direction, margin) and vice versa."""
+        fields (polygon, overlaps, direction, margin) and vice versa. `heights`
+        (terrain follow) is a per-waypoint executeHeight list or None."""
         drone = registry.get(self.droneModelCombo.currentText())
         spec = MissionSpec(
             waypoints=waypoints,
@@ -3223,8 +3365,25 @@ class FlyPathDialog(QWidget):
             direction_deg=self.directionSpin.value(),
             margin_m=self.marginSpin.value(),
             capture_mode=self._mission_type(),
+            heights=heights,
         )
         write_mission(drone, spec, filepath)
+
+    def _missions_with_heights(self, waypoints, elevations):
+        """Split into missions and pair each with its per-waypoint terrain heights
+        (rebased to that mission's own launch point), or None per mission when
+        terrain follow is off. Returns [(waypoints, heights), ...]."""
+        if not elevations or len(elevations) != len(waypoints):
+            return [(part, None) for part in self._split_missions(waypoints)]
+        altitude = self.altitudeSpin.value()
+        triples = [(lon, lat, elev)
+                   for (lon, lat), elev in zip(waypoints, elevations)]
+        out = []
+        for part in self._split_missions(triples):
+            part_wps = [(lon, lat) for lon, lat, _ in part]
+            part_elevs = [elev for _, _, elev in part]
+            out.append((part_wps, heights_above_takeoff(part_elevs, altitude)))
+        return out
 
     def _survey_polygon_wgs84(self):
         """Survey boundary as [(lon, lat), ...] in WGS84, unclosed (DJI drops the
@@ -3297,21 +3456,22 @@ class FlyPathDialog(QWidget):
             self._export_local_enterprise(mission, waypoints)
             return
 
-        missions = self._split_missions(waypoints)
+        missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
 
         if self.destCombo.currentData() == 'rc':
             # The RC replaces one mission slot, so send just the chosen part.
-            if len(missions) > 1:
+            if len(missions_h) > 1:
                 part = self.splitPartCombo.currentData()
                 if part is None:
                     part = 0
-                part_wps = missions[part]
-                part_name = f'{mission} {part + 1} of {len(missions)}'
-                self._export_rc(part_name, part_wps, shot_spacing_m)
+                part_wps, part_heights = missions_h[part]
+                part_name = f'{mission} {part + 1} of {len(missions_h)}'
+                self._export_rc(part_name, part_wps, shot_spacing_m, part_heights)
             else:
-                self._export_rc(mission, waypoints, shot_spacing_m)
+                part_wps, part_heights = missions_h[0]
+                self._export_rc(mission, part_wps, shot_spacing_m, part_heights)
         else:
-            self._export_local(mission, missions)
+            self._export_local(mission, missions_h)
 
     def _export_local_enterprise(self, mission, waypoints):
         """Save a single enterprise (DJI Pilot 2) mapping2d KMZ from the survey
@@ -3359,7 +3519,8 @@ class FlyPathDialog(QWidget):
             self._open_in_explorer(filepath)
 
     def _export_local(self, mission, missions):
-        """Save the mission (or each split mission) as a .kmz in the folder."""
+        """Save the mission (or each split mission) as a .kmz in the folder.
+        `missions` is a list of (waypoints, heights) from _missions_with_heights."""
         folder = self.localFolderEdit.text().strip() or os.path.expanduser('~')
         if not os.path.isdir(folder):
             reply = QMessageBox.question(
@@ -3389,18 +3550,19 @@ class FlyPathDialog(QWidget):
         # One file when unsplit; otherwise name them <base>_1_of_N … so they
         # stay in order and never overwrite one another.
         if n <= 1:
-            targets = [(filepath, missions[0], mission)]
+            wps0, heights0 = missions[0]
+            targets = [(filepath, wps0, mission, heights0)]
         else:
             width = len(str(n))
             targets = []
-            for i, wps in enumerate(missions, start=1):
+            for i, (wps, heights) in enumerate(missions, start=1):
                 path = f'{base}_{str(i).zfill(width)}_of_{n}{ext}'
-                targets.append((path, wps, f'{mission} {i} of {n}'))
+                targets.append((path, wps, f'{mission} {i} of {n}', heights))
 
         written = []
         try:
-            for path, wps, name in targets:
-                self._write_mission_kmz(path, wps, name)
+            for path, wps, name, heights in targets:
+                self._write_mission_kmz(path, wps, name, heights=heights)
                 written.append(path)
         except Exception as exc:
             QMessageBox.critical(self, 'Export Failed', str(exc))
@@ -3409,7 +3571,7 @@ class FlyPathDialog(QWidget):
         QSettings('FlyPath', 'FlyPath').setValue(
             'local_export_dir', os.path.dirname(filepath)
         )
-        total_wp = sum(len(wps) for _, wps, _ in targets)
+        total_wp = sum(len(wps) for _, wps, _, _ in targets)
         if n <= 1:
             saved_text = f'Saved to:\n{written[0]}'
         else:
@@ -3428,7 +3590,7 @@ class FlyPathDialog(QWidget):
         if reply == _MB_YES:
             self._open_in_explorer(written[0])
 
-    def _export_rc(self, mission, waypoints, shot_spacing_m):
+    def _export_rc(self, mission, waypoints, shot_spacing_m, heights=None):
         """Replace the selected mission on the connected RC."""
         target = self.rcMissionCombo.currentData()
         if not target or not self._rc_waypoint_path:
@@ -3452,7 +3614,7 @@ class FlyPathDialog(QWidget):
             # Manually located folder (SD card / mapped drive / local copy):
             # a plain file write, no MTP transfer needed.
             ok, detail = self._export_to_folder_rc(target['uuid'], mission,
-                                                   waypoints, create_ms)
+                                                   waypoints, create_ms, heights)
         else:
             # Auto-detected MTP device path: copy over USB via Windows Shell.
             QApplication.setOverrideCursor(_WaitCursor)
@@ -3462,6 +3624,7 @@ class FlyPathDialog(QWidget):
                 ok, detail = self._export_to_mtp_rc(
                     self._rc_waypoint_path, mission, waypoints, shot_spacing_m,
                     target_uuid=target['uuid'], create_time_ms=create_ms,
+                    heights=heights,
                 )
             finally:
                 QApplication.restoreOverrideCursor()
@@ -3496,7 +3659,8 @@ class FlyPathDialog(QWidget):
         else:
             QMessageBox.critical(self, 'RC Export Failed', detail)
 
-    def _export_to_folder_rc(self, uuid, mission, waypoints, create_time_ms=None):
+    def _export_to_folder_rc(self, uuid, mission, waypoints, create_time_ms=None,
+                             heights=None):
         """Replace a mission inside a real filesystem waypoint folder.
 
         Returns (success: bool, detail: str) matching _export_to_mtp_rc.
@@ -3506,13 +3670,14 @@ class FlyPathDialog(QWidget):
             return False, f'Mission folder not found:\n{folder}'
         kmz = os.path.join(folder, uuid + '.kmz')
         try:
-            self._write_mission_kmz(kmz, waypoints, mission, create_time_ms)
+            self._write_mission_kmz(kmz, waypoints, mission, create_time_ms,
+                                    heights=heights)
         except Exception as exc:
             return False, str(exc)
         return True, uuid
 
     def _export_to_mtp_rc(self, rc_dir, mission, waypoints, shot_spacing_m,
-                          target_uuid=None, create_time_ms=None):
+                          target_uuid=None, create_time_ms=None, heights=None):
         """
         Export the KMZ directly to a DJI RC connected as an MTP device.
 
@@ -3550,7 +3715,8 @@ class FlyPathDialog(QWidget):
 
             tmp_kmz = os.path.join(tmp_dir, uuid_name + '.kmz')
             try:
-                self._write_mission_kmz(tmp_kmz, waypoints, mission, create_time_ms)
+                self._write_mission_kmz(tmp_kmz, waypoints, mission, create_time_ms,
+                                        heights=heights)
             except Exception as exc:
                 return False, f'Could not write KMZ: {exc}'
 
@@ -3711,6 +3877,8 @@ class FlyPathDialog(QWidget):
                 pass
             self._hud.deleteLater()
             self._hud = None
+        # Drop the in-memory DEM tiles.
+        self._terrain.clear()
 
     def closeEvent(self, event):
         self.cleanup()
@@ -3736,9 +3904,11 @@ class FlyPathDialog(QWidget):
 
     def _generate_waypoints(self):
         """
-        Returns (waypoints, shot_spacing_m) or None on failure.
-        waypoints is a list of (lon, lat) turn points only.
+        Returns (waypoints, shot_spacing_m) or None on failure. waypoints is the
+        (lon, lat) list the drone flies; with terrain follow on it is densified
+        and self._gen_elevations holds the parallel ground elevations.
         """
+        self._gen_elevations = None
         drone = self.droneModelCombo.currentText()
         if not registry.has(drone):
             return None
@@ -3769,4 +3939,5 @@ class FlyPathDialog(QWidget):
         except ValueError as exc:
             QMessageBox.warning(self, 'Cannot Generate Grid', str(exc))
             return None
+        waypoints, self._gen_elevations = self._apply_terrain(waypoints)
         return waypoints, shot_spacing_m

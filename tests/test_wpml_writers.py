@@ -95,6 +95,36 @@ def test_waypoints_fly_straight_lines_with_stops():
         assert '<wpml:useStraightLine>0</wpml:useStraightLine>' not in wl
 
 
+# ── Terrain follow (per-waypoint executeHeight) ─────────────────────────────
+
+def test_flat_uses_single_execute_height():
+    drone = registry.get('DJI Mini 4 Pro')
+    path = _write(drone, _spec(altitude_m=100.0))     # heights=None (flat)
+    with zipfile.ZipFile(path) as z:
+        wl = z.read('wpmz/waylines.wpml').decode('utf-8')
+    assert wl.count('<wpml:executeHeight>100.0</wpml:executeHeight>') == len(WPS)
+
+
+def test_terrain_heights_written_per_waypoint():
+    drone = registry.get('DJI Mini 4 Pro')
+    heights = [100.0, 112.5, 130.0, 105.0]            # one per waypoint (len WPS == 4)
+    path = _write(drone, _spec(altitude_m=100.0, heights=heights))
+    with zipfile.ZipFile(path) as z:
+        wl = z.read('wpmz/waylines.wpml').decode('utf-8')
+    for h in heights:
+        assert f'<wpml:executeHeight>{h:.1f}</wpml:executeHeight>' in wl
+    assert '<wpml:executeHeightMode>relativeToStartPoint</wpml:executeHeightMode>' in wl
+
+
+def test_terrain_heights_length_mismatch_raises():
+    drone = registry.get('DJI Mini 4 Pro')
+    try:
+        _write(drone, _spec(heights=[100.0, 110.0]))  # only 2 for 4 waypoints
+        assert False, 'expected ValueError for mismatched heights'
+    except ValueError:
+        pass
+
+
 # ── Full-automatic capture (takePhoto per waypoint) ─────────────────────────
 
 def test_semi_auto_has_no_take_photo():

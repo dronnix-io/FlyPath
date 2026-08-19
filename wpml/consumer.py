@@ -53,9 +53,11 @@ def write(drone, spec, filepath):
                                          spec.speed_ms, exit_on_rc_lost, rc_lost_action)
     template_kml   = _build_template_kml(mission_config, ts_ms, spec.mission_name,
                                          spec.speed_ms, spec.altitude_m, height_mode)
+    if spec.heights is not None and len(spec.heights) != len(spec.waypoints):
+        raise ValueError('Terrain heights do not match the waypoints.')
     waylines_wpml  = _build_waylines_wpml(
         spec.waypoints, spec.altitude_m, spec.speed_ms, height_mode,
-        spec.gimbal_pitch, mission_config, spec.capture_mode
+        spec.gimbal_pitch, mission_config, spec.capture_mode, spec.heights
     )
 
     package_kmz(filepath, [
@@ -114,12 +116,15 @@ def _build_template_kml(mission_config, ts_ms, mission_name,
 
 
 def _build_waylines_wpml(waypoints, altitude_m, speed_ms, height_mode,
-                          gimbal_pitch, mission_config, capture_mode='semi'):
+                          gimbal_pitch, mission_config, capture_mode='semi',
+                          heights=None):
     """waylines.wpml — repeats missionConfig + full Placemark list.
 
     In 'full' capture mode every waypoint also carries a takePhoto action, so
     the drone shoots automatically at each photo location (full-automatic 2D
-    mapping)."""
+    mapping). When `heights` is given (terrain follow) each waypoint uses its own
+    executeHeight instead of the single altitude; heightMode stays relative to
+    the launch point."""
     placemark_blocks = []
     group_id = 1                                     # unique per action group
 
@@ -132,8 +137,9 @@ def _build_waylines_wpml(waypoints, altitude_m, speed_ms, height_mode,
         if capture_mode == 'full':
             action_groups += _take_photo_action_group(group_id=group_id, index=idx)
             group_id += 1
+        wp_height = heights[idx] if heights is not None else altitude_m
         placemark_blocks.append(
-            _placemark(idx, lon, lat, altitude_m, speed_ms,
+            _placemark(idx, lon, lat, wp_height, speed_ms,
                        action_groups, gimbal_pitch)
         )
 
