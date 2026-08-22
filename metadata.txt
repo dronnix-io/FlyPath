@@ -3,8 +3,16 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D orthomosaic mapping directly from QGIS
-version=1.7.0
-changelog=1.7.0 - New Terrain follow option (optional): the drone holds a constant height above
+version=1.7.1
+changelog=1.7.1 - Fixed a crash when the survey area came from a layer whose features are
+    stored as MultiPolygon (the common case for Shapefiles and GeoPackages): FlyPath now reads
+    Polygon and MultiPolygon geometries the same way, so grids generate correctly. Multi-part
+    areas (several disjoint pieces in one feature) are now fully covered in a single mission, and
+    polygons with holes have the holes skipped. The Feature selector no longer looks empty: it
+    always lists the chosen layer's features, automatically selecting the only one when a layer
+    has a single feature, and showing a clear "none" entry when a layer has no features. These
+    fixes behave identically on QGIS 3 (Qt5) and QGIS 4 (Qt6).
+    1.7.0 - New Terrain follow option (optional): the drone holds a constant height above
     the ground by varying each waypoint's height, using free global elevation data (AWS Terrarium
     DEM, no API key). Elevation tiles are fetched into memory only and never written to disk. In
     full-automatic mode every photo waypoint is sampled; in semi-automatic mode a Terrain Tolerance

@@ -864,6 +864,13 @@ class FlyPathDialog(QWidget):
             'when the chosen layer contains more than one feature.')
         self._featureComboRow = form.rowCount()
         form.addRow('Feature', self.featureCombo)
+        # Keep a handle on the row's label so it can be hidden together with the
+        # combo. Qt's QFormLayout does not hide a field's label when the field is
+        # hidden (row-level hiding only arrived in Qt 6.4), which would otherwise
+        # leave an orphaned 'Feature' label with an empty gap on QGIS 3 and 4.
+        self._featureLabel = form.labelForField(self.featureCombo)
+        if self._featureLabel is not None:
+            self._featureLabel.setVisible(False)
 
         self.useSelectionBtn = QPushButton('Use QGIS Selection')
         self.useSelectionBtn.setObjectName('useSelectionBtn')
@@ -1825,16 +1832,14 @@ class FlyPathDialog(QWidget):
             self._disconnect_layer_signals()
             self._connect_layer_signals(layer)
 
-        # Sync Feature combo for multi-feature layers
+        # Sync the Feature combo, then point it at the selected feature
+        self._populate_feature_combo(layer)
         if layer.featureCount() > 1:
-            self._populate_feature_combo(layer)
             feat_idx = self.featureCombo.findData(fid)
             if feat_idx >= 0:
                 self.featureCombo.blockSignals(True)
                 self.featureCombo.setCurrentIndex(feat_idx)
                 self.featureCombo.blockSignals(False)
-        else:
-            self.featureCombo.setVisible(False)
 
         self._set_survey_polygon(feat.geometry(), layer.crs(),
                                  layer_id=layer.id(), fid=fid)
@@ -1845,10 +1850,10 @@ class FlyPathDialog(QWidget):
         layer_id = self.layerCombo.currentData()
         self._disconnect_layer_signals()
 
-        # Reset feature combo
+        # Reset feature combo (hidden, label and all, until a layer is chosen)
         self.featureCombo.blockSignals(True)
         self.featureCombo.clear()
-        self.featureCombo.setVisible(False)
+        self._set_feature_row_visible(False)
         self.featureCombo.blockSignals(False)
 
         if not layer_id:
@@ -1872,56 +1877,82 @@ class FlyPathDialog(QWidget):
         self._connect_layer_signals(layer)
         self._populate_feature_combo(layer)
 
+    def _set_feature_row_visible(self, visible):
+        """Show or hide the Feature combo together with its form label, so no
+        orphaned 'Feature' label is ever left behind."""
+        self.featureCombo.setVisible(visible)
+        if self._featureLabel is not None:
+            self._featureLabel.setVisible(visible)
+
+    def _clear_survey_from_feature(self):
+        """Drop the current survey area and its stats (no feature chosen)."""
+        self._survey_polygon     = None
+        self._survey_polygon_crs = None
+        self.areaLabel.setText('—')
+        self._clear_stats()
+
+    def _feature_label(self, layer, feat, name_field):
+        """Human label for a feature row in the combo."""
+        fid = feat.id()
+        return (f'FID {fid}  ·  {feat[name_field]}'
+                if name_field else f'FID {fid}')
+
     def _populate_feature_combo(self, layer):
-        """Populate (or refresh) the feature combo for the given layer."""
+        """Populate (or refresh) the feature combo for the given layer.
+
+        The combo is always shown while a layer is selected:
+          0 features  -> a single '— none —' entry, no survey area
+          1 feature   -> that feature, auto-selected as the survey area
+          >1 features -> a picker, prompting the user to choose one
+        """
         layer_id = layer.id()
 
-        # Remember current selection to restore it after refresh
+        # Remember current selection to restore it after a refresh
         prev_fid = self.featureCombo.currentData()
 
+        self._set_feature_row_visible(True)
         self.featureCombo.blockSignals(True)
         self.featureCombo.clear()
 
         count = layer.featureCount()
 
+        # 0 (or unknown-and-empty): show a None entry, no survey area
         if count == 0:
-            self.featureCombo.setVisible(False)
+            self.featureCombo.addItem('— none —', None)
+            self.featureCombo.setCurrentIndex(0)
             self.featureCombo.blockSignals(False)
-            self._survey_polygon     = None
-            self._survey_polygon_crs = None
-            self.areaLabel.setText('—')
-            self._clear_stats()
+            self._clear_survey_from_feature()
             return
 
+        name_field = self._guess_name_field(layer)
+
+        # Exactly one feature: list it and select it automatically
         if count == 1:
-            self.featureCombo.setVisible(False)
-            self.featureCombo.blockSignals(False)
             feat = next(layer.getFeatures())
+            self.featureCombo.addItem(self._feature_label(layer, feat, name_field),
+                                      feat.id())
+            self.featureCombo.setCurrentIndex(0)
+            self.featureCombo.blockSignals(False)
             self._set_survey_polygon(feat.geometry(), layer.crs(),
                                      layer_id=layer_id, fid=feat.id())
-        else:
-            self.featureCombo.addItem('— select a feature —', None)
-            name_field = self._guess_name_field(layer)
-            for feat in layer.getFeatures():
-                fid   = feat.id()
-                label = (f'FID {fid}  —  {feat[name_field]}'
-                         if name_field else f'FID {fid}')
-                self.featureCombo.addItem(label, fid)
-            self.featureCombo.setVisible(True)
+            return
 
-            # Restore previous selection if the feature still exists
-            idx = self.featureCombo.findData(prev_fid)
-            if idx >= 0:
-                self.featureCombo.setCurrentIndex(idx)
-            else:
-                # Previously selected feature was deleted — reset survey area
-                self.featureCombo.setCurrentIndex(0)
-                self._survey_polygon     = None
-                self._survey_polygon_crs = None
-                self.areaLabel.setText('—')
-                self._clear_stats()
+        # Several features: prompt the user to pick one
+        self.featureCombo.addItem('— select a feature —', None)
+        for feat in layer.getFeatures():
+            self.featureCombo.addItem(self._feature_label(layer, feat, name_field),
+                                      feat.id())
 
+        # Restore previous selection if that feature still exists
+        idx = self.featureCombo.findData(prev_fid)
+        if idx >= 0:
+            self.featureCombo.setCurrentIndex(idx)
             self.featureCombo.blockSignals(False)
+        else:
+            # Previously selected feature was deleted — reset survey area
+            self.featureCombo.setCurrentIndex(0)
+            self.featureCombo.blockSignals(False)
+            self._clear_survey_from_feature()
 
     def _connect_layer_signals(self, layer):
         """Connect to a layer's edit signals to keep the feature combo in sync."""
@@ -3421,8 +3452,16 @@ class FlyPathDialog(QWidget):
                                        QgsProject.instance())
         g = QgsGeometry(self._survey_polygon)
         g.transform(xform)
-        ring = g.asPolygon()[0] if g.asPolygon() else (
-            g.asMultiPolygon()[0][0] if g.asMultiPolygon() else None)
+        # asPolygon()/asMultiPolygon() raise TypeError on the wrong geometry
+        # type in PyQGIS (both QGIS 3 and 4), so branch on isMultipart(). For a
+        # multi-part area this returns the first part's outer ring, which is all
+        # this boundary hint needs.
+        if g.isMultipart():
+            parts = g.asMultiPolygon()
+            ring = parts[0][0] if parts and parts[0] else None
+        else:
+            poly = g.asPolygon()
+            ring = poly[0] if poly else None
         if not ring:
             return None
         coords = [(pt.x(), pt.y()) for pt in ring]

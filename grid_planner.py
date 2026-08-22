@@ -106,19 +106,18 @@ def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
     line_spacing = max(footprint_across * (1.0 - side_overlap), 0.5)
     shot_spacing = max(shot_spacing_m, 0.5)
 
-    # 6 ── Rotate polygon so the flight direction aligns with +Y
+    # 6 ── Rotate polygon so the flight direction aligns with +Y. Rotating the
+    #      whole geometry (every part and every hole) keeps multi-part survey
+    #      areas and interior holes intact, so the scan-line clip below covers
+    #      all parts and skips holes. Handles Polygon and MultiPolygon the same
+    #      way on QGIS 3 (Qt5) and QGIS 4 (Qt6).
     centroid_utm = poly_utm.centroid().asPoint()
     cx, cy = centroid_utm.x(), centroid_utm.y()
     angle_rad = math.radians(direction_deg)
 
-    exterior = _exterior_ring(poly_utm)
-    if not exterior:
+    rotated_poly = _rotate_polygon(poly_utm, cx, cy, -angle_rad)
+    if rotated_poly is None or rotated_poly.isEmpty():
         raise ValueError('Survey polygon has no exterior ring — check the polygon geometry.')
-
-    rot_pts = [_rotate(pt.x(), pt.y(), cx, cy, -angle_rad) for pt in exterior]
-    rotated_poly = QgsGeometry.fromPolygonXY(
-        [[QgsPointXY(x, y) for x, y in rot_pts]]
-    )
 
     bbox = rotated_poly.boundingBox()
     x_start = bbox.xMinimum()
@@ -349,17 +348,40 @@ def _rotate(x, y, cx, cy, angle_rad):
             cy + dx * sin_a + dy * cos_a)
 
 
-def _exterior_ring(geom):
-    """Return the exterior ring of a polygon geometry as a list of QgsPointXY, or None."""
+def _polygon_parts(geom):
+    """Return a geometry's polygon parts as [[ring, hole, ...], ...] where every
+    ring is a list of QgsPointXY. Works for both Polygon and MultiPolygon,
+    identically on QGIS 3 (Qt5) and QGIS 4 (Qt6).
+
+    PyQGIS raises TypeError when asPolygon() is called on a MultiPolygon (and
+    asMultiPolygon() on a Polygon), on both QGIS 3 and 4, so branch on
+    isMultipart() rather than probing a return value."""
     if geom is None or geom.isEmpty():
-        return None
+        return []
+    if geom.isMultipart():
+        return [part for part in geom.asMultiPolygon() if part]
     poly = geom.asPolygon()
-    if poly:
-        return poly[0]
-    multi = geom.asMultiPolygon()
-    if multi and multi[0]:
-        return multi[0][0]
-    return None
+    return [poly] if poly else []
+
+
+def _rotate_polygon(geom, cx, cy, angle_rad):
+    """Rotate every ring of every polygon part of geom around (cx, cy). Returns a
+    QgsGeometry (Polygon when there is one part, MultiPolygon when there are
+    several), preserving parts and holes, or None when geom has no polygon
+    rings."""
+    rot_parts = []
+    for part in _polygon_parts(geom):
+        rot_rings = [
+            [QgsPointXY(*_rotate(pt.x(), pt.y(), cx, cy, angle_rad)) for pt in ring]
+            for ring in part
+        ]
+        if rot_rings and rot_rings[0]:
+            rot_parts.append(rot_rings)
+    if not rot_parts:
+        return None
+    if len(rot_parts) == 1:
+        return QgsGeometry.fromPolygonXY(rot_parts[0])
+    return QgsGeometry.fromMultiPolygonXY(rot_parts)
 
 
 def _line_segments(geom):
