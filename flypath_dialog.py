@@ -94,11 +94,13 @@ from qgis.core import (
     QgsDistanceArea,
     QgsNetworkAccessManager,
 )
-from .map_tools import PolygonDrawTool
+from .map_tools import PolygonDrawTool, LineDrawTool, VertexPickTool
 from .grid_planner import (
     generate_flight_grid, find_optimal_direction, split_waypoints
 )
 from .grid_route import split_by_waypoint_count
+from .corridor_planner import generate_corridor_route
+from .corridor_geometry import compute_pass_offsets
 from .terrain import (
     TERRARIUM_URL, ZOOM, TILE_SIZE, tile_coords, elevation_from_rgb,
     sample_elevations, densify_by_terrain, heights_above_takeoff,
@@ -108,8 +110,19 @@ from .hardware import registry
 
 try:
     _PolygonGeometry = QgsWkbTypes.GeometryType.PolygonGeometry
+    _LineGeometry    = QgsWkbTypes.GeometryType.LineGeometry
 except AttributeError:
     _PolygonGeometry = getattr(QgsWkbTypes, 'PolygonGeometry')
+    _LineGeometry    = getattr(QgsWkbTypes, 'LineGeometry')
+
+# Buffer style for the illustrative corridor band: rounded ends, mitred corners
+# (sharp, matching the centre line's angles) rather than rounded corners.
+try:
+    _BAND_CAP_ROUND  = Qgis.EndCapStyle.Round
+    _BAND_JOIN_MITER = Qgis.JoinStyle.Miter
+except AttributeError:                       # pragma: no cover - older QGIS
+    _BAND_CAP_ROUND  = getattr(Qgis, 'EndCapStyleRound', 1)
+    _BAND_JOIN_MITER = getattr(Qgis, 'JoinStyleMiter', 2)
 
 
 class _TerrainError(Exception):
@@ -674,6 +687,13 @@ class FlyPathDialog(QWidget):
         self._gen_elevations     = None   # elevations from the last _generate_waypoints
         self._survey_polygon     = None
         self._survey_polygon_crs = None
+        self._survey_line        = None   # corridor centre line (Corridor Mapping)
+        self._survey_line_crs    = None
+        self._corridor_band_layer_id = None  # illustrative buffered-corridor overlay
+        self._corridor_breaks    = set()  # {(part_idx, vert_idx)} mission-break vertices
+        self._break_layer_id     = None   # markers for the chosen break vertices
+        self._break_tool         = None   # active vertex-pick map tool
+        self._current_kind       = '2d'   # tracks Mission Type for kind switches
         self._draw_tool          = None
         self._selected_layer_id  = None   # layer carrying the current map selection
         self._monitored_layer_id = None   # layer whose edit signals we're connected to
@@ -798,10 +818,11 @@ class FlyPathDialog(QWidget):
 
         self.missionTypeCombo = QComboBox()
         self.missionTypeCombo.addItem('2D Mapping')
+        self.missionTypeCombo.addItem('Corridor Mapping')
         self._tip(self.missionTypeCombo,
-            'The kind of mission to plan. 2D Mapping flies a grid over the '
-            'survey area for orthomosaic mapping. More mission types will be '
-            'added here.')
+            'The kind of mission to plan. 2D Mapping flies a grid over a survey '
+            'polygon. Corridor Mapping follows a centre line (roads, pipelines, '
+            'rivers) and covers a buffer each side. More types will be added.')
         form.addRow('Mission Type', self.missionTypeCombo)
 
         # Capture mode for mapping missions: how the camera is triggered.
@@ -847,6 +868,7 @@ class FlyPathDialog(QWidget):
     def _build_area_group(self):
         group = QGroupBox('Survey Area')
         form  = QFormLayout(group)
+        self._area_form = form   # kept so corridor mode can relabel the Area row
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
 
@@ -1026,6 +1048,7 @@ class FlyPathDialog(QWidget):
 
         dir_layout.addWidget(self.directionSpin)
         dir_layout.addWidget(self.autoDirectionBtn)
+        self._dirRow = dir_widget   # kept so corridor mode can hide the row
         form.addRow('Direction', dir_widget)
 
         self.marginSpin = QDoubleSpinBox()
@@ -1039,6 +1062,21 @@ class FlyPathDialog(QWidget):
             'Ensures full photo coverage at the edges. '
             'Typically 0–50 m depending on altitude and terrain.')
         form.addRow('Margin', self.marginSpin)
+
+        # Corridor Mapping only: half-width covered each side of the centre line.
+        # Hidden in 2D Mapping (shown in place of Direction/Margin for corridors).
+        self.bufferSpin = QDoubleSpinBox()
+        self.bufferSpin.setRange(1.0, 500.0)
+        self.bufferSpin.setValue(10.0)
+        self.bufferSpin.setSingleStep(1.0)
+        self.bufferSpin.setDecimals(1)
+        self.bufferSpin.setSuffix(' m')
+        self._tip(self.bufferSpin,
+            'Corridor half-width: how far to map on EACH side of the centre '
+            'line (total mapped width is twice this). FlyPath adds parallel '
+            'passes automatically to cover it at the current altitude/overlap.')
+        form.addRow('Buffer', self.bufferSpin)
+        self._set_row_visible(form, self.bufferSpin, False)
 
         return group
 
@@ -1073,6 +1111,20 @@ class FlyPathDialog(QWidget):
             'Full-automatic places one waypoint per photo; semi-automatic uses '
             'two per flight line. Lower it for shorter, more manageable missions.')
         form.addRow('Max Waypoints', self.maxWaypointsSpin)
+
+        # Corridor only: place mission breaks on centre-line vertices. Combines
+        # with Min Flights (an automatic split by line) and the Max Waypoints cap.
+        self.setBreaksBtn = QPushButton('Set Mission Breaks')
+        self.setBreaksBtn.setObjectName('setBreaksBtn')
+        self.setBreaksBtn.setCheckable(True)
+        self._tip(self.setBreaksBtn,
+            'Corridor only. Click a centre-line vertex to break the mission there '
+            '(click again to remove it). Breaks combine with Min Flights (an '
+            'automatic split by line) and the Max Waypoints cap.')
+        form.addRow('', self.setBreaksBtn)
+        # Corridor-only control: hidden on load (2D Mapping is the default);
+        # _apply_corridor_layout reveals it when Corridor Mapping is selected.
+        self._set_row_visible(form, self.setBreaksBtn, False)
 
         self.crossHatchCheck = QCheckBox('Cross-hatch')
         self._tip(self.crossHatchCheck,
@@ -1467,6 +1519,9 @@ class FlyPathDialog(QWidget):
         self._refresh_layer_combo()
 
     def _refresh_layer_combo(self, _=None):
+        # Corridor Mapping needs line layers; 2D Mapping needs polygon layers.
+        target_geom = (_LineGeometry if self._mission_kind() == 'corridor'
+                       else _PolygonGeometry)
         previously_selected = self.layerCombo.currentData()
         self.layerCombo.blockSignals(True)
         self.layerCombo.clear()
@@ -1474,7 +1529,7 @@ class FlyPathDialog(QWidget):
         for layer in QgsProject.instance().mapLayers().values():
             if (hasattr(layer, 'wkbType') and
                     QgsWkbTypes.geometryType(layer.wkbType()) ==
-                    _PolygonGeometry and
+                    target_geom and
                     not layer.customProperty('flypath_internal')):
                 self.layerCombo.addItem(layer.name(), layer.id())
         # Restore previous selection if the layer still exists
@@ -1499,6 +1554,8 @@ class FlyPathDialog(QWidget):
         self.sideOverlapSpin.valueChanged.connect(self._on_param_changed)
         self.speedSpin.valueChanged.connect(self._on_param_changed)
         self.directionSpin.valueChanged.connect(self._on_param_changed)
+        self.bufferSpin.valueChanged.connect(self._on_param_changed)
+        self.setBreaksBtn.toggled.connect(self._on_set_breaks_toggled)
         self.crossHatchCheck.toggled.connect(self._on_param_changed)
         self.terrainFollowCheck.toggled.connect(self._on_terrain_toggled)
         self.terrainToleranceSpin.valueChanged.connect(self._on_param_changed)
@@ -1585,9 +1642,221 @@ class FlyPathDialog(QWidget):
         """'full' for full-automatic capture (a waypoint per photo), else 'semi'."""
         return 'full' if self.captureFullRadio.isChecked() else 'semi'
 
+    def _mission_kind(self):
+        """'corridor' for Corridor Mapping, else '2d' (the default 2D grid)."""
+        return ('corridor'
+                if self.missionTypeCombo.currentText() == 'Corridor Mapping'
+                else '2d')
+
     def _on_mission_type_changed(self):
+        # This also fires on the semi/full capture toggle, so only reset the
+        # survey area when the top-level mission KIND actually changes.
+        kind = self._mission_kind()
+        if kind != self._current_kind:
+            self._current_kind = kind
+            self._apply_corridor_layout()
         self._apply_mission_type_capabilities()
         self._on_param_changed()
+
+    def _draw_btn_default_text(self):
+        return ('Draw Line on Map' if self._mission_kind() == 'corridor'
+                else 'Draw Polygon on Map')
+
+    def _apply_corridor_layout(self):
+        """Reconfigure the panel for the selected mission kind. Corridor Mapping
+        swaps the polygon survey area for a line + buffer, hides Direction/Auto
+        and Cross-hatch, and reports corridor length instead of area. 2D Mapping
+        is restored to its original layout, unchanged."""
+        corridor = self._mission_kind() == 'corridor'
+
+        # Flight Parameters: Direction/Margin (2D) vs Buffer (corridor)
+        self._set_row_visible(self._flight_form, self._dirRow, not corridor)
+        self._set_row_visible(self._flight_form, self.marginSpin, not corridor)
+        self._set_row_visible(self._flight_form, self.bufferSpin, corridor)
+
+        # Adv. Mission Organizers: cross-hatch is meaningless for a corridor; the
+        # Mission Breaks tool only applies to corridors. Split Missions is a
+        # minimum-flight count in both modes; corridor labels it 'Min Flights'.
+        self._set_row_visible(self._organizer_form, self.crossHatchCheck,
+                              not corridor)
+        self._set_row_visible(self._organizer_form, self.setBreaksBtn, corridor)
+        split_lbl = self._organizer_form.labelForField(self.splitSpin)
+        if split_lbl is not None:
+            split_lbl.setText('Min Flights' if corridor else 'Split Missions')
+        if not corridor and self.setBreaksBtn.isChecked():
+            self.setBreaksBtn.setChecked(False)   # leaving corridor turns the tool off
+
+        # Survey Area group: relabel the read-out row and the draw button
+        lbl = self._area_form.labelForField(self.areaLabel)
+        if lbl is not None:
+            lbl.setText('Length' if corridor else 'Area')
+        self.areaLabel.setToolTip('Total length of the corridor centre line.'
+                                  if corridor
+                                  else 'Total area of the survey polygon in hectares.')
+        self.drawPolygonBtn.setText(self._draw_btn_default_text())
+        self.layerCombo.setToolTip(
+            'Select a line layer for the corridor centre line. Only line layers '
+            'are listed.' if corridor else
+            'Select a polygon layer from the QGIS project. Only polygon layers '
+            'are listed.')
+
+        # A polygon is not valid input for a corridor (and vice versa): reset the
+        # survey area, then repopulate the layer list for the new geometry type.
+        self._on_clear_preview(reset_area=True)
+        self._refresh_layer_combo()
+
+    # ── Corridor mission breaks (manual line grouping) ────────────────────
+
+    def _on_set_breaks_toggled(self, checked):
+        """Activate/deactivate the vertex-pick tool for placing mission breaks."""
+        if checked:
+            if self._survey_line is None:
+                QMessageBox.information(
+                    self, 'No Corridor',
+                    'Draw or select a corridor centre line first, then place '
+                    'mission breaks on its vertices.')
+                self.setBreaksBtn.setChecked(False)
+                return
+            canvas = self.iface.mapCanvas()
+            self._prev_map_tool = canvas.mapTool()
+            self._break_tool = VertexPickTool(canvas)
+            self._break_tool.set_targets(self._break_targets())   # snap to vertices
+            self._break_tool.point_picked.connect(self._on_break_point_picked)
+            self._break_tool.finished.connect(
+                lambda: self.setBreaksBtn.setChecked(False))
+            canvas.setMapTool(self._break_tool)
+            self.setBreaksBtn.setText('Setting breaks…  (click vertices, Esc to finish)')
+            self.infoBar.setText(
+                'Click a centre-line vertex to break the mission there; click it '
+                'again to remove the break. Press Escape when done.')
+        else:
+            self._leave_break_tool()
+
+    def _leave_break_tool(self):
+        canvas = self.iface.mapCanvas()
+        current = canvas.mapTool()
+        if self._prev_map_tool is not None:
+            canvas.setMapTool(self._prev_map_tool)
+            self._prev_map_tool = None
+        elif isinstance(current, VertexPickTool):
+            canvas.unsetMapTool(current)
+        self._break_tool = None
+        self.setBreaksBtn.setText('Set Mission Breaks')
+        self.infoBar.setText(_INFO_IDLE)
+
+    def _corridor_line_parts(self):
+        """Centre-line parts as lists of QgsPointXY, in the line's own CRS."""
+        g = self._survey_line
+        if g is None:
+            return []
+        if g.isMultipart():
+            return [list(part) for part in g.asMultiPolyline()]
+        return [list(g.asPolyline())]
+
+    def _break_targets(self):
+        """Interior centre-line vertices as QgsPointXY in the canvas map CRS, for
+        the pick tool to snap to. Endpoints are excluded (a part already
+        starts/ends a mission)."""
+        if self._survey_line is None:
+            return []
+        to_map = QgsCoordinateTransform(
+            self._survey_line_crs,
+            self.iface.mapCanvas().mapSettings().destinationCrs(),
+            QgsProject.instance())
+        return [to_map.transform(verts[vi])
+                for verts in self._corridor_line_parts()
+                for vi in range(1, len(verts) - 1)]
+
+    def _nearest_break_vertex(self, map_pt, tol_px=16):
+        """Return (part_idx, vert_idx) of the centre-line vertex nearest to a map
+        point, or None if none is within tol_px pixels. Endpoints of a part are
+        excluded (a part already starts/ends a mission)."""
+        if self._survey_line is None:
+            return None
+        canvas = self.iface.mapCanvas()
+        to_map = QgsCoordinateTransform(self._survey_line_crs,
+                                        canvas.mapSettings().destinationCrs(),
+                                        QgsProject.instance())
+        mupp = canvas.mapUnitsPerPixel() or 1e-9
+        tol_map = tol_px * mupp
+        best = None
+        best_d = tol_map
+        for pi, verts in enumerate(self._corridor_line_parts()):
+            for vi in range(1, len(verts) - 1):        # interior vertices only
+                p = to_map.transform(verts[vi])
+                d = math.hypot(p.x() - map_pt.x(), p.y() - map_pt.y())
+                if d <= best_d:
+                    best_d = d
+                    best = (pi, vi)
+        return best
+
+    def _on_break_point_picked(self, map_pt):
+        hit = self._nearest_break_vertex(map_pt)
+        if hit is None:
+            return
+        if hit in self._corridor_breaks:
+            self._corridor_breaks.discard(hit)
+        else:
+            self._corridor_breaks.add(hit)
+        self._redraw_break_markers()
+        self._update_stats()      # recount missions
+        self._sync_preview()      # recolour the preview if one is shown
+
+    def _clear_breaks(self):
+        """Forget all mission breaks and remove their markers."""
+        self._corridor_breaks = set()
+        if self._break_layer_id:
+            if QgsProject.instance().mapLayer(self._break_layer_id):
+                QgsProject.instance().removeMapLayer(self._break_layer_id)
+            self._break_layer_id = None
+
+    def _redraw_break_markers(self):
+        """(Re)draw the break vertices as a styled point layer."""
+        if self._break_layer_id:
+            if QgsProject.instance().mapLayer(self._break_layer_id):
+                QgsProject.instance().removeMapLayer(self._break_layer_id)
+            self._break_layer_id = None
+        if not self._corridor_breaks or self._survey_line is None:
+            return
+        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
+        to_wgs = QgsCoordinateTransform(self._survey_line_crs, wgs84,
+                                        QgsProject.instance())
+        parts = self._corridor_line_parts()
+        layer = QgsVectorLayer('Point?crs=EPSG:4326',
+                               'FlyPath — Mission Breaks', 'memory')
+        layer.setCustomProperty('flypath_internal', True)
+        feats = []
+        for (pi, vi) in self._corridor_breaks:
+            if pi < len(parts) and vi < len(parts[pi]):
+                p = to_wgs.transform(parts[pi][vi])
+                f = QgsFeature()
+                f.setGeometry(QgsGeometry.fromPointXY(p))
+                feats.append(f)
+        layer.dataProvider().addFeatures(feats)
+        symbol = QgsMarkerSymbol.createSimple({
+            'name': 'circle', 'color': '#FFD400',
+            'outline_color': '#000000', 'outline_width': '0.4', 'size': '4.5',
+        })
+        layer.renderer().setSymbol(symbol)
+        QgsProject.instance().addMapLayer(layer)
+        self._break_layer_id = layer.id()
+
+    def _corridor_sublines(self):
+        """Split the centre line into sub-lines at the break vertices and part
+        boundaries. Adjacent sub-lines share the break vertex so coverage is
+        continuous. Returns a list of QgsGeometry LineStrings."""
+        sublines = []
+        for pi, verts in enumerate(self._corridor_line_parts()):
+            if len(verts) < 2:
+                continue
+            cuts = sorted(vi for (p, vi) in self._corridor_breaks
+                          if p == pi and 0 < vi < len(verts) - 1)
+            bounds = [0] + cuts + [len(verts) - 1]
+            for a, b in zip(bounds, bounds[1:]):
+                sub = verts[a:b + 1]                 # inclusive; shares the break
+                if len(sub) >= 2:
+                    sublines.append(QgsGeometry.fromPolylineXY(sub))
+        return sublines
 
     @staticmethod
     def _set_row_visible(form, widget, visible):
@@ -1777,20 +2046,24 @@ class FlyPathDialog(QWidget):
 
     def _on_use_qgis_selection(self):
         """
-        Inspect the current QGIS selection across all non-internal polygon
-        layers and adopt it as the FlyPath survey polygon.
+        Inspect the current QGIS selection across all non-internal layers of the
+        geometry type this mission kind needs (polygon for 2D Mapping, line for
+        Corridor Mapping) and adopt the single selected feature.
 
         Rules:
           0 selected features total → error
           > 1 selected features total → error
-          exactly 1 selected feature  → sync Layer/Feature combos + survey polygon
+          exactly 1 selected feature  → sync Layer/Feature combos + survey area
         """
+        corridor = self._mission_kind() == 'corridor'
+        target_geom = _LineGeometry if corridor else _PolygonGeometry
+        noun = 'line' if corridor else 'polygon'
         candidates = []
         for layer in QgsProject.instance().mapLayers().values():
             if (not hasattr(layer, 'wkbType') or
                     layer.customProperty('flypath_internal') or
                     QgsWkbTypes.geometryType(layer.wkbType()) !=
-                    _PolygonGeometry):
+                    target_geom):
                 continue
             for fid in layer.selectedFeatureIds():
                 candidates.append((layer, fid))
@@ -1798,24 +2071,24 @@ class FlyPathDialog(QWidget):
         if len(candidates) == 0:
             QMessageBox.information(
                 self, 'Nothing Selected',
-                'No polygon is selected in QGIS.\n\n'
-                'Select a single polygon with the QGIS selection tool and try again.'
+                f'No {noun} is selected in QGIS.\n\n'
+                f'Select a single {noun} with the QGIS selection tool and try again.'
             )
             return
 
         if len(candidates) > 1:
             QMessageBox.warning(
-                self, 'Multiple Polygons Selected',
-                f'{len(candidates)} polygons are selected across one or more layers.\n\n'
-                'FlyPath supports one survey polygon at a time.\n'
-                'Select exactly one polygon and try again.'
+                self, f'Multiple {noun.capitalize()}s Selected',
+                f'{len(candidates)} {noun}s are selected across one or more layers.\n\n'
+                f'FlyPath supports one survey {noun} at a time.\n'
+                f'Select exactly one {noun} and try again.'
             )
             return
 
         layer, fid = candidates[0]
         feat = next(layer.getFeatures([fid]))
 
-        # Remove any active drawn polygon
+        # Remove any active drawn geometry
         if self._survey_area_layer_id:
             self._on_remove_drawn_polygon()
 
@@ -1841,8 +2114,8 @@ class FlyPathDialog(QWidget):
                 self.featureCombo.setCurrentIndex(feat_idx)
                 self.featureCombo.blockSignals(False)
 
-        self._set_survey_polygon(feat.geometry(), layer.crs(),
-                                 layer_id=layer.id(), fid=fid)
+        self._set_survey_geometry(feat.geometry(), layer.crs(),
+                                  layer_id=layer.id(), fid=fid)
 
     # ── Survey area ───────────────────────────────────────────────────────
 
@@ -1888,6 +2161,8 @@ class FlyPathDialog(QWidget):
         """Drop the current survey area and its stats (no feature chosen)."""
         self._survey_polygon     = None
         self._survey_polygon_crs = None
+        self._survey_line        = None
+        self._survey_line_crs    = None
         self.areaLabel.setText('—')
         self._clear_stats()
 
@@ -1933,8 +2208,8 @@ class FlyPathDialog(QWidget):
                                       feat.id())
             self.featureCombo.setCurrentIndex(0)
             self.featureCombo.blockSignals(False)
-            self._set_survey_polygon(feat.geometry(), layer.crs(),
-                                     layer_id=layer_id, fid=feat.id())
+            self._set_survey_geometry(feat.geometry(), layer.crs(),
+                                      layer_id=layer_id, fid=feat.id())
             return
 
         # Several features: prompt the user to pick one
@@ -1992,6 +2267,8 @@ class FlyPathDialog(QWidget):
             self._clear_layer_selection()
             self._survey_polygon     = None
             self._survey_polygon_crs = None
+            self._survey_line        = None
+            self._survey_line_crs    = None
             self._on_clear_preview(reset_area=False)
             self._clear_stats()
             return
@@ -2002,8 +2279,47 @@ class FlyPathDialog(QWidget):
         feats = list(layer.getFeatures([fid]))
         if not feats:
             return
-        self._set_survey_polygon(feats[0].geometry(), layer.crs(),
-                                 layer_id=layer_id, fid=fid)
+        self._set_survey_geometry(feats[0].geometry(), layer.crs(),
+                                  layer_id=layer_id, fid=fid)
+
+    def _set_survey_geometry(self, geom, crs, layer_id=None, fid=None):
+        """Dispatch a chosen feature to the polygon (2D) or line (corridor)
+        survey-area setter based on the current mission kind."""
+        if self._mission_kind() == 'corridor':
+            self._set_survey_line(geom, crs, layer_id=layer_id, fid=fid)
+        else:
+            self._set_survey_polygon(geom, crs, layer_id=layer_id, fid=fid)
+
+    def _set_survey_line(self, geom, crs, layer_id=None, fid=None):
+        """Adopt a line feature as the corridor centre line and show its length."""
+        self._on_clear_preview(reset_area=False)   # clear old flight path
+        self._clear_layer_selection()
+        self._clear_breaks()                       # break indices belonged to the old line
+        self._survey_line     = geom
+        self._survey_line_crs = crs
+        if layer_id and fid is not None:
+            layer = QgsProject.instance().mapLayer(layer_id)
+            if layer:
+                self._syncing_selection = True
+                layer.selectByIds([fid])
+                self._syncing_selection = False
+                self._selected_layer_id = layer_id
+                self.iface.mapCanvas().refresh()
+        # _update_stats (corridor branch) refreshes the length read-out.
+        self._update_stats()
+
+    def _corridor_length_text(self):
+        """Corridor centre-line length as a friendly 'x.xx km' / 'x m' string."""
+        if self._survey_line is None or self._survey_line_crs is None:
+            return '—'
+        da = QgsDistanceArea()
+        da.setSourceCrs(self._survey_line_crs,
+                        QgsProject.instance().transformContext())
+        da.setEllipsoid('WGS84')
+        length_m = da.measureLength(self._survey_line)
+        if length_m >= 1000.0:
+            return f'{length_m / 1000.0:.2f} km'
+        return f'{length_m:.0f} m'
 
     def _set_survey_polygon(self, geom, crs, layer_id=None, fid=None):
         self._on_clear_preview(reset_area=False)   # clear old flight path
@@ -2053,6 +2369,10 @@ class FlyPathDialog(QWidget):
         return None
 
     def _on_draw_polygon(self, checked):
+        # The single Draw button switches tool by mission kind.
+        if self._mission_kind() == 'corridor':
+            self._on_draw_line(checked)
+            return
         if checked:
             if self._survey_polygon is not None:
                 reply = QMessageBox.question(
@@ -2098,7 +2418,7 @@ class FlyPathDialog(QWidget):
         if self._prev_map_tool is not None:
             canvas.setMapTool(self._prev_map_tool)
             self._prev_map_tool = None
-        elif isinstance(current, PolygonDrawTool):
+        elif isinstance(current, (PolygonDrawTool, LineDrawTool)):
             # No earlier tool to fall back to (the canvas had none when Draw
             # started); clear ours so the cursor returns to the default arrow.
             canvas.unsetMapTool(current)
@@ -2148,8 +2468,145 @@ class FlyPathDialog(QWidget):
         self.removePolygonBtn.setVisible(True)
         self.iface.mapCanvas().refresh()
 
+    # ── Corridor centre-line drawing ──────────────────────────────────────
+
+    def _on_draw_line(self, checked):
+        """Draw the corridor centre line (mirrors the polygon draw flow)."""
+        if checked:
+            if self._survey_line is not None:
+                reply = QMessageBox.question(
+                    self, 'Replace Corridor?',
+                    'A corridor centre line is already defined.\n\n'
+                    'Do you want to discard it and draw a new line?',
+                    _MB_YES | _MB_NO,
+                    _MB_NO,
+                )
+                if reply != _MB_YES:
+                    self.drawPolygonBtn.setChecked(False)
+                    return
+                self._on_clear_preview(reset_area=True)
+
+            # Reset layer / feature selection — a drawn line is standalone
+            self._disconnect_layer_signals()
+            self._clear_layer_selection()
+            self.layerCombo.blockSignals(True)
+            self.layerCombo.setCurrentIndex(0)
+            self.layerCombo.blockSignals(False)
+            self.featureCombo.blockSignals(True)
+            self.featureCombo.clear()
+            self._set_feature_row_visible(False)
+            self.featureCombo.blockSignals(False)
+
+            canvas = self.iface.mapCanvas()
+            self._prev_map_tool = canvas.mapTool()
+            self._draw_tool = LineDrawTool(canvas)
+            self._draw_tool.line_completed.connect(self._on_line_drawn)
+            self._draw_tool.drawing_cancelled.connect(self._on_drawing_cancelled)
+            canvas.setMapTool(self._draw_tool)
+            self.drawPolygonBtn.setText('Drawing…  (right-click or double-click to finish)')
+        else:
+            self._cancel_draw_tool()
+
+    def _on_line_drawn(self, geom):
+        self.drawPolygonBtn.setChecked(False)
+        self.drawPolygonBtn.setText(self._draw_btn_default_text())
+        self._leave_draw_tool()
+        crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+        self._show_drawn_line(geom, crs)
+        self._set_survey_line(geom, crs)
+
+    def _show_drawn_line(self, geom, crs):
+        """Add the drawn corridor centre line as a styled temporary layer."""
+        self._remove_survey_area_layer()
+
+        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
+        xform = QgsCoordinateTransform(crs, wgs84, QgsProject.instance())
+        g = QgsGeometry(geom)
+        g.transform(xform)
+
+        layer = QgsVectorLayer('LineString?crs=EPSG:4326',
+                               'FlyPath — Corridor Centre Line', 'memory')
+        layer.setCustomProperty('flypath_internal', True)
+        feat = QgsFeature()
+        feat.setGeometry(g)
+        layer.dataProvider().addFeatures([feat])
+
+        symbol = QgsLineSymbol.createSimple({
+            'color': '#FF1493',
+            'width': '0.8',
+            'line_style': 'dash',
+        })
+        layer.renderer().setSymbol(symbol)
+
+        # Track geometry edits made via QGIS tools (same hooks as the polygon;
+        # both handlers branch on mission kind to update the right geometry).
+        layer.editingStopped.connect(self._on_survey_area_edited)
+        layer.geometryChanged.connect(self._on_survey_area_geometry_changed)
+
+        QgsProject.instance().addMapLayer(layer)
+        self._survey_area_layer_id = layer.id()
+        self.editPolygonBtn.setText('✎ Edit')
+        self.editPolygonBtn.setVisible(True)
+        self.removePolygonBtn.setVisible(True)
+        self.iface.mapCanvas().refresh()
+
+    def _clear_corridor_band(self):
+        """Remove the illustrative buffered-corridor overlay if present."""
+        if self._corridor_band_layer_id:
+            if QgsProject.instance().mapLayer(self._corridor_band_layer_id):
+                QgsProject.instance().removeMapLayer(self._corridor_band_layer_id)
+            self._corridor_band_layer_id = None
+
+    def _show_corridor_band(self):
+        """Draw the assumed mapped area as a translucent band: the centre line
+        buffered by the corridor half-width. Illustrative only (never exported);
+        it just shows roughly what ground the passes will cover. No-op unless a
+        corridor centre line is defined."""
+        self._clear_corridor_band()
+        if (self._mission_kind() != 'corridor' or self._survey_line is None
+                or self._survey_line_crs is None):
+            return
+        buffer_m = self.bufferSpin.value()
+        if buffer_m <= 0:
+            return
+        # Buffer in a metric UTM CRS so the width is correct, then show in WGS84.
+        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
+        to_wgs = QgsCoordinateTransform(self._survey_line_crs, wgs84,
+                                        QgsProject.instance())
+        lw = QgsGeometry(self._survey_line)
+        lw.transform(to_wgs)
+        c = lw.centroid().asPoint()
+        zone = int((c.x() + 180.0) / 6.0) + 1
+        epsg = (32600 if c.y() >= 0 else 32700) + zone
+        utm = QgsCoordinateReferenceSystem(f'EPSG:{epsg}')
+        to_utm = QgsCoordinateTransform(self._survey_line_crs, utm,
+                                        QgsProject.instance())
+        from_utm = QgsCoordinateTransform(utm, wgs84, QgsProject.instance())
+        band = QgsGeometry(self._survey_line)
+        band.transform(to_utm)
+        # Mitred corners so the band follows the centre line's angles (not rounded).
+        band = band.buffer(buffer_m, 8, _BAND_CAP_ROUND, _BAND_JOIN_MITER, 2.0)
+        band.transform(from_utm)
+
+        layer = QgsVectorLayer('Polygon?crs=EPSG:4326',
+                               'FlyPath — Corridor Area (assumed)', 'memory')
+        layer.setCustomProperty('flypath_internal', True)
+        feat = QgsFeature()
+        feat.setGeometry(band)
+        layer.dataProvider().addFeatures([feat])
+        symbol = QgsFillSymbol.createSimple({
+            'color': '30,144,255,35',        # translucent blue fill
+            'outline_color': '#1E90FF',
+            'outline_width': '0.3',
+            'outline_style': 'dot',
+        })
+        layer.renderer().setSymbol(symbol)
+        QgsProject.instance().addMapLayer(layer)
+        self._corridor_band_layer_id = layer.id()
+
     def _on_survey_area_edited(self):
-        """Called after the user commits edits to the survey area layer."""
+        """Called after the user commits edits to the drawn survey geometry
+        (polygon in 2D Mapping, centre line in Corridor Mapping)."""
         self._finish_polygon_edit()
         if not self._survey_area_layer_id:
             return
@@ -2157,6 +2614,13 @@ class FlyPathDialog(QWidget):
         if not layer or layer.featureCount() == 0:
             return
         feat = next(layer.getFeatures())
+        if self._mission_kind() == 'corridor':
+            self._survey_line     = feat.geometry()
+            self._survey_line_crs = layer.crs()
+            self._clear_breaks()          # editing the line changes vertex indices
+            self._on_clear_preview(reset_area=False)
+            self._update_stats()          # corridor branch refreshes Length
+            return
         self._survey_polygon     = feat.geometry()
         self._survey_polygon_crs = layer.crs()
         self._on_clear_preview(reset_area=False)
@@ -2165,11 +2629,17 @@ class FlyPathDialog(QWidget):
         self._update_stats()
 
     def _on_survey_area_geometry_changed(self, _fid, geom):
-        """Update the stored polygon in real-time as the geometry is being edited."""
+        """Update the stored geometry live as it is being edited."""
         if not self._survey_area_layer_id:
             return
         layer = QgsProject.instance().mapLayer(self._survey_area_layer_id)
         if not layer:
+            return
+        if self._mission_kind() == 'corridor':
+            self._survey_line     = geom
+            self._survey_line_crs = layer.crs()
+            self._on_clear_preview(reset_area=False)
+            self._update_stats()          # corridor branch refreshes Length
             return
         self._survey_polygon     = geom
         self._survey_polygon_crs = layer.crs()
@@ -2186,6 +2656,9 @@ class FlyPathDialog(QWidget):
         self._on_clear_preview(reset_area=False)
         self._survey_polygon     = None
         self._survey_polygon_crs = None
+        self._survey_line        = None
+        self._survey_line_crs    = None
+        self._clear_breaks()
         self._waypoints          = []
         self._shot_spacing_m     = 0.0
         self.removePolygonBtn.setVisible(False)
@@ -2242,8 +2715,10 @@ class FlyPathDialog(QWidget):
             except AttributeError:
                 pass
         self.editPolygonBtn.setText('✓ Finish Editing')
+        noun = ('corridor centre line' if self._mission_kind() == 'corridor'
+                else 'survey polygon')
         self.infoBar.setText(
-            'Editing the survey polygon: drag a vertex to move it, click an '
+            f'Editing the {noun}: drag a vertex to move it, click an '
             'edge to add one, or select a vertex and press Delete to remove '
             'it. Click Finish Editing when done.'
         )
@@ -2259,14 +2734,14 @@ class FlyPathDialog(QWidget):
 
     def _on_drawing_cancelled(self):
         self.drawPolygonBtn.setChecked(False)
-        self.drawPolygonBtn.setText('Draw Polygon on Map')
+        self.drawPolygonBtn.setText(self._draw_btn_default_text())
         self._leave_draw_tool()
 
     def _cancel_draw_tool(self):
         """Stop drawing, restore the previous map tool, and reset the button."""
         self._leave_draw_tool()
         self.drawPolygonBtn.setChecked(False)
-        self.drawPolygonBtn.setText('Draw Polygon on Map')
+        self.drawPolygonBtn.setText(self._draw_btn_default_text())
 
     def _area_ha(self):
         """Return survey polygon area in hectares (metric, via EPSG:3857)."""
@@ -2348,6 +2823,9 @@ class FlyPathDialog(QWidget):
         self._live_missions  = None
         if not self._has_survey_area(silent=True):
             self._clear_stats()
+            return
+        if self._mission_kind() == 'corridor':
+            self._update_stats_corridor()
             return
         drone = self.droneModelCombo.currentText()
         if not registry.has(drone):
@@ -2449,12 +2927,118 @@ class FlyPathDialog(QWidget):
         self._live_ground   = [g for _, _, g in missions_h]
         self._refresh_split_part_combo()
 
+    def _corridor_part_count(self):
+        """Number of separate centre-line parts (LineString or MultiLineString)."""
+        if self._survey_line is None:
+            return 0
+        if self._survey_line.isMultipart():
+            return len(self._survey_line.asMultiPolyline())
+        return 1
+
+    def _update_stats_corridor(self):
+        """Flight statistics + HUD for Corridor Mapping, taken from the actual
+        generated corridor route (the same path the preview draws). Coverage is
+        the centre-line length times the total mapped width; 'lines' is the
+        number of parallel passes."""
+        self.areaLabel.setText(self._corridor_length_text())
+        drone = self.droneModelCombo.currentText()
+
+        def blank_path_stats():
+            for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
+                         'waypointsLabel', 'linesLabel', 'batteriesLabel'):
+                getattr(self, attr).setText('—')
+            self._hide_hud()
+
+        if not registry.has(drone):
+            blank_path_stats()
+            self.coverageLabel.setText('—')
+            return
+        d     = registry.get(drone)
+        speed = self.speedSpin.value()
+
+        # Coverage = centre-line length x total mapped width (2 x buffer)
+        da = QgsDistanceArea()
+        da.setSourceCrs(self._survey_line_crs,
+                        QgsProject.instance().transformContext())
+        da.setEllipsoid('WGS84')
+        length_m = da.measureLength(self._survey_line)
+        total_width = 2.0 * self.bufferSpin.value()
+        self.coverageLabel.setText(f'{length_m * total_width / 10_000:.2f} ha')
+
+        full = self._mission_type() == 'full'
+        usable_min = d.battery_time_min * (1.0 - _BATTERY_RESERVE)
+
+        # Number of parallel passes across every centre-line part
+        footprint_across, _ = self._footprint()
+        if footprint_across:
+            line_spacing = max(
+                footprint_across * (1.0 - self.sideOverlapSpin.value() / 100.0), 0.5)
+            passes = len(compute_pass_offsets(
+                self.bufferSpin.value(), line_spacing, footprint_across))
+        else:
+            passes = 1
+        n_lines = passes * self._corridor_part_count()
+
+        # Seed the Min Flights default (battery estimate) from a cheap estimate of
+        # total flight, WITHOUT generating - so grouping uses the right minimum on
+        # this pass and there is no per-tick double generation.
+        est_dist = passes * length_m
+        if full:
+            est_photos = est_dist / (self._full_auto_spacing() or 1e9)
+            per_photo  = max(_HALT_S, d.camera.min_shoot_interval_s)
+            est_min = (est_dist / speed + est_photos * per_photo) / 60.0 if speed > 0 else 0.0
+        else:
+            est_min = est_dist / (speed * 60.0) if speed > 0 else 0.0
+        est_batteries = math.ceil(est_min / usable_min) if est_min > 0 else 1
+        parts = self._corridor_line_parts()
+        max_split = max(1, sum(max(1, len(v) - 1) for v in parts))
+        self._apply_split_default(max_split, est_batteries)
+
+        # Build the missions (grouped by line, honouring the updated Min Flights,
+        # the manual breaks, and the Max Waypoints cap) and take ACTUAL stats from
+        # them - each mission is a separate flight, so distance/photos are summed.
+        missions_h = self._corridor_line_missions()
+        if not missions_h or all(len(w) < 2 for w, _, _ in missions_h):
+            blank_path_stats()
+            return
+        waypoints = [wp for wps, _, _ in missions_h for wp in wps]
+        self._live_waypoints = waypoints
+        dist_m = sum(self._path_length_m(w) for w, _, _ in missions_h if len(w) >= 2)
+
+        if full:
+            n_photos   = len(waypoints)
+            per_photo  = max(_HALT_S, d.camera.min_shoot_interval_s)
+            flight_min = (dist_m / speed + n_photos * per_photo) / 60.0 if speed > 0 else 0.0
+        else:
+            # Semi: waypoints are just the vertices; the camera interval-captures
+            # along the path, so photos are estimated from distance / spacing.
+            n_photos   = max(0, int(dist_m / self._corridor_shot_spacing()))
+            flight_min = dist_m / (speed * 60.0) if speed > 0 else 0.0
+        batteries = math.ceil(flight_min / usable_min) if flight_min > 0 else 0
+
+        self.flightTimeLabel.setText(f'{flight_min:.1f} min')
+        self.distanceLabel.setText(f'{dist_m / 1000:.2f} km')
+        self.photosLabel.setText(f'{n_photos:,}')
+        self.waypointsLabel.setText(f'{len(waypoints):,}')
+        self.linesLabel.setText(str(n_lines))
+        self.batteriesLabel.setText(str(batteries))
+        self._show_hud()
+
+        self._live_missions = [wps for wps, _, _ in missions_h]
+        self._live_heights  = [h for _, h, _ in missions_h]
+        self._live_ground   = [g for _, _, g in missions_h]
+        self._refresh_split_part_combo()
+
     def _split_missions(self, waypoints):
         """Split waypoints for the current mission type, honouring the Max
         Waypoints cap so no exported mission exceeds it. Full-automatic splits by
         waypoint count; semi-automatic splits by whole flight lines."""
         n = self.splitSpin.value()
         maxwp = self.maxWaypointsSpin.value()
+        # Corridor routes are a dense uniform point sequence (not line-endpoint
+        # pairs), so they always split by waypoint count.
+        if self._mission_kind() == 'corridor':
+            return split_by_waypoint_count(waypoints, n, maxwp)
         # Full-auto, or terrain follow (which densifies the lines), splits by
         # waypoint count; plain semi splits by whole flight lines.
         if self._mission_type() == 'full' or self.terrainFollowCheck.isChecked():
@@ -2503,11 +3087,18 @@ class FlyPathDialog(QWidget):
     def _on_preview(self):
         if not self._has_survey_area():
             return
-        result = self._generate_waypoints()
-        if result is None:
-            return
-        waypoints, shot_spacing_m = result
-        missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
+        if self._mission_kind() == 'corridor':
+            missions_h = self._corridor_missions_with_heights()
+            if not missions_h:
+                return
+            waypoints = [wp for wps, _, _ in missions_h for wp in wps]
+            shot_spacing_m = self._corridor_shot_spacing()
+        else:
+            result = self._generate_waypoints()
+            if result is None:
+                return
+            waypoints, shot_spacing_m = result
+            missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
         missions = [wps for wps, _, _ in missions_h]
         heights  = [h for _, h, _ in missions_h]
         ground   = [g for _, _, g in missions_h]
@@ -2515,6 +3106,7 @@ class FlyPathDialog(QWidget):
         self._shot_spacing_m = shot_spacing_m
         self._missions       = missions
         self._on_clear_preview(reset_area=False)
+        self._show_corridor_band()   # under the path (no-op in 2D)
         line_layer = self._build_path_layer(missions)
         wp_layer   = self._build_waypoints_layer(missions, heights, ground)
         self._preview_layer_ids = [line_layer.id(), wp_layer.id()]
@@ -2663,6 +3255,7 @@ class FlyPathDialog(QWidget):
             self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5
         )
         self._redraw_preview_layers(missions, self._live_heights, self._live_ground)
+        self._show_corridor_band()   # keep the overlay in sync with the buffer
 
     def _redraw_preview_layers(self, missions, heights=None, ground=None):
         """Refresh the existing preview layers in place from new missions."""
@@ -2686,19 +3279,25 @@ class FlyPathDialog(QWidget):
         self.iface.mapCanvas().refresh()
 
     def _on_clear_preview(self, reset_area=True):
-        # Always remove the flight-path preview layers
+        # Always remove the flight-path preview layers and the corridor overlay
         for lid in self._preview_layer_ids:
             if QgsProject.instance().mapLayer(lid):
                 QgsProject.instance().removeMapLayer(lid)
         self._preview_layer_ids = []
+        self._clear_corridor_band()
 
         if reset_area:
             # Full reset — also stop any active draw and remove the boundary
             self._leave_draw_tool()
+            if getattr(self, 'setBreaksBtn', None) and self.setBreaksBtn.isChecked():
+                self.setBreaksBtn.setChecked(False)   # turns the break tool off
+            self._clear_breaks()
             self._remove_survey_area_layer()
             self._clear_layer_selection()
             self._survey_polygon     = None
             self._survey_polygon_crs = None
+            self._survey_line        = None
+            self._survey_line_crs    = None
             self._waypoints          = []
             self._shot_spacing_m     = 0.0
             self._missions           = []
@@ -3521,7 +4120,13 @@ class FlyPathDialog(QWidget):
             self._export_local_enterprise(mission, waypoints)
             return
 
-        missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
+        if self._mission_kind() == 'corridor':
+            missions_h = self._corridor_missions_with_heights()
+            shot_spacing_m = self._corridor_shot_spacing()
+            if not missions_h:
+                return
+        else:
+            missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
 
         if self.destCombo.currentData() == 'rc':
             # The RC replaces one mission slot, so send just the chosen part.
@@ -3951,6 +4556,15 @@ class FlyPathDialog(QWidget):
         super().closeEvent(event)
 
     def _has_survey_area(self, silent=False):
+        if self._mission_kind() == 'corridor':
+            if self._survey_line is None or self._survey_line_crs is None:
+                if not silent:
+                    QMessageBox.information(
+                        self, 'No Corridor',
+                        'Draw a line on the map or select a line layer first.'
+                    )
+                return False
+            return True
         if self._survey_polygon is None or self._survey_polygon_crs is None:
             if not silent:
                 QMessageBox.information(
@@ -3975,6 +4589,8 @@ class FlyPathDialog(QWidget):
         and self._gen_elevations holds the parallel ground elevations.
         """
         self._gen_elevations = None
+        if self._mission_kind() == 'corridor':
+            return self._generate_corridor_waypoints()
         drone = self.droneModelCombo.currentText()
         if not registry.has(drone):
             return None
@@ -4007,3 +4623,150 @@ class FlyPathDialog(QWidget):
             return None
         waypoints, self._gen_elevations = self._apply_terrain(waypoints)
         return waypoints, shot_spacing_m
+
+    def _generate_corridor_waypoints(self):
+        """Corridor equivalent of _generate_waypoints: offset the centre line into
+        parallel passes and sample them uniformly. Returns (waypoints, spacing)
+        or None. Full-automatic samples at the photo spacing; semi-automatic at
+        the speed x interval spacing. Terrain follow is applied the same way."""
+        drone = self.droneModelCombo.currentText()
+        if not registry.has(drone):
+            return None
+        full = self._mission_type() == 'full'
+        if full:
+            densify = self._full_auto_spacing()
+            shot_spacing_m = densify or 0.5
+        else:
+            densify = None
+            shot_spacing_m = max(
+                self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5
+            )
+        try:
+            waypoints, shot_spacing_m = generate_corridor_route(
+                line_geom=self._survey_line,
+                line_crs=self._survey_line_crs,
+                altitude_m=self.altitudeSpin.value(),
+                shot_spacing_m=shot_spacing_m,
+                side_overlap=self.sideOverlapSpin.value() / 100.0,
+                buffer_m=self.bufferSpin.value(),
+                drone_specs=registry.get(drone).grid_specs(),
+                densify_spacing=densify,
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, 'Cannot Generate Corridor', str(exc))
+            return None
+        waypoints, self._gen_elevations = self._apply_terrain(waypoints)
+        return waypoints, shot_spacing_m
+
+    def _corridor_shot_spacing(self):
+        """Along-track photo/interval spacing for the current corridor mode."""
+        if self._mission_type() == 'full':
+            return self._full_auto_spacing() or 0.5
+        return max(self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5)
+
+    @staticmethod
+    def _run_length(verts, a, b):
+        """Planar length of the vertex run verts[a..b] (a proxy for 'longest')."""
+        return sum(math.hypot(verts[i + 1].x() - verts[i].x(),
+                              verts[i + 1].y() - verts[i].y())
+                   for i in range(a, b))
+
+    def _mid_vertex(self, verts, a, b):
+        """Interior vertex index of run verts[a..b] nearest its half-length point."""
+        seg = [math.hypot(verts[i + 1].x() - verts[i].x(),
+                          verts[i + 1].y() - verts[i].y()) for i in range(a, b)]
+        total = sum(seg)
+        if total <= 0:
+            return a + 1
+        half, acc, best, best_d = total / 2.0, 0.0, None, None
+        for i in range(a, b):
+            acc += seg[i - a]
+            cand = i + 1
+            if a < cand < b and (best_d is None or abs(acc - half) < best_d):
+                best_d, best = abs(acc - half), cand
+        return best if best is not None else a + 1
+
+    def _corridor_groups(self):
+        """Contiguous line stretches (mission groups) as (part_idx, start, end)
+        vertex runs, from the manual breaks and part boundaries, then auto-split
+        by length at vertices to reach the Min Flights minimum."""
+        parts = self._corridor_line_parts()
+        groups = []
+        for pi, verts in enumerate(parts):
+            if len(verts) < 2:
+                continue
+            cuts = sorted(v for (p, v) in self._corridor_breaks
+                          if p == pi and 0 < v < len(verts) - 1)
+            bounds = [0] + cuts + [len(verts) - 1]
+            for a, b in zip(bounds, bounds[1:]):
+                groups.append((pi, a, b))
+        # Auto-split the longest group at a vertex until we reach Min Flights.
+        target = self.splitSpin.value()
+        while len(groups) < target:
+            splittable = [g for g in groups if g[2] - g[1] >= 2]
+            if not splittable:
+                break
+            pi, a, b = max(splittable,
+                           key=lambda g: self._run_length(parts[g[0]], g[1], g[2]))
+            mid = self._mid_vertex(parts[pi], a, b)
+            if not (a < mid < b):
+                break
+            groups.remove((pi, a, b))
+            groups += [(pi, a, mid), (pi, mid, b)]
+        groups.sort()
+        return parts, groups
+
+    def _corridor_line_missions(self):
+        """Corridor missions grouped by line: manual breaks + an automatic split
+        by length to reach Min Flights, and each stretch further split by the Max
+        Waypoints cap. Returns [(waypoints, flight_heights, ground_elevs), ...]
+        rebased per mission, or [] when nothing can be generated."""
+        parts, groups = self._corridor_groups()
+        if not groups:
+            return []
+        drone = self.droneModelCombo.currentText()
+        if not registry.has(drone):
+            return []
+        full = self._mission_type() == 'full'
+        densify = self._full_auto_spacing() if full else None
+        shot = self._corridor_shot_spacing()
+        altitude = self.altitudeSpin.value()
+        specs = registry.get(drone).grid_specs()
+        side = self.sideOverlapSpin.value() / 100.0
+        buf = self.bufferSpin.value()
+        maxwp = self.maxWaypointsSpin.value()
+        out = []
+        for (pi, a, b) in groups:
+            sub = QgsGeometry.fromPolylineXY(parts[pi][a:b + 1])
+            try:
+                wps, _ = generate_corridor_route(
+                    line_geom=sub, line_crs=self._survey_line_crs,
+                    altitude_m=altitude, shot_spacing_m=shot, side_overlap=side,
+                    buffer_m=buf, drone_specs=specs, densify_spacing=densify)
+            except ValueError:
+                continue
+            wps, elevs = self._apply_terrain(wps)
+            # Max Waypoints still applies: split this stretch's route by count so
+            # no mission exceeds the DJI cap (this is the 'by waypoints' split
+            # happening alongside the 'by line' split).
+            out.extend(self._split_stretch(wps, elevs, maxwp, altitude))
+        return out
+
+    def _split_stretch(self, waypoints, elevations, maxwp, altitude):
+        """Split one stretch's route into missions of at most `maxwp` waypoints,
+        returning [(waypoints, flight_heights, ground_elevs), ...] rebased each."""
+        if elevations and len(elevations) == len(waypoints):
+            triples = [(lon, lat, e)
+                       for (lon, lat), e in zip(waypoints, elevations)]
+            out = []
+            for part in split_by_waypoint_count(triples, 1, maxwp):
+                pw = [(lon, lat) for lon, lat, _ in part]
+                pe = [e for _, _, e in part]
+                out.append((pw, heights_above_takeoff(pe, altitude), pe))
+            return out
+        return [(p, None, None)
+                for p in split_by_waypoint_count(waypoints, 1, maxwp)]
+
+    def _corridor_missions_with_heights(self):
+        """Mission tuples for the current corridor (always grouped by line)."""
+        return self._corridor_line_missions()
