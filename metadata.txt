@@ -2,9 +2,20 @@
 name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
-description=Generate DJI WPML KMZ mission files for 2D orthomosaic mapping directly from QGIS
-version=1.7.1
-changelog=1.7.1 - Fixed a crash when the survey area came from a layer whose features are
+description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
+version=2.0.0
+changelog=2.0.0 - New Corridor Mapping mission type for linear features (roads, pipelines,
+    rivers, power lines). Draw, select or edit a centre line, set a Buffer (the half-width covered
+    each side), and FlyPath adds parallel passes automatically to cover it at the chosen altitude
+    and side overlap, following the line's curves and corners. Waypoints come straight from the
+    line for even coverage: one at every vertex in semi-automatic (the camera interval-captures
+    between them) and one per photo in full-automatic. Split the corridor into flights by line:
+    Min Flights divides it into contiguous stretches, and Set Mission Breaks lets you click
+    centre-line vertices (with snap-to-vertex) to force exact mission boundaries, while the Max
+    Waypoints cap still keeps every mission valid. Terrain follow works with corridors too. An
+    illustrative buffered-corridor overlay shows the mapped area. Corridor mapping is nadir only,
+    like 2D mapping. Everything behaves identically on QGIS 3 (Qt5) and QGIS 4 (Qt6).
+    1.7.1 - Fixed a crash when the survey area came from a layer whose features are
     stored as MultiPolygon (the common case for Shapefiles and GeoPackages): FlyPath now reads
     Polygon and MultiPolygon geometries the same way, so grids generate correctly. Multi-part
     areas (several disjoint pieces in one feature) are now fully covered in a single mission, and
@@ -84,14 +95,16 @@ about=FlyPath is a QGIS plugin for planning autonomous drone mapping missions an
     them as native DJI WPML KMZ files, loadable directly in the DJI Fly app.
     Supported drones: DJI Mini 3 Pro, Mini 4 Pro, Mini 5 Pro (community-verified),
     plus Air 3, Air 3S, Mavic 3 Classic and Mavic 4 Pro (field-test reports wanted).
-    Draw your survey area on the map, set flight altitude and overlap, preview
-    the flight path, and export a ready-to-fly mission file. Choose semi-automatic
-    capture (you set interval capture before takeoff) or full-automatic capture
-    (a waypoint per photo with automatic shooting). An optional terrain follow
-    mode holds a constant height above ground from free global elevation data.
-    Flight lines fly straight and stay inside irregular (L, U, notched) areas, an
-    optional cross-hatch adds a perpendicular pass for 3D and LiDAR, and large
-    surveys can be split into several missions, one per battery.
+    Plan a 2D grid over a survey polygon, or a corridor along a centre line for
+    linear features such as roads, pipelines and rivers. Draw your survey area on
+    the map, set flight altitude and overlap, preview the flight path, and export
+    a ready-to-fly mission file. Choose semi-automatic capture (you set interval
+    capture before takeoff) or full-automatic capture (a waypoint per photo with
+    automatic shooting). An optional terrain follow mode holds a constant height
+    above ground from free global elevation data. Flight lines fly straight and
+    stay inside irregular (L, U, notched) areas, an optional cross-hatch adds a
+    perpendicular pass for 3D and LiDAR, and large surveys can be split into
+    several missions, one per battery.
 
 tracker=https://github.com/dronnix-io/FlyPath/issues
 repository=https://github.com/dronnix-io/FlyPath
