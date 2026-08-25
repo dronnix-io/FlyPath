@@ -24,6 +24,10 @@ The latest version adds multi-battery mission splitting. A large survey is divid
 
 ![FlyPath with a large survey split into multiple missions](docs/images/splitting_overview.png)
 
+Corridor Mapping follows a centre line, adding parallel passes to cover a buffer each side for linear features such as roads, pipelines and rivers:
+
+![FlyPath corridor mapping mission](docs/images/corridor_overview.png)
+
 ---
 
 ## Video Tutorial
