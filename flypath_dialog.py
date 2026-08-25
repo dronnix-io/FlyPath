@@ -1725,7 +1725,9 @@ class FlyPathDialog(QWidget):
             self._break_tool.finished.connect(
                 lambda: self.setBreaksBtn.setChecked(False))
             canvas.setMapTool(self._break_tool)
-            self.setBreaksBtn.setText('Setting breaks…  (click vertices, Esc to finish)')
+            # Keep the label short so it never widens the panel; the full
+            # instructions go to the info bar below.
+            self.setBreaksBtn.setText('Setting Breaks…')
             self.infoBar.setText(
                 'Click a centre-line vertex to break the mission there; click it '
                 'again to remove the break. Press Escape when done.')
