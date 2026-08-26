@@ -194,7 +194,10 @@ class _TerrainLayerSampler:
     def sample(self, lon, lat):
         if self._layer is None:
             raise _TerrainError('No Elevation layer available.')
-        return self._layer_dp.sample(self._layer_xform.transform(QgsPointXY(lon, lat)),1)[0]
+        elev, rv = self._layer_dp.sample(self._layer_xform.transform(QgsPointXY(lon, lat)),1)
+        if not rv:
+            raise _TerrainError('Waypoint is outside the selected DEM layer.')
+        return elev
 
 # ── MTP PowerShell exit codes ─────────────────────────────────────────────
 _MTP_EXIT_NAV_FAIL      = 1   # could not navigate path to waypoint folder
