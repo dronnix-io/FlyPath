@@ -1566,7 +1566,8 @@ class FlyPathDialog(QWidget):
         self.demCombo.clear()
         self.demCombo.addItem('— none —', None)
         for layer in filter(lambda x: isinstance(x, QgsRasterLayer), QgsProject.instance().mapLayers().values()):
-            self.demCombo.addItem(layer.name(), layer.id())
+            if layer.bandCount() == 1:
+                self.demCombo.addItem(layer.name(), layer.id())
        # Restore previous selection if the dem still exists
         idx = self.demCombo.findData(previously_selected)
         self.demCombo.setCurrentIndex(idx if idx >= 0 else 0)
