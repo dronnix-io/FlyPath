@@ -78,6 +78,7 @@ from qgis.core import (
     Qgis,
     QgsProject,
     QgsWkbTypes,
+    QgsRasterLayer,
     QgsVectorLayer,
     QgsFeature,
     QgsGeometry,
@@ -179,6 +180,24 @@ class _TerrainSampler:
             raise _TerrainError('Elevation tile could not be decoded.')
         return image.convertToFormat(_IMG_RGB32)
 
+class _TerrainLayerSampler:
+    def __init__(self, layer):
+        self._layer = layer
+        if self._layer is not None:
+            wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
+            self._layer_dp = self._layer.dataProvider()
+            self._layer_xform = QgsCoordinateTransform(wgs84, self._layer_dp.crs(), QgsProject.instance())
+
+    def clear(self):
+        pass
+
+    def sample(self, lon, lat):
+        if self._layer is None:
+            raise _TerrainError('No Elevation layer available.')
+        elev, rv = self._layer_dp.sample(self._layer_xform.transform(QgsPointXY(lon, lat)),1)
+        if not rv:
+            raise _TerrainError('Waypoint is outside the selected DEM layer.')
+        return elev
 
 # ── MTP PowerShell exit codes ─────────────────────────────────────────────
 _MTP_EXIT_NAV_FAIL      = 1   # could not navigate path to waypoint folder
@@ -879,6 +898,12 @@ class FlyPathDialog(QWidget):
             'For multi-feature layers a Feature selector will appear below.')
         form.addRow('Layer', self.layerCombo)
 
+        self.demCombo = QComboBox()
+        self._tip(self.demCombo,
+            'Optional raster layer with ground elevations in band 1 '
+            'to aid in keeping constant distance to ground calculations.')
+        form.addRow('DEM', self.demCombo)
+
         self.featureCombo = QComboBox()
         self.featureCombo.setVisible(False)
         self._tip(self.featureCombo,
@@ -1517,6 +1542,7 @@ class FlyPathDialog(QWidget):
             'Continue mission',
         ])
         self._refresh_layer_combo()
+        self._refresh_dem_combo()
 
     def _refresh_layer_combo(self, _=None):
         # Corridor Mapping needs line layers; 2D Mapping needs polygon layers.
@@ -1537,12 +1563,27 @@ class FlyPathDialog(QWidget):
         self.layerCombo.setCurrentIndex(idx if idx >= 0 else 0)
         self.layerCombo.blockSignals(False)
 
+    def _refresh_dem_combo(self, _=None):
+        previously_selected = self.demCombo.currentData()
+        self.demCombo.blockSignals(True)
+        self.demCombo.clear()
+        self.demCombo.addItem('— none —', None)
+        for layer in filter(lambda x: isinstance(x, QgsRasterLayer), QgsProject.instance().mapLayers().values()):
+            if layer.bandCount() == 1:
+                self.demCombo.addItem(layer.name(), layer.id())
+       # Restore previous selection if the dem still exists
+        idx = self.demCombo.findData(previously_selected)
+        self.demCombo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.demCombo.blockSignals(False)
+
     # ── Signal wiring ─────────────────────────────────────────────────────
 
     def _connect_signals(self):
         # Refresh layer combo when layers are added/removed
         QgsProject.instance().layersAdded.connect(self._refresh_layer_combo)
         QgsProject.instance().layersRemoved.connect(self._refresh_layer_combo)
+        QgsProject.instance().layersAdded.connect(self._refresh_dem_combo)
+        QgsProject.instance().layersRemoved.connect(self._refresh_dem_combo)
 
         self.missionTypeCombo.currentIndexChanged.connect(self._on_mission_type_changed)
         self.captureSemiRadio.toggled.connect(self._on_mission_type_changed)
@@ -1561,6 +1602,7 @@ class FlyPathDialog(QWidget):
         self.terrainToleranceSpin.valueChanged.connect(self._on_param_changed)
         self.splitSpin.valueChanged.connect(self._on_split_changed)
         self.layerCombo.currentIndexChanged.connect(self._on_layer_changed)
+        self.demCombo.currentIndexChanged.connect(self._on_dem_changed)
         self.featureCombo.currentIndexChanged.connect(self._on_feature_changed)
         self.useSelectionBtn.clicked.connect(self._on_use_qgis_selection)
         self.destCombo.currentIndexChanged.connect(self._on_destination_changed)
@@ -1880,6 +1922,8 @@ class FlyPathDialog(QWidget):
         # a waypoint per photo); show it when terrain follow is on in semi mode.
         self._set_row_visible(self._organizer_form, self.terrainToleranceSpin,
                               self.terrainFollowCheck.isChecked() and not full)
+        self._set_row_visible(self._area_form, self.demCombo,
+                              self.terrainFollowCheck.isChecked())
 
     # ── Terrain follow ────────────────────────────────────────────────────
 
@@ -2151,6 +2195,17 @@ class FlyPathDialog(QWidget):
 
         self._connect_layer_signals(layer)
         self._populate_feature_combo(layer)
+
+    def _on_dem_changed(self):
+        layer_id = self.demCombo.currentData()
+        self._terrain.clear()
+        self._terrain_warned = False
+        if layer_id is None:
+            self._terrain = _TerrainSampler()
+        else:
+            self._terrain = _TerrainLayerSampler(QgsProject.instance().mapLayer(layer_id))
+        self._apply_mission_type_capabilities()
+        self._on_param_changed()
 
     def _set_feature_row_visible(self, visible):
         """Show or hide the Feature combo together with its form label, so no
