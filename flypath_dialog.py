@@ -125,6 +125,15 @@ except AttributeError:                       # pragma: no cover - older QGIS
     _BAND_CAP_ROUND  = getattr(Qgis, 'EndCapStyleRound', 1)
     _BAND_JOIN_MITER = getattr(Qgis, 'JoinStyleMiter', 2)
 
+# Colour raster band types to keep out of the DEM list. XYZ/WMS basemaps (e.g.
+# Google Satellite) report bandCount() == 1 with an ARGB32 band, so they pass a
+# plain single-band check; excluding these data types drops them.
+try:
+    _COLOR_RASTER_TYPES = (Qgis.DataType.ARGB32, Qgis.DataType.ARGB32_Premultiplied)
+except AttributeError:                       # pragma: no cover - older QGIS
+    _COLOR_RASTER_TYPES = (getattr(Qgis, 'ARGB32', 12),
+                           getattr(Qgis, 'ARGB32_Premultiplied', 13))
+
 
 class _TerrainError(Exception):
     """Elevation data could not be fetched or decoded."""
@@ -1568,10 +1577,16 @@ class FlyPathDialog(QWidget):
         self.demCombo.blockSignals(True)
         self.demCombo.clear()
         self.demCombo.addItem('— none —', None)
-        for layer in filter(lambda x: isinstance(x, QgsRasterLayer), QgsProject.instance().mapLayers().values()):
-            if layer.bandCount() == 1:
+        for layer in QgsProject.instance().mapLayers().values():
+            if not (isinstance(layer, QgsRasterLayer) and layer.isValid()):
+                continue
+            dp = layer.dataProvider()
+            # A DEM is a single elevation band. Exclude multi-band rasters and
+            # single-band colour rasters (XYZ/WMS basemaps report one ARGB32 band).
+            if (layer.bandCount() == 1 and dp is not None
+                    and dp.dataType(1) not in _COLOR_RASTER_TYPES):
                 self.demCombo.addItem(layer.name(), layer.id())
-       # Restore previous selection if the dem still exists
+        # Restore previous selection if the DEM still exists
         idx = self.demCombo.findData(previously_selected)
         self.demCombo.setCurrentIndex(idx if idx >= 0 else 0)
         self.demCombo.blockSignals(False)
