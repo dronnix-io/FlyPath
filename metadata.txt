@@ -3,8 +3,14 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
-version=2.0.1
-changelog=2.0.1 - Terrain follow can now sample ground heights from a loaded single-band
+version=2.0.2
+changelog=2.0.2 - Fixed the first photo of a full-automatic mission being taken while the
+    gimbal was still rotating down to nadir, which produced an oblique opening frame that had to
+    be discarded before processing. At the first waypoint FlyPath now rotates the gimbal to -90
+    and takes that first photo in a single ordered step, so the shutter fires only once the gimbal
+    has settled. Later waypoints are unchanged. This applies to both 2D and corridor full-automatic
+    missions (reported by Jcomelles from a corridor field test).
+    2.0.1 - Terrain follow can now sample ground heights from a loaded single-band
     elevation raster (DEM) instead of the online data, which is useful for more precise or
     up-to-date heights and for offline field use. Choose the raster in the new DEM selector under
     the Survey Area (shown when Terrain follow is on); the online source is still used when no

@@ -30,6 +30,11 @@ _RC_LOST_ACTION = {
 # ── WPML namespace (native RC2 format) ────────────────────────────────────
 _NS = 'http://www.uav.com/wpmz/1.0.2'
 
+# Seconds allowed for the gimbal to reach nadir before the first photo in
+# full-automatic capture. The gimbal starts level and needs a moment to swing to
+# -90; firing the shutter in that window gives an oblique first frame.
+_GIMBAL_SETTLE_S = 3.0
+
 
 def write(drone, spec, filepath):
     """Write a consumer WPML KMZ for `drone` following `spec` to `filepath`.
@@ -122,21 +127,30 @@ def _build_waylines_wpml(waypoints, altitude_m, speed_ms, height_mode,
 
     In 'full' capture mode every waypoint also carries a takePhoto action, so
     the drone shoots automatically at each photo location (full-automatic 2D
-    mapping). When `heights` is given (terrain follow) each waypoint uses its own
-    executeHeight instead of the single altitude; heightMode stays relative to
-    the launch point."""
+    mapping). At the very first waypoint the gimbal rotate and that first photo
+    share one 'sequence' action group, so the shutter fires only after the gimbal
+    has settled at nadir (otherwise the opening frame comes out oblique). When
+    `heights` is given (terrain follow) each waypoint uses its own executeHeight
+    instead of the single altitude; heightMode stays relative to the launch
+    point."""
     placemark_blocks = []
     group_id = 1                                     # unique per action group
+    full = capture_mode == 'full'
 
     for idx, (lon, lat) in enumerate(waypoints):
         action_groups = ''
-        if idx == 0:
-            action_groups += _gimbal_action_group(group_id=group_id,
-                                                  pitch_angle=gimbal_pitch)
+        if idx == 0 and full:
+            action_groups += _first_capture_action_group(group_id=group_id,
+                                                          pitch_angle=gimbal_pitch)
             group_id += 1
-        if capture_mode == 'full':
-            action_groups += _take_photo_action_group(group_id=group_id, index=idx)
-            group_id += 1
+        else:
+            if idx == 0:
+                action_groups += _gimbal_action_group(group_id=group_id,
+                                                      pitch_angle=gimbal_pitch)
+                group_id += 1
+            if full:
+                action_groups += _take_photo_action_group(group_id=group_id, index=idx)
+                group_id += 1
         wp_height = heights[idx] if heights is not None else altitude_m
         placemark_blocks.append(
             _placemark(idx, lon, lat, wp_height, speed_ms,
@@ -213,6 +227,51 @@ def _take_photo_action_group(group_id, index):
           </wpml:actionTrigger>
           <wpml:action>
             <wpml:actionId>{group_id}</wpml:actionId>
+            <wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>
+            <wpml:actionActuatorFuncParam>
+              <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
+            </wpml:actionActuatorFuncParam>
+          </wpml:action>
+        </wpml:actionGroup>
+'''
+
+
+def _first_capture_action_group(group_id, pitch_angle=-90):
+    """Waypoint 0, full-auto: rotate the gimbal to nadir, then take the first
+    photo, in one 'sequence' group.
+
+    Running the two actions in sequence (not parallel) makes the takePhoto wait
+    for the gimbalRotate to finish, and the rotate is given an explicit
+    _GIMBAL_SETTLE_S duration so the gimbal has physically reached -90 before the
+    shutter fires. Without this the opening frame is captured mid-rotation and
+    comes out oblique (reported by Jcomelles, issue #8)."""
+    return f'''        <wpml:actionGroup>
+          <wpml:actionGroupId>{group_id}</wpml:actionGroupId>
+          <wpml:actionGroupStartIndex>0</wpml:actionGroupStartIndex>
+          <wpml:actionGroupEndIndex>0</wpml:actionGroupEndIndex>
+          <wpml:actionGroupMode>sequence</wpml:actionGroupMode>
+          <wpml:actionTrigger>
+            <wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>
+          </wpml:actionTrigger>
+          <wpml:action>
+            <wpml:actionId>0</wpml:actionId>
+            <wpml:actionActuatorFunc>gimbalRotate</wpml:actionActuatorFunc>
+            <wpml:actionActuatorFuncParam>
+              <wpml:gimbalHeadingYawBase>aircraft</wpml:gimbalHeadingYawBase>
+              <wpml:gimbalRotateMode>absoluteAngle</wpml:gimbalRotateMode>
+              <wpml:gimbalPitchRotateEnable>1</wpml:gimbalPitchRotateEnable>
+              <wpml:gimbalPitchRotateAngle>{pitch_angle}</wpml:gimbalPitchRotateAngle>
+              <wpml:gimbalRollRotateEnable>0</wpml:gimbalRollRotateEnable>
+              <wpml:gimbalRollRotateAngle>0</wpml:gimbalRollRotateAngle>
+              <wpml:gimbalYawRotateEnable>0</wpml:gimbalYawRotateEnable>
+              <wpml:gimbalYawRotateAngle>0</wpml:gimbalYawRotateAngle>
+              <wpml:gimbalRotateTimeEnable>1</wpml:gimbalRotateTimeEnable>
+              <wpml:gimbalRotateTime>{_GIMBAL_SETTLE_S:.1f}</wpml:gimbalRotateTime>
+              <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
+            </wpml:actionActuatorFuncParam>
+          </wpml:action>
+          <wpml:action>
+            <wpml:actionId>1</wpml:actionId>
             <wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>
             <wpml:actionActuatorFuncParam>
               <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>

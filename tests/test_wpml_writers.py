@@ -149,6 +149,29 @@ def test_full_auto_takes_a_photo_at_every_waypoint():
     assert len(ids) == len(set(ids)), f'duplicate action group ids: {ids}'
 
 
+def test_full_auto_first_photo_waits_for_gimbal_nadir():
+    # Regression for issue #8: the opening frame was captured while the gimbal
+    # was still rotating to -90, so it came out oblique. The first waypoint must
+    # rotate the gimbal and take the photo in one 'sequence' group, gimbal first,
+    # with an explicit settle time, so the shutter fires only once at nadir.
+    drone = registry.get('DJI Mini 4 Pro')
+    path = _write(drone, _spec(capture_mode='full'))
+    with zipfile.ZipFile(path) as z:
+        wl = z.read('wpmz/waylines.wpml').decode('utf-8')
+
+    # The gimbal is set exactly once, at the first waypoint.
+    assert wl.count('<wpml:actionActuatorFunc>gimbalRotate</wpml:actionActuatorFunc>') == 1
+
+    # Isolate the first action group (waypoint 0) and check the ordering there.
+    start = wl.index('<wpml:actionGroup>')
+    first_group = wl[start:wl.index('</wpml:actionGroup>', start)]
+    assert '<wpml:actionGroupMode>sequence</wpml:actionGroupMode>' in first_group
+    assert '<wpml:gimbalRotateTimeEnable>1</wpml:gimbalRotateTimeEnable>' in first_group
+    gimbal_at = first_group.index('gimbalRotate')
+    photo_at = first_group.index('takePhoto')
+    assert gimbal_at < photo_at, 'first photo must come after the gimbal rotate'
+
+
 # ── Enterprise (mapping2d) ──────────────────────────────────────────────────
 
 def _ent_spec(**kw):
