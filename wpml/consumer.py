@@ -35,6 +35,19 @@ _NS = 'http://www.uav.com/wpmz/1.0.2'
 # -90; firing the shutter in that window gives an oblique first frame.
 _GIMBAL_SETTLE_S = 3.0
 
+# Two flight-path styles the user can pick between (Flight Path switch).
+#
+# Straight: straight legs with a full stop at each point (the behaviour added by
+# CallumGreenwald in PR #7). Keeps mapping lines perfectly straight, but DJI Fly
+# cannot round-trip it: if the mission is saved or cloud-synced on the controller,
+# DJI reconnects the waypoints out of order and the path is scrambled (issue #13).
+#
+# Curved: DJI Fly's native style. Survives a re-save/cloud-sync unchanged. At
+# mapping photo spacing the densely-spaced collinear waypoints keep the legs
+# essentially straight; only the turnarounds curve.
+_STRAIGHT_TURN_MODE = 'toPointAndStopWithDiscontinuityCurvature'
+_CURVED_TURN_MODE   = 'toPointAndPassWithContinuityCurvature'
+
 
 def write(drone, spec, filepath):
     """Write a consumer WPML KMZ for `drone` following `spec` to `filepath`.
@@ -54,16 +67,23 @@ def write(drone, spec, filepath):
     )
     ts_ms = int(spec.create_time_ms) if spec.create_time_ms else int(time.time() * 1000)
 
-    mission_config = _mission_config_xml(drone.drone_enum, finish_action,
-                                         spec.speed_ms, exit_on_rc_lost, rc_lost_action)
-    template_kml   = _build_template_kml(mission_config, ts_ms, spec.mission_name,
-                                         spec.speed_ms, spec.altitude_m, height_mode)
     if spec.heights is not None and len(spec.heights) != len(spec.waypoints):
         raise ValueError('Terrain heights do not match the waypoints.')
-    waylines_wpml  = _build_waylines_wpml(
-        spec.waypoints, spec.altitude_m, spec.speed_ms, height_mode,
-        spec.gimbal_pitch, mission_config, spec.capture_mode, spec.heights
-    )
+
+    mission_config = _mission_config_xml(drone.drone_enum, finish_action,
+                                         spec.speed_ms, exit_on_rc_lost, rc_lost_action)
+    # The same waypoint Placemarks go into BOTH files. DJI Fly flies from
+    # waylines.wpml but rebuilds the mission from template.kml on save/cloud-sync,
+    # so the waypoints must live in the template too or a re-saved mission comes
+    # back scrambled (issue #13).
+    placemarks = _placemark_blocks(spec.waypoints, spec.altitude_m, spec.speed_ms,
+                                   spec.gimbal_pitch, spec.capture_mode, spec.heights,
+                                   spec.curved_path)
+    template_kml   = _build_template_kml(mission_config, ts_ms, spec.mission_name,
+                                         spec.speed_ms, spec.altitude_m, height_mode,
+                                         placemarks)
+    waylines_wpml  = _build_waylines_wpml(mission_config, spec.speed_ms, height_mode,
+                                          placemarks)
 
     package_kmz(filepath, [
         ('wpmz/template.kml',  template_kml),
@@ -92,8 +112,13 @@ def _mission_config_xml(drone_enum, finish_action, speed_ms,
 # ── XML builders ───────────────────────────────────────────────────────────
 
 def _build_template_kml(mission_config, ts_ms, mission_name,
-                        speed_ms, altitude_m, height_mode):
-    """template.kml — mission config + wayline template Folder (required by DJI RC)."""
+                        speed_ms, altitude_m, height_mode, placemarks):
+    """template.kml — mission config + waypoint template Folder.
+
+    The Folder carries the full waypoint Placemark list (the same waypoints as
+    waylines.wpml). DJI Fly regenerates the waylines from this template when a
+    mission is saved on the controller or synced through the cloud, so the
+    waypoints must be here or the re-saved mission is scrambled (issue #13)."""
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2"
      xmlns:wpml="{_NS}">
@@ -114,16 +139,16 @@ def _build_template_kml(mission_config, ts_ms, mission_name,
       <wpml:globalHeight>{altitude_m:.1f}</wpml:globalHeight>
       <wpml:caliFlightEnable>0</wpml:caliFlightEnable>
       <wpml:gimbalPitchMode>usePointSetting</wpml:gimbalPitchMode>
+{placemarks}
     </Folder>
   </Document>
 </kml>
 '''
 
 
-def _build_waylines_wpml(waypoints, altitude_m, speed_ms, height_mode,
-                          gimbal_pitch, mission_config, capture_mode='semi',
-                          heights=None):
-    """waylines.wpml — repeats missionConfig + full Placemark list.
+def _placemark_blocks(waypoints, altitude_m, speed_ms, gimbal_pitch,
+                      capture_mode='semi', heights=None, curved=True):
+    """Build the waypoint Placemark list shared by template.kml and waylines.wpml.
 
     In 'full' capture mode every waypoint also carries a takePhoto action, so
     the drone shoots automatically at each photo location (full-automatic 2D
@@ -154,11 +179,15 @@ def _build_waylines_wpml(waypoints, altitude_m, speed_ms, height_mode,
         wp_height = heights[idx] if heights is not None else altitude_m
         placemark_blocks.append(
             _placemark(idx, lon, lat, wp_height, speed_ms,
-                       action_groups, gimbal_pitch)
+                       action_groups, gimbal_pitch, curved)
         )
 
-    placemarks = '\n'.join(placemark_blocks)
+    return '\n'.join(placemark_blocks)
 
+
+def _build_waylines_wpml(mission_config, speed_ms, height_mode, placemarks):
+    """waylines.wpml — missionConfig + the executed Placemark list (the same
+    waypoints written into template.kml)."""
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2"
      xmlns:wpml="{_NS}">
@@ -181,7 +210,9 @@ def _build_waylines_wpml(waypoints, altitude_m, speed_ms, height_mode,
 # ── Element helpers ────────────────────────────────────────────────────────
 
 def _placemark(idx, lon, lat, altitude_m, speed_ms, action_groups_xml,
-               gimbal_pitch=-90):
+               gimbal_pitch=-90, curved=True):
+    turn_mode = _CURVED_TURN_MODE if curved else _STRAIGHT_TURN_MODE
+    use_straight_line = 0 if curved else 1
     return f'''      <Placemark>
         <Point>
           <coordinates>
@@ -200,14 +231,10 @@ def _placemark(idx, lon, lat, altitude_m, speed_ms, action_groups_xml,
           <wpml:waypointHeadingPoiIndex>0</wpml:waypointHeadingPoiIndex>
         </wpml:waypointHeadingParam>
         <wpml:waypointTurnParam>
-          <!-- Straight legs with a full stop at each point. Discontinuity (not
-               continuity) curvature keeps mapping lines straight instead of
-               bowing/rounding, especially at the line-end turnarounds.
-               (Fix contributed by CallumGreenwald, PR #7; tested on a Mini 5 Pro.) -->
-          <wpml:waypointTurnMode>toPointAndStopWithDiscontinuityCurvature</wpml:waypointTurnMode>
+          <wpml:waypointTurnMode>{turn_mode}</wpml:waypointTurnMode>
           <wpml:waypointTurnDampingDist>0</wpml:waypointTurnDampingDist>
         </wpml:waypointTurnParam>
-        <wpml:useStraightLine>1</wpml:useStraightLine>
+        <wpml:useStraightLine>{use_straight_line}</wpml:useStraightLine>
 {action_groups_xml}        <wpml:waypointGimbalHeadingParam>
           <wpml:waypointGimbalPitchAngle>{gimbal_pitch}</wpml:waypointGimbalPitchAngle>
           <wpml:waypointGimbalYawAngle>0</wpml:waypointGimbalYawAngle>

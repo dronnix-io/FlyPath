@@ -139,6 +139,7 @@ For **Corridor Mapping**, the survey area is a **line** instead of a polygon: th
 |---|---|
 | Mission Type | The kind of mission to plan: **2D Mapping** (a grid over a survey polygon) or **Corridor Mapping** (parallel passes along a centre line). The panel adapts to the chosen type |
 | Capture | **Semi** (you set the drone's interval capture before takeoff) or **Full** (a waypoint per photo, the drone shoots automatically) |
+| Flight Path | **Curved** (recommended) matches DJI Fly's native path and survives a save or cloud-sync on the controller unchanged; at photo spacing the lines stay essentially straight and only the turnarounds curve. **Straight** keeps perfectly straight mapping lines, but DJI Fly reconnects the waypoints out of order if the mission is re-saved on the controller, so use it only when you will not re-save there |
 | Drone | Sets camera specs used for GSD and spacing calculations |
 
 #### Flight Parameters

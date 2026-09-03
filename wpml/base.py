@@ -39,6 +39,11 @@ class MissionSpec:
     # point) so the drone holds a constant height above ground. None = a single
     # altitude for every waypoint (flat). When set, must match waypoints length.
     heights: list = None
+    # Flight-path style for the consumer waypoint writer. True (default) = curved
+    # (DJI-native), which survives a save/cloud-sync on the controller. False =
+    # straight legs with a stop at each point, which map perfectly straight but
+    # get reshuffled by DJI Fly on re-save (issue #13). Ignored by enterprise.
+    curved_path: bool = True
 
 
 def esc(text):

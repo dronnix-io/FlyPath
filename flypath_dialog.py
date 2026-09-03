@@ -878,6 +878,35 @@ class FlyPathDialog(QWidget):
         self._captureRow = capture_row
         form.addRow('Capture', capture_row)
 
+        # Flight Path: how the drone connects waypoints. DJI Fly reshuffles a
+        # straight-line mission if it is saved or cloud-synced on the controller
+        # (issue #13), so Curved is the recommended default.
+        self.pathCurvedRadio = QRadioButton('Curved')
+        self.pathStraightRadio = QRadioButton('Straight')
+        self.pathCurvedRadio.setChecked(True)
+        self._pathGroup = QButtonGroup(self)
+        self._pathGroup.addButton(self.pathCurvedRadio)
+        self._pathGroup.addButton(self.pathStraightRadio)
+        self._tip(self.pathCurvedRadio,
+            "Curved (recommended): DJI Fly's native flight path. The mission "
+            'survives a save or cloud-sync on the controller unchanged. At photo '
+            'spacing the flight lines stay essentially straight and only the '
+            'turnarounds curve.')
+        self._tip(self.pathStraightRadio,
+            'Straight: dead-straight flight lines with a stop at each point (best '
+            'mapping geometry). DJI Fly reconnects the waypoints out of order if '
+            'you save or cloud-sync the mission on the controller, so use this '
+            'only when you will not re-save it there.')
+        path_row = QWidget()
+        path_layout = QHBoxLayout(path_row)
+        path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.setSpacing(12)
+        path_layout.addWidget(self.pathCurvedRadio)
+        path_layout.addWidget(self.pathStraightRadio)
+        path_layout.addStretch()
+        self._pathRow = path_row
+        form.addRow('Flight Path', path_row)
+
         self.droneModelCombo = QComboBox()
         self._tip(self.droneModelCombo,
             'Your drone model — determines camera sensor specs, '
@@ -1698,6 +1727,10 @@ class FlyPathDialog(QWidget):
     def _mission_type(self):
         """'full' for full-automatic capture (a waypoint per photo), else 'semi'."""
         return 'full' if self.captureFullRadio.isChecked() else 'semi'
+
+    def _path_curved(self):
+        """True if the user picked the curved (DJI-native) flight-path style."""
+        return self.pathCurvedRadio.isChecked()
 
     def _mission_kind(self):
         """'corridor' for Corridor Mapping, else '2d' (the default 2D grid)."""
@@ -4092,6 +4125,7 @@ class FlyPathDialog(QWidget):
             margin_m=self.marginSpin.value(),
             capture_mode=self._mission_type(),
             heights=heights,
+            curved_path=self._path_curved(),
         )
         write_mission(drone, spec, filepath)
 

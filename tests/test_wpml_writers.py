@@ -81,16 +81,30 @@ def test_consumer_is_registered():
 
 # ── Straight flight lines (turn mode) ───────────────────────────────────────
 
-def test_waypoints_fly_straight_lines_with_stops():
-    # Both semi- and full-auto must use discontinuity curvature + straight lines
-    # so mapping lines stay straight instead of bowing at the turnarounds.
+def test_curved_path_is_the_default():
+    # Curved (DJI-native) is the default: continuity turn mode + useStraightLine 0,
+    # so the mission survives a controller re-save without reshuffling (issue #13).
     drone = registry.get('DJI Mini 4 Pro')
     for spec in (_spec(), _spec(capture_mode='full')):
         path = _write(drone, spec)
         with zipfile.ZipFile(path) as z:
             wl = z.read('wpmz/waylines.wpml').decode('utf-8')
+        assert 'toPointAndPassWithContinuityCurvature' in wl
+        assert 'toPointAndStopWithDiscontinuityCurvature' not in wl
+        assert '<wpml:useStraightLine>0</wpml:useStraightLine>' in wl
+        assert '<wpml:useStraightLine>1</wpml:useStraightLine>' not in wl
+
+
+def test_straight_path_when_selected():
+    # curved_path=False keeps the dead-straight legs with a stop at each point
+    # (best mapping geometry, but DJI reshuffles it on re-save).
+    drone = registry.get('DJI Mini 4 Pro')
+    for spec in (_spec(curved_path=False), _spec(capture_mode='full', curved_path=False)):
+        path = _write(drone, spec)
+        with zipfile.ZipFile(path) as z:
+            wl = z.read('wpmz/waylines.wpml').decode('utf-8')
         assert 'toPointAndStopWithDiscontinuityCurvature' in wl
-        assert 'toPointAndStopWithContinuityCurvature' not in wl
+        assert 'toPointAndPassWithContinuityCurvature' not in wl
         assert '<wpml:useStraightLine>1</wpml:useStraightLine>' in wl
         assert '<wpml:useStraightLine>0</wpml:useStraightLine>' not in wl
 
@@ -147,6 +161,24 @@ def test_full_auto_takes_a_photo_at_every_waypoint():
     import re
     ids = re.findall(r'<wpml:actionGroupId>(\d+)</wpml:actionGroupId>', wl)
     assert len(ids) == len(set(ids)), f'duplicate action group ids: {ids}'
+
+
+def test_template_kml_carries_the_waypoints():
+    # Regression for issue #13: the waypoints must live in template.kml too, not
+    # only in waylines.wpml. DJI Fly rebuilds the mission from template.kml on
+    # save/cloud-sync; if the template has no waypoints the re-saved path is
+    # scrambled. Both files must hold the same waypoint count.
+    drone = registry.get('DJI Mini 5 Pro')
+    for spec in (_spec(), _spec(capture_mode='full')):
+        path = _write(drone, spec)
+        with zipfile.ZipFile(path) as z:
+            tpl = z.read('wpmz/template.kml').decode('utf-8')
+            wl = z.read('wpmz/waylines.wpml').decode('utf-8')
+        assert tpl.count('<Placemark>') == len(WPS), 'template.kml missing waypoints'
+        assert tpl.count('<wpml:index>') == len(WPS)
+        assert '<coordinates>' in tpl
+        assert tpl.count('<Placemark>') == wl.count('<Placemark>'), \
+            'template.kml and waylines.wpml must hold the same waypoints'
 
 
 def test_full_auto_first_photo_waits_for_gimbal_nadir():

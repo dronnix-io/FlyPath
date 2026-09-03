@@ -3,8 +3,17 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
-version=2.0.2
-changelog=2.0.2 - Fixed the first photo of a full-automatic mission being taken while the
+version=2.0.3
+changelog=2.0.3 - Fixed missions getting scrambled when saved again or cloud-synced on the
+    DJI RC controller: after a re-save, DJI Fly reconnected the waypoints out of order. The cause
+    was the dead-straight flight-line style, which DJI does not round-trip. New Flight Path option
+    lets you choose Curved or Straight. Curved (the new default) matches DJI Fly's native path and
+    survives a re-save or cloud-sync unchanged; at photo spacing the lines stay essentially straight
+    and only the turnarounds curve. Straight keeps perfectly straight mapping lines but is reshuffled
+    by DJI Fly if the mission is re-saved on the controller, so pick it only when you will not re-save
+    there. Missions now also store their waypoints in the template file. Reported by CallumGreenwald
+    (issue #13).
+    2.0.2 - Fixed the first photo of a full-automatic mission being taken while the
     gimbal was still rotating down to nadir, which produced an oblique opening frame that had to
     be discarded before processing. At the first waypoint FlyPath now rotates the gimbal to -90
     and takes that first photo in a single ordered step, so the shutter fires only once the gimbal
