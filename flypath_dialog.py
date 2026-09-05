@@ -105,6 +105,7 @@ from .corridor_geometry import compute_pass_offsets
 from .takeoff_zone import (
     takeoff_zone, gsd_variance_pct, sample_grid, search_bounds
 )
+from .contours import contour_segments, nice_levels
 from .terrain import (
     TERRARIUM_URL, ZOOM, TILE_SIZE, tile_coords, elevation_from_rgb,
     sample_elevations, densify_by_terrain, heights_above_takeoff,
@@ -744,6 +745,7 @@ class FlyPathDialog(QWidget):
         self._current_thumb_full = None   # full-res preview path for the zoom viewer
         self._render_cache       = {}     # uuid -> rendered waypoint preview path
         self._takeoff_layer_id   = None   # map layer id of the takeoff-zone overlay
+        self._contour_layer_id   = None   # map layer id of the DEM contour overlay
 
         self._build_ui()
         self._setup_combos()
@@ -1317,6 +1319,15 @@ class FlyPathDialog(QWidget):
             'Smaller is better when comparing maps between flights.')
         form.addRow('GSD Variance', self.takeoffGsdVarLabel)
 
+        self.contourExtentCombo = QComboBox()
+        self.contourExtentCombo.addItem('Survey area', 'survey')
+        self.contourExtentCombo.addItem('Takeoff circles', 'circles')
+        self._tip(self.contourExtentCombo,
+            'Where to draw the DEM contours: across the whole survey area for '
+            'terrain context, or only inside the takeoff circles. The contour '
+            'interval matches the elevation tolerance above.')
+        form.addRow('Contours', self.contourExtentCombo)
+
         outer.addLayout(form)
 
         btn_row = QHBoxLayout()
@@ -1335,6 +1346,23 @@ class FlyPathDialog(QWidget):
         btn_row.addWidget(self.showTakeoffZoneBtn)
         btn_row.addWidget(self.clearTakeoffZoneBtn)
         outer.addLayout(btn_row)
+
+        contour_row = QHBoxLayout()
+        contour_row.setContentsMargins(0, 0, 0, 0)
+        contour_row.setSpacing(4)
+        self.showContoursBtn = QPushButton('Show Contours')
+        self.showContoursBtn.setObjectName('showContoursBtn')
+        self._tip(self.showContoursBtn,
+            'Draw DEM elevation contours over the chosen extent, one line per '
+            'elevation-tolerance step, so you can see how the terrain shapes '
+            'the takeoff zone.')
+        self.clearContoursBtn = QPushButton('Clear')
+        self.clearContoursBtn.setObjectName('clearContoursBtn')
+        self._tip(self.clearContoursBtn,
+            'Remove the DEM contour lines from the map.')
+        contour_row.addWidget(self.showContoursBtn)
+        contour_row.addWidget(self.clearContoursBtn)
+        outer.addLayout(contour_row)
 
         return group
 
@@ -1723,6 +1751,8 @@ class FlyPathDialog(QWidget):
         self.altitudeSpin.valueChanged.connect(self._update_takeoff_gsd_var)
         self.showTakeoffZoneBtn.clicked.connect(self._on_show_takeoff_zone)
         self.clearTakeoffZoneBtn.clicked.connect(self._on_clear_takeoff_zone)
+        self.showContoursBtn.clicked.connect(self._on_show_contours)
+        self.clearContoursBtn.clicked.connect(self._on_clear_contours)
         self.featureCombo.currentIndexChanged.connect(self._on_feature_changed)
         self.useSelectionBtn.clicked.connect(self._on_use_qgis_selection)
         self.destCombo.currentIndexChanged.connect(self._on_destination_changed)
@@ -2341,6 +2371,8 @@ class FlyPathDialog(QWidget):
     # matching-elevation part of it where the terrain changes.
     _TAKEOFF_RADIUS_M = 500.0
     _TAKEOFF_STEPS = 40           # DEM samples across the circle's diameter
+    _CONTOUR_STEPS = 160          # max DEM samples across the contour extent
+    _CONTOUR_MAX_LEVELS = 80      # coarsen the interval past this many lines
 
     def _mission_parts(self):
         """The plan split into sub-missions as [[(lon, lat), ...], ...].
@@ -2565,6 +2597,223 @@ class FlyPathDialog(QWidget):
         if self._takeoff_layer_id:
             QgsProject.instance().removeMapLayer(self._takeoff_layer_id)
             self._takeoff_layer_id = None
+            self.iface.mapCanvas().refresh()
+
+    # ── DEM contours ──────────────────────────────────────────────────────
+
+    def _contour_extent_utm(self, extent, parts, to_utm):
+        """Return (bounds, centres_utm) for the contour sample area.
+
+        bounds is (min_x, min_y, max_x, max_y) in the metric CRS. centres_utm is
+        the list of first-waypoint centres when the extent is the takeoff circles
+        (used to mask samples to those circles), else None."""
+        if extent == 'circles':
+            centres = []
+            for mission in parts:
+                p = to_utm.transform(QgsPointXY(*mission[0]))
+                centres.append((p.x(), p.y()))
+            r = self._TAKEOFF_RADIUS_M
+            xs = [c[0] for c in centres]
+            ys = [c[1] for c in centres]
+            return (min(xs) - r, min(ys) - r, max(xs) + r, max(ys) + r), centres
+        # Whole survey area: the survey polygon's box when there is one, else the
+        # bounding box of every waypoint, with a small margin.
+        if self._survey_polygon is not None and self._survey_polygon_crs:
+            g = QgsGeometry(self._survey_polygon)
+            g.transform(QgsCoordinateTransform(self._survey_polygon_crs,
+                                               to_utm.destinationCrs(),
+                                               QgsProject.instance()))
+            bb = g.boundingBox()
+            return (bb.xMinimum() - 100.0, bb.yMinimum() - 100.0,
+                    bb.xMaximum() + 100.0, bb.yMaximum() + 100.0), None
+        pts = [to_utm.transform(QgsPointXY(lon, lat))
+               for mission in parts for lon, lat in mission]
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        return (min(xs) - 100.0, min(ys) - 100.0,
+                max(xs) + 100.0, max(ys) + 100.0), None
+
+    def _compute_contours(self, extent):
+        """Sample the DEM over the chosen extent and return contour segments.
+
+        Returns a dict {'segments', 'to_wgs', 'interval', 'n_valid', 'n_levels'}
+        where segments is [(level, ((lon1, lat1), (lon2, lat2))), ...] already in
+        WGS84. The interval matches the elevation tolerance (coarsened if that
+        would draw too many lines). Raises _TerrainError if the DEM cannot be read
+        at all; returns None when there is no mission."""
+        parts = self._mission_parts()
+        if parts is None:
+            return None
+        parts = [p for p in parts if p]
+        if not parts:
+            return None
+
+        origin_lon, origin_lat = parts[0][0]
+        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
+        utm = _utm_crs_for(origin_lon, origin_lat)
+        to_utm = QgsCoordinateTransform(wgs84, utm, QgsProject.instance())
+        to_wgs = QgsCoordinateTransform(utm, wgs84, QgsProject.instance())
+
+        (min_x, min_y, max_x, max_y), centres = self._contour_extent_utm(
+            extent, parts, to_utm)
+        span = max(max_x - min_x, max_y - min_y)
+        spacing = max(8.0, span / self._CONTOUR_STEPS)
+        r2 = self._TAKEOFF_RADIUS_M ** 2
+
+        nx = int(math.ceil((max_x - min_x) / spacing))
+        ny = int(math.ceil((max_y - min_y) / spacing))
+        xs = [min_x + i * spacing for i in range(nx + 1)]
+        ys = [min_y + j * spacing for j in range(ny + 1)]
+
+        values = []
+        n_valid = 0
+        min_v = None
+        max_v = None
+        for y in ys:
+            row = []
+            for x in xs:
+                if centres is not None and not any(
+                        (x - cx) ** 2 + (y - cy) ** 2 <= r2 for cx, cy in centres):
+                    row.append(None)
+                    continue
+                wp = to_wgs.transform(QgsPointXY(x, y))
+                try:
+                    elev = self._terrain.sample(wp.x(), wp.y())
+                except _TerrainError:
+                    row.append(None)
+                    continue
+                row.append(elev)
+                n_valid += 1
+                min_v = elev if min_v is None else min(min_v, elev)
+                max_v = elev if max_v is None else max(max_v, elev)
+            values.append(row)
+
+        if n_valid == 0 or min_v is None:
+            return {'segments': [], 'to_wgs': to_wgs, 'interval': 0.0,
+                    'n_valid': 0, 'n_levels': 0}
+
+        interval = self.takeoffToleranceSpin.value()
+        while interval > 0 and (max_v - min_v) / interval > self._CONTOUR_MAX_LEVELS:
+            interval *= 2.0
+        levels = nice_levels(min_v, max_v, interval)
+        seg_utm = contour_segments(xs, ys, values, levels)
+
+        segments = []
+        for level, (p1, p2) in seg_utm:
+            w1 = to_wgs.transform(QgsPointXY(*p1))
+            w2 = to_wgs.transform(QgsPointXY(*p2))
+            segments.append((level, ((w1.x(), w1.y()), (w2.x(), w2.y()))))
+        return {'segments': segments, 'to_wgs': to_wgs, 'interval': interval,
+                'n_valid': n_valid, 'n_levels': len(levels)}
+
+    def _build_contour_layer(self, result):
+        """Build the DEM contour overlay: one labelled line feature per level,
+        drawn under the flight path. Returns the layer, or None when there are no
+        contour segments."""
+        segments = result['segments']
+        if not segments:
+            return None
+        by_level = {}
+        for level, seg in segments:
+            by_level.setdefault(level, []).append(
+                [QgsPointXY(*seg[0]), QgsPointXY(*seg[1])])
+
+        layer = QgsVectorLayer(
+            'LineString?crs=EPSG:4326&field=level:double',
+            'FlyPath — DEM Contours', 'memory')
+        layer.setCustomProperty('flypath_internal', True)
+        feats = []
+        for level, parts in by_level.items():
+            feat = QgsFeature()
+            feat.setGeometry(QgsGeometry.fromMultiPolylineXY(parts))
+            feat.setAttributes([round(level, 2)])
+            feats.append(feat)
+        layer.dataProvider().addFeatures(feats)
+
+        symbol = QgsLineSymbol.createSimple({
+            'color': '140,90,30,180', 'width': '0.25',
+        })
+        layer.renderer().setSymbol(symbol)
+
+        lbl = QgsPalLayerSettings()
+        lbl.fieldName = 'level'
+        try:
+            lbl.placement = Qgis.LabelPlacement.Line
+        except AttributeError:
+            lbl.placement = getattr(QgsPalLayerSettings, 'Line')
+        fmt = QgsTextFormat()
+        fmt.setFont(QFont('Segoe UI', 6))
+        fmt.setColor(QColor('#5A3C1E'))
+        fmt.setSize(6)
+        lbl.setFormat(fmt)
+        layer.setLabeling(QgsVectorLayerSimpleLabeling(lbl))
+        layer.setLabelsEnabled(True)
+
+        # Sit under FlyPath's path/markers but above the user's basemap/DEM.
+        proj = QgsProject.instance()
+        proj.addMapLayer(layer, False)
+        root = proj.layerTreeRoot()
+        own_ids = set(self._preview_layer_ids)
+        insert_at = 0
+        for i, node in enumerate(root.children()):
+            if getattr(node, 'layerId', lambda: None)() in own_ids:
+                insert_at = i + 1
+        root.insertLayer(insert_at, layer)
+        return layer
+
+    def _on_show_contours(self):
+        """Sample the DEM over the chosen extent and draw elevation contours, one
+        line per elevation-tolerance step."""
+        if (not self._missions and not self._waypoints
+                and not self._has_survey_area(silent=True)):
+            QMessageBox.information(self, 'DEM Contours',
+                'Define a survey area and preview a mission first, then show the '
+                'contours.')
+            return
+        extent = self.contourExtentCombo.currentData()
+        self._on_clear_contours()
+        try:
+            QApplication.setOverrideCursor(_WaitCursor)
+            try:
+                result = self._compute_contours(extent)
+            finally:
+                QApplication.restoreOverrideCursor()
+        except _TerrainError as exc:
+            QMessageBox.warning(self, 'DEM Contours',
+                'Could not read the ground elevation.\n\n%s\n\nSelect a DEM that '
+                'covers the area, or check your internet connection for the '
+                'online elevation source.' % exc)
+            return
+        if result is None:
+            QMessageBox.information(self, 'DEM Contours',
+                'Preview a mission first, then show the contours.')
+            return
+        if result['n_valid'] == 0:
+            QMessageBox.warning(self, 'DEM Contours',
+                'The DEM does not cover this area, so no ground elevations could '
+                'be read.\n\nSelect a DEM that covers it, or switch to the online '
+                'elevation source.')
+            return
+        layer = self._build_contour_layer(result)
+        if layer is None:
+            QMessageBox.information(self, 'DEM Contours',
+                'The terrain here is flat within the %.1f m contour interval, so '
+                'there are no lines to draw.\n\nLower the elevation tolerance for '
+                'a finer interval.' % result['interval'])
+            return
+        self._contour_layer_id = layer.id()
+        self.iface.mapCanvas().refresh()
+        where = ('the survey area' if self.contourExtentCombo.currentData() == 'survey'
+                 else 'the takeoff circles')
+        self.infoBar.setText(
+            'DEM contours: %d levels every %.1f m over %s.'
+            % (result['n_levels'], result['interval'], where))
+
+    def _on_clear_contours(self):
+        """Remove the DEM contour overlay from the map, if one is shown."""
+        if self._contour_layer_id:
+            QgsProject.instance().removeMapLayer(self._contour_layer_id)
+            self._contour_layer_id = None
             self.iface.mapCanvas().refresh()
 
     def _set_feature_row_visible(self, visible):
@@ -3702,8 +3951,9 @@ class FlyPathDialog(QWidget):
                 QgsProject.instance().removeMapLayer(lid)
         self._preview_layer_ids = []
         self._clear_corridor_band()
-        # The takeoff zone belongs to the plan being cleared, so drop it too.
+        # The takeoff zone and contours belong to the plan being cleared.
         self._on_clear_takeoff_zone()
+        self._on_clear_contours()
 
         if reset_area:
             # Full reset — also stop any active draw and remove the boundary
