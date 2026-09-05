@@ -753,7 +753,6 @@ class FlyPathDialog(QWidget):
         self._apply_drone_capabilities()
         self._update_gsd()
         self._update_interval()
-        self._set_default_takeoff_radius()
         self._update_takeoff_gsd_var()
 
     # ── Hover-hint helper ─────────────────────────────────────────────────
@@ -1280,16 +1279,20 @@ class FlyPathDialog(QWidget):
 
         Consumer DJI missions fly relative to the takeoff point, so launching
         from ground at a different elevation shifts the whole mission's height
-        above ground. This highlights the ground within an elevation tolerance
-        of the mission start and within radio range of every waypoint."""
+        above ground. Within a fixed radius of the first waypoint this highlights
+        the ground whose elevation matches the first waypoint's, within the
+        tolerance: a full circle on flat ground, and the matching part of that
+        circle where the terrain rises or falls."""
         group = QGroupBox('Takeoff Zone')
         outer = QVBoxLayout(group)
         outer.setSpacing(6)
 
         blurb = QLabel(
-            'Ground you can take off from to keep this mission at the same '
-            'altitude, and so the same GSD, on every repeat flight. Preview a '
-            'mission and pick a DEM first.')
+            'Ground within %d m of the first waypoint you can take off from to '
+            'keep this mission at the same altitude, and so the same GSD, on '
+            'every repeat flight. On flat ground it is a full circle; where the '
+            'terrain changes it is the part at the matching elevation. Preview a '
+            'mission and pick a DEM first.' % int(self._TAKEOFF_RADIUS_M))
         blurb.setWordWrap(True)
         blurb.setObjectName('takeoffBlurb')
         outer.addWidget(blurb)
@@ -1316,19 +1319,6 @@ class FlyPathDialog(QWidget):
             'The GSD change this tolerance allows at the current altitude. '
             'Smaller is better when comparing maps between flights.')
         form.addRow('GSD Variance', self.takeoffGsdVarLabel)
-
-        self.takeoffRadiusSpin = QDoubleSpinBox()
-        self.takeoffRadiusSpin.setRange(0.1, 10.0)
-        self.takeoffRadiusSpin.setValue(1.0)
-        self.takeoffRadiusSpin.setSingleStep(0.5)
-        self.takeoffRadiusSpin.setDecimals(1)
-        self.takeoffRadiusSpin.setSuffix(' km')
-        self._tip(self.takeoffRadiusSpin,
-            'How far the takeoff point may sit from every waypoint, so the '
-            'drone keeps a dependable control link. Defaults to a conservative '
-            'fraction of the drone\'s advertised range, since the advertised '
-            'figure is an ideal open-field maximum, not real reliable range.')
-        form.addRow('Takeoff Radius', self.takeoffRadiusSpin)
 
         outer.addLayout(form)
 
@@ -1778,7 +1768,6 @@ class FlyPathDialog(QWidget):
         self._update_camera_info()
         self._apply_speed_range()
         self._apply_drone_capabilities()
-        self._set_default_takeoff_radius()
         self._on_param_changed()
 
     def _apply_drone_capabilities(self):
@@ -2347,14 +2336,13 @@ class FlyPathDialog(QWidget):
 
     # ── Takeoff zone ──────────────────────────────────────────────────────
 
-    _TAKEOFF_MAX_STEPS = 60        # grid resolution cap per side (bounds sampling)
-    _TAKEOFF_SEARCH_CAP_M = 3000.0  # max search radius sampled around the mission
-    # Fraction of a drone's advertised max transmission range taken as a realistic
-    # reliable-link radius. DJI's figures are open-field, line-of-sight, no-
-    # interference maxima; a real control link in an obstructed, noisy environment
-    # holds over only a small fraction of that. 5% puts the common 20 km drones at
-    # a ~1 km default takeoff radius, which the user can still adjust per mission.
-    _SIGNAL_RANGE_FRACTION = 0.05
+    # Fixed radius, around the first waypoint, that the takeoff zone can reach.
+    # Consumer DJI drones keep a dependable control link well within this in a
+    # real (obstructed, noisy) environment, so it is fixed rather than asked of
+    # the user. The zone is a full circle of this radius on flat ground, and the
+    # matching-elevation part of it where the terrain changes.
+    _TAKEOFF_RADIUS_M = 500.0
+    _TAKEOFF_STEPS = 40           # DEM samples across the circle's diameter
 
     def _mission_parts(self):
         """The plan split into sub-missions as [[(lon, lat), ...], ...].
@@ -2375,19 +2363,20 @@ class FlyPathDialog(QWidget):
             missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
         return [wps for wps, _, _ in missions_h]
 
-    def _compute_takeoff_zones(self, tolerance_m, proximity_m):
+    def _compute_takeoff_zones(self, tolerance_m):
         """Sample the DEM and return one takeoff zone per split sub-mission.
 
         Each sub-mission is a separate flight launched from its own takeoff, so
-        each gets its own reference elevation (the DEM at that sub-mission's first
-        waypoint) and its own proximity constraint (its own waypoints). Uses the
-        currently selected DEM: a local raster if one is chosen, otherwise the
-        online source, exactly like terrain follow.
+        each is anchored on its own first waypoint: the zone is the ground within
+        the fixed takeoff radius of that waypoint whose elevation matches the
+        waypoint's, within the tolerance. Uses the currently selected DEM: a local
+        raster if one is chosen, otherwise the online source, like terrain follow.
 
-        Returns a dict {'zones', 'gsd_var', 'n_sampled', 'to_wgs'} where each zone
-        is {'index', 'ref_elev', 'spacing', 'cells_utm': [(x, y), ...]}. Raises
-        _TerrainError if a reference elevation cannot be read; returns None if
-        there is no mission yet."""
+        Returns a dict {'zones', 'gsd_var', 'n_sampled', 'to_wgs', 'radius_m'}
+        where each zone is {'index', 'ref_elev', 'center_utm', 'spacing', 'flat',
+        'cells_utm': [(x, y), ...]}. `flat` is True when the whole circle is within
+        tolerance (the zone is the full circle). Raises _TerrainError if a
+        reference elevation cannot be read; returns None if there is no mission."""
         parts = self._mission_parts()
         if parts is None:
             return None
@@ -2395,8 +2384,10 @@ class FlyPathDialog(QWidget):
         if not parts:
             return None
 
-        # One metric CRS for the whole plan (split missions sit close together),
-        # so all the squares tile on a single grid.
+        radius_m = self._TAKEOFF_RADIUS_M
+        spacing = max(10.0, (2.0 * radius_m) / self._TAKEOFF_STEPS)
+
+        # One metric CRS for the whole plan (split missions sit close together).
         origin_lon, origin_lat = parts[0][0]
         wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
         utm = _utm_crs_for(origin_lon, origin_lat)
@@ -2408,50 +2399,52 @@ class FlyPathDialog(QWidget):
         for idx, mission in enumerate(parts):
             first_lon, first_lat = mission[0]
             ref_elev = self._terrain.sample(first_lon, first_lat)   # may raise
+            p = to_utm.transform(QgsPointXY(first_lon, first_lat))
+            center = (p.x(), p.y())
 
-            mission_utm = []
-            for lon, lat in mission:
-                p = to_utm.transform(QgsPointXY(lon, lat))
-                mission_utm.append((p.x(), p.y()))
-
-            # Sample out to the proximity cap, but no further than a practical
-            # radius so the DEM sampling stays bounded (the proximity filter
-            # still applies).
-            margin = min(proximity_m, self._TAKEOFF_SEARCH_CAP_M)
-            bounds = search_bounds(mission_utm, margin)
-            span = max(bounds[2] - bounds[0], bounds[3] - bounds[1])
-            spacing = max(20.0, span / self._TAKEOFF_MAX_STEPS)
-
+            # Sample the DEM over the circle around the first waypoint.
+            bounds = search_bounds([center], radius_m)
             candidates = []
+            in_disk = 0
             for gx, gy in sample_grid(bounds, spacing):
+                if math.hypot(gx - center[0], gy - center[1]) > radius_m:
+                    continue                       # keep the sample area a disk
                 wp = to_wgs.transform(QgsPointXY(gx, gy))
                 try:
                     elev = self._terrain.sample(wp.x(), wp.y())
                 except _TerrainError:
                     continue
                 candidates.append((gx, gy, elev))
+                in_disk += 1
             n_sampled += len(candidates)
 
-            zone_utm = takeoff_zone(candidates, mission_utm, ref_elev,
-                                    tolerance_m, proximity_m)
+            # mission_points is just the first waypoint, so the proximity test is
+            # a plain distance-from-centre disk.
+            zone_utm = takeoff_zone(candidates, [center], ref_elev,
+                                    tolerance_m, radius_m)
+            cells = [(x, y) for x, y, _ in zone_utm]
             zones.append({
                 'index': idx,
                 'ref_elev': ref_elev,
+                'center_utm': center,
                 'spacing': spacing,
-                'cells_utm': [(x, y) for x, y, _ in zone_utm],
+                'flat': in_disk > 0 and len(cells) == in_disk,
+                'cells_utm': cells,
             })
 
         gsd_var = gsd_variance_pct(tolerance_m, self.altitudeSpin.value())
         return {'zones': zones, 'gsd_var': gsd_var, 'n_sampled': n_sampled,
-                'to_wgs': to_wgs}
+                'to_wgs': to_wgs, 'radius_m': radius_m}
 
     def _build_takeoff_zone_layer(self, result):
-        """Build the takeoff-zone overlay: one dissolved dark-purple region per
-        split sub-mission, drawn under the flight path. Each grid cell becomes a
-        square, and a mission's squares are unioned into one clean region carrying
-        its mission index and reference elevation. Returns the layer, or None when
-        every zone came back empty."""
+        """Build the takeoff-zone overlay: one smooth dark-purple region per split
+        sub-mission, drawn under the flight path. On flat ground the region is the
+        full circle around the first waypoint; where the terrain changes it is the
+        matching-elevation part of that circle. Each region is a single polygon
+        carrying its mission index and reference elevation. Returns the layer, or
+        None when every zone came back empty."""
         to_wgs = result['to_wgs']
+        radius_m = result['radius_m']
         layer = QgsVectorLayer(
             'Polygon?crs=EPSG:4326&field=mission:integer'
             '&field=ref_elevation_m:double',
@@ -2460,21 +2453,24 @@ class FlyPathDialog(QWidget):
 
         feats = []
         for z in result['zones']:
-            cells = z['cells_utm']
-            if not cells:
-                continue
-            half = z['spacing'] / 2.0
-            squares = [
-                QgsGeometry.fromPolygonXY([[
-                    QgsPointXY(x - half, y - half),
-                    QgsPointXY(x + half, y - half),
-                    QgsPointXY(x + half, y + half),
-                    QgsPointXY(x - half, y + half),
-                    QgsPointXY(x - half, y - half),
-                ]])
-                for x, y in cells
-            ]
-            region = QgsGeometry.unaryUnion(squares)   # dissolve into one region
+            cx, cy = z['center_utm']
+            disk = QgsGeometry.fromPointXY(QgsPointXY(cx, cy)).buffer(radius_m, 48)
+            if z['flat']:
+                region = disk                       # whole circle qualifies
+            else:
+                cells = z['cells_utm']
+                if not cells:
+                    continue
+                # Buffer each qualifying sample and merge, so the region is one
+                # smooth blob rather than grid squares, then clip to the circle.
+                r = z['spacing']
+                blob = QgsGeometry.unaryUnion([
+                    QgsGeometry.fromPointXY(QgsPointXY(x, y)).buffer(r, 8)
+                    for x, y in cells
+                ])
+                region = blob.intersection(disk)
+                if region.isEmpty():
+                    continue
             region.transform(to_wgs)
             feat = QgsFeature()
             feat.setGeometry(region)
@@ -2506,21 +2502,6 @@ class FlyPathDialog(QWidget):
         root.insertLayer(insert_at, layer)
         return layer
 
-    def _set_default_takeoff_radius(self):
-        """Default the takeoff radius to a realistic reliable-link fraction of the
-        selected drone's advertised transmission range, so the whole flight stays
-        comfortably within a dependable control link (not the open-field maximum).
-        Left unchanged when the drone's range is unknown."""
-        drone = self.droneModelCombo.currentText()
-        if not registry.has(drone):
-            return
-        rng = registry.get(drone).signal_range_km
-        if not rng:
-            return
-        self.takeoffRadiusSpin.blockSignals(True)
-        self.takeoffRadiusSpin.setValue(rng * self._SIGNAL_RANGE_FRACTION)
-        self.takeoffRadiusSpin.blockSignals(False)
-
     def _update_takeoff_gsd_var(self):
         """Show the GSD change the current tolerance allows at the current
         altitude, so the trade-off is visible before sampling the DEM."""
@@ -2540,12 +2521,11 @@ class FlyPathDialog(QWidget):
                 'takeoff zone.')
             return
         tolerance_m = self.takeoffToleranceSpin.value()
-        proximity_m = self.takeoffRadiusSpin.value() * 1000.0
         self._on_clear_takeoff_zone()
         try:
             QApplication.setOverrideCursor(_WaitCursor)
             try:
-                result = self._compute_takeoff_zones(tolerance_m, proximity_m)
+                result = self._compute_takeoff_zones(tolerance_m)
             finally:
                 QApplication.restoreOverrideCursor()
         except _TerrainError as exc:
@@ -2567,21 +2547,20 @@ class FlyPathDialog(QWidget):
         layer = self._build_takeoff_zone_layer(result)
         if layer is None:
             QMessageBox.information(self, 'Takeoff Zone',
-                'No takeoff ground was found within %.1f m of the mission start '
-                'elevation and within %.1f km of every waypoint.\n\nTry a larger '
-                'tolerance or radius.'
-                % (tolerance_m, proximity_m / 1000.0))
+                'No takeoff ground was found within %.0f m of the first waypoint '
+                'at its elevation (within %.1f m).\n\nTry a larger tolerance.'
+                % (result['radius_m'], tolerance_m))
             return
         self._takeoff_layer_id = layer.id()
         self.iface.mapCanvas().refresh()
 
-        n_zones = sum(1 for z in result['zones'] if z['cells_utm'])
+        n_zones = layer.featureCount()
         area_word = 'area' if n_zones == 1 else 'areas'
         self.infoBar.setText(
-            'Takeoff zone: %d %s shown in purple, ± %.2f%% GSD variance '
-            '(tolerance %.1f m, radius %.1f km).'
-            % (n_zones, area_word, result['gsd_var'], tolerance_m,
-               proximity_m / 1000.0))
+            'Takeoff zone: %d %s shown in purple within %.0f m of the first '
+            'waypoint, ± %.2f%% GSD variance (tolerance %.1f m).'
+            % (n_zones, area_word, result['radius_m'], result['gsd_var'],
+               tolerance_m))
 
     def _on_clear_takeoff_zone(self):
         """Remove the takeoff-zone overlay from the map, if one is shown."""
