@@ -1284,18 +1284,13 @@ class FlyPathDialog(QWidget):
         tolerance: a full circle on flat ground, and the matching part of that
         circle where the terrain rises or falls."""
         group = QGroupBox('Takeoff Zone')
+        self._tip(group,
+            'Ground within %d m of the first waypoint at its elevation, so '
+            'repeat flights keep the same altitude and GSD. A full circle on '
+            'flat ground; the matching-elevation part where the terrain changes. '
+            'Preview a mission and pick a DEM first.' % int(self._TAKEOFF_RADIUS_M))
         outer = QVBoxLayout(group)
         outer.setSpacing(6)
-
-        blurb = QLabel(
-            'Ground within %d m of the first waypoint you can take off from to '
-            'keep this mission at the same altitude, and so the same GSD, on '
-            'every repeat flight. On flat ground it is a full circle; where the '
-            'terrain changes it is the part at the matching elevation. Preview a '
-            'mission and pick a DEM first.' % int(self._TAKEOFF_RADIUS_M))
-        blurb.setWordWrap(True)
-        blurb.setObjectName('takeoffBlurb')
-        outer.addWidget(blurb)
 
         form = QFormLayout()
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
