@@ -97,11 +97,14 @@ from qgis.core import (
 )
 from .map_tools import PolygonDrawTool, LineDrawTool, VertexPickTool
 from .grid_planner import (
-    generate_flight_grid, find_optimal_direction, split_waypoints
+    generate_flight_grid, find_optimal_direction, split_waypoints, _utm_crs_for
 )
 from .grid_route import split_by_waypoint_count
 from .corridor_planner import generate_corridor_route
 from .corridor_geometry import compute_pass_offsets
+from .takeoff_zone import (
+    takeoff_zone, gsd_variance_pct, sample_grid, search_bounds
+)
 from .terrain import (
     TERRARIUM_URL, ZOOM, TILE_SIZE, tile_coords, elevation_from_rgb,
     sample_elevations, densify_by_terrain, heights_above_takeoff,
@@ -2254,6 +2257,68 @@ class FlyPathDialog(QWidget):
             self._terrain = _TerrainLayerSampler(QgsProject.instance().mapLayer(layer_id))
         self._apply_mission_type_capabilities()
         self._on_param_changed()
+
+    # ── Takeoff zone ──────────────────────────────────────────────────────
+
+    _TAKEOFF_MAX_STEPS = 60        # grid resolution cap per side (bounds sampling)
+    _TAKEOFF_SEARCH_CAP_M = 5000.0  # max search radius sampled around the mission
+
+    def _compute_takeoff_zone(self, tolerance_m, proximity_m):
+        """Sample the DEM over the search area and return the takeoff zone.
+
+        Returns (zone_wgs84, ref_elevation, gsd_var_pct, n_sampled, spacing_m),
+        where zone_wgs84 is [(lon, lat, elev), ...] the ground the pilot can take
+        off from to keep the mission's GSD repeatable. Uses the currently selected
+        DEM (a local raster if one is chosen, otherwise the online source, exactly
+        like terrain follow). Raises _TerrainError if the reference elevation
+        cannot be read; returns None if there is no mission yet."""
+        if self._waypoints:
+            waypoints = self._waypoints
+        else:
+            result = self._generate_waypoints()
+            if result is None:
+                return None
+            waypoints = result[0]
+        if not waypoints:
+            return None
+
+        first_lon, first_lat = waypoints[0]
+        ref_elev = self._terrain.sample(first_lon, first_lat)   # may raise _TerrainError
+
+        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
+        utm = _utm_crs_for(first_lon, first_lat)
+        to_utm = QgsCoordinateTransform(wgs84, utm, QgsProject.instance())
+        to_wgs = QgsCoordinateTransform(utm, wgs84, QgsProject.instance())
+
+        mission_utm = []
+        for lon, lat in waypoints:
+            p = to_utm.transform(QgsPointXY(lon, lat))
+            mission_utm.append((p.x(), p.y()))
+
+        # Sample out to the proximity cap, but no further than a practical radius
+        # so the DEM sampling stays bounded (the proximity filter still applies).
+        margin = min(proximity_m, self._TAKEOFF_SEARCH_CAP_M)
+        bounds = search_bounds(mission_utm, margin)
+        span = max(bounds[2] - bounds[0], bounds[3] - bounds[1])
+        spacing = max(20.0, span / self._TAKEOFF_MAX_STEPS)
+
+        candidates = []
+        for gx, gy in sample_grid(bounds, spacing):
+            wp = to_wgs.transform(QgsPointXY(gx, gy))
+            try:
+                elev = self._terrain.sample(wp.x(), wp.y())
+            except _TerrainError:
+                continue
+            candidates.append((gx, gy, elev))
+
+        zone_utm = takeoff_zone(candidates, mission_utm, ref_elev,
+                                tolerance_m, proximity_m)
+        zone_wgs = [(to_wgs.transform(QgsPointXY(gx, gy)).x(),
+                     to_wgs.transform(QgsPointXY(gx, gy)).y(), elev)
+                    for gx, gy, elev in zone_utm]
+
+        gsd_var = gsd_variance_pct(tolerance_m, self.altitudeSpin.value())
+        return zone_wgs, ref_elev, gsd_var, len(candidates), spacing
 
     def _set_feature_row_visible(self, visible):
         """Show or hide the Feature combo together with its form label, so no
