@@ -2485,12 +2485,18 @@ class FlyPathDialog(QWidget):
         layer.renderer().setSymbol(symbol)
         layer.triggerRepaint()
 
-        # Add at the bottom of the layer tree so the zone sits under the flight
-        # path and waypoint markers instead of hiding them.
+        # Place the zone directly beneath FlyPath's own path/marker layers, so it
+        # sits under the flight path, but above the user's layers, so an opaque
+        # DEM or basemap raster does not hide it (which a bottom insertion would).
         proj = QgsProject.instance()
         proj.addMapLayer(layer, False)
         root = proj.layerTreeRoot()
-        root.insertLayer(len(root.children()), layer)
+        own_ids = set(self._preview_layer_ids)
+        insert_at = 0
+        for i, node in enumerate(root.children()):
+            if getattr(node, 'layerId', lambda: None)() in own_ids:
+                insert_at = i + 1
+        root.insertLayer(insert_at, layer)
         return layer
 
     def _set_default_takeoff_radius(self):
