@@ -1508,14 +1508,18 @@ class FlyPathDialog(QWidget):
         hud.setAttribute(_WA_MouseTransparent, True)
         hud.setFixedWidth(self._INFO_HUD_WIDTH)
         lay = QVBoxLayout(hud)
-        lay.setContentsMargins(14, 10, 14, 10)
+        self._INFO_HUD_MARGINS = (14, 10, 14, 10)
+        lay.setContentsMargins(*self._INFO_HUD_MARGINS)
+        # Set a real font (not just a stylesheet font-size): heightForWidth uses
+        # the widget's QFont metrics, so the card height matches the drawn text.
+        self.infoBar.setFont(QFont('Segoe UI', 10))
         lay.addWidget(self.infoBar)              # reparents the label into the card
         hud.setStyleSheet(
             '#flypathInfoHud { background-color: rgba(24, 27, 34, 0.88); '
             'border: 1px solid #3A3D45; border-radius: 7px; }'
-            '#flypathInfoHud QLabel#infoBar { color: #7FB3E8; font-size: 12px; '
+            '#flypathInfoHud QLabel#infoBar { color: #7FB3E8; '
             'background: transparent; border: none; padding: 0; }'
-            '#flypathInfoHud QLabel#infoBarIdle { color: #8A93A0; font-size: 12px; '
+            '#flypathInfoHud QLabel#infoBarIdle { color: #8A93A0; '
             'background: transparent; border: none; padding: 0; }'
         )
         hud.hide()
@@ -1523,11 +1527,19 @@ class FlyPathDialog(QWidget):
 
     def _position_info_hud(self):
         """Pin the info card to the top-right of the map, just below the stats
-        card when it is showing, otherwise where the stats card would sit."""
+        card when it is showing, otherwise where the stats card would sit. Sizes
+        the card to fit the wrapped text (adjustSize does not reliably honour a
+        word-wrapped label's height), so no line is clipped."""
         canvas = self.iface.mapCanvas()
         if not self._info_hud or not hasattr(canvas, 'width'):
             return
-        self._info_hud.adjustSize()
+        left, top, right, bottom = self._INFO_HUD_MARGINS
+        inner = self._INFO_HUD_WIDTH - left - right
+        text_h = self.infoBar.heightForWidth(inner)
+        if text_h <= 0:
+            text_h = self.infoBar.sizeHint().height()
+        # + margins + a few px for the card border/rounding, so nothing clips.
+        self._info_hud.setFixedHeight(text_h + top + bottom + 5)
         margin = 12
         x = canvas.width() - self._info_hud.width() - margin
         if self._hud and not self._hud.isHidden():
