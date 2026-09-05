@@ -554,10 +554,11 @@ def _mission_color(i):
 class _HoverFilter(QObject):
     """Event filter that writes a hint to a shared info label on mouse enter/leave."""
 
-    def __init__(self, label, text, parent=None):
+    def __init__(self, label, text, parent=None, on_change=None):
         super().__init__(parent)
         self._label = label
         self._text  = text
+        self._on_change = on_change
 
     def eventFilter(self, obj, event):
         if event.type() == _EventEnter:
@@ -566,12 +567,16 @@ class _HoverFilter(QObject):
             self._label.setText('ⓘ  ' + self._text)
             self._label.style().unpolish(self._label)
             self._label.style().polish(self._label)
+            if self._on_change:
+                self._on_change()
         elif event.type() == _EventLeave:
             self._label.setObjectName('infoBarIdle')
             self._label.setStyleSheet('')
             self._label.setText(_INFO_IDLE)
             self._label.style().unpolish(self._label)
             self._label.style().polish(self._label)
+            if self._on_change:
+                self._on_change()
         return False   # never consume the event
 
 
@@ -711,6 +716,7 @@ class FlyPathDialog(QWidget):
 
         # State
         self._hud                = None   # flight-stats card overlaid on the map
+        self._info_hud           = None   # info/hint card overlaid under the stats
         self._terrain            = _TerrainSampler()  # in-memory DEM, no disk cache
         self._terrain_warned     = False  # only warn once when elevation is down
         self._live_elevations    = None   # ground elevations parallel to _live_waypoints
@@ -762,7 +768,8 @@ class FlyPathDialog(QWidget):
     def _tip(self, widget, text):
         """Attach a hover hint to widget — shown in the info bar, not as a tooltip."""
         widget.setToolTip('')   # disable floating tooltip
-        f = _HoverFilter(self.infoBar, text, parent=widget)
+        f = _HoverFilter(self.infoBar, text, parent=widget,
+                         on_change=self._refresh_info_hud)
         widget.installEventFilter(f)
 
     # ── UI construction ───────────────────────────────────────────────────
@@ -791,11 +798,12 @@ class FlyPathDialog(QWidget):
         scroll_layout.setSpacing(8)
         scroll_layout.setContentsMargins(8, 8, 8, 8)
 
-        # Info bar must exist before group builders call self._tip()
+        # Info label must exist before group builders call self._tip(). It no
+        # longer lives in the panel: it is placed in a HUD card on the map canvas
+        # (under the Mission Stats card) by _build_info_hud().
         self.infoBar = QLabel(_INFO_IDLE)
         self.infoBar.setObjectName('infoBarIdle')
         self.infoBar.setWordWrap(True)
-        self.infoBar.setMinimumHeight(32)
 
         scroll_layout.addWidget(self._build_mission_group())
         scroll_layout.addWidget(self._build_area_group())
@@ -829,13 +837,13 @@ class FlyPathDialog(QWidget):
 
         # Statistics live in a HUD card overlaid on the map canvas (outside the
         # panel), shown when a plan exists. Built here so the stat labels exist
-        # for _update_stats.
+        # for _update_stats. The info/hint card sits just under it.
         self._hud = self._build_stats_hud()
+        self._info_hud = self._build_info_hud()
         scroll_layout.addStretch()
 
         scroll.setWidget(content)
         outer.addWidget(scroll, 1)
-        outer.addWidget(self.infoBar)
         outer.addWidget(self._build_action_bar())
 
         # Let the dock shrink only down to the natural minimum width of its
@@ -1454,16 +1462,95 @@ class FlyPathDialog(QWidget):
             self._position_hud()
             self._hud.show()
             self._hud.raise_()
+            self._position_info_hud()   # info card sits under the stats card
+            if self._info_hud:
+                self._info_hud.raise_()
 
     def _hide_hud(self):
         if self._hud:
             self._hud.hide()
+            self._position_info_hud()   # reclaim the stats card's space
 
     def eventFilter(self, obj, event):
-        if (self._hud and obj is self.iface.mapCanvas()
-                and event.type() == _EventResize and self._hud.isVisible()):
-            self._position_hud()
+        if (obj is self.iface.mapCanvas() and event.type() == _EventResize):
+            if self._hud and self._hud.isVisible():
+                self._position_hud()
+            if self._info_hud and self._info_hud.isVisible():
+                self._position_info_hud()
         return super().eventFilter(obj, event)
+
+    # ── Info / hint HUD (under the Mission Stats card) ─────────────────────
+
+    _INFO_HUD_WIDTH = 260
+
+    def _build_info_hud(self):
+        """Info/hint HUD: a card overlaid on the map canvas, just under the
+        Mission Stats card, holding the info label that _tip() and status
+        messages write to. Moving it out of the panel frees vertical space as the
+        panel grows. Click-through, so it never blocks the map."""
+        canvas = self.iface.mapCanvas()
+        try:
+            hud = QFrame(canvas)                  # child of the map canvas
+        except TypeError:
+            hud = QFrame()                        # headless / mock fallback
+        hud.setObjectName('flypathInfoHud')
+        hud.setAttribute(_WA_MouseTransparent, True)
+        hud.setFixedWidth(self._INFO_HUD_WIDTH)
+        lay = QVBoxLayout(hud)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.addWidget(self.infoBar)              # reparents the label into the card
+        hud.setStyleSheet(
+            '#flypathInfoHud { background-color: rgba(24, 27, 34, 0.88); '
+            'border: 1px solid #3A3D45; border-radius: 7px; }'
+            '#flypathInfoHud QLabel#infoBar { color: #7FB3E8; font-size: 12px; '
+            'background: transparent; border: none; padding: 0; }'
+            '#flypathInfoHud QLabel#infoBarIdle { color: #8A93A0; font-size: 12px; '
+            'background: transparent; border: none; padding: 0; }'
+        )
+        hud.hide()
+        return hud
+
+    def _position_info_hud(self):
+        """Pin the info card to the top-right of the map, just below the stats
+        card when it is showing, otherwise where the stats card would sit."""
+        canvas = self.iface.mapCanvas()
+        if not self._info_hud or not hasattr(canvas, 'width'):
+            return
+        self._info_hud.adjustSize()
+        margin = 12
+        x = canvas.width() - self._info_hud.width() - margin
+        if self._hud and not self._hud.isHidden():
+            y = self._hud.y() + self._hud.height() + 8
+        else:
+            y = margin
+        self._info_hud.move(max(margin, int(x)), int(y))
+
+    def _refresh_info_hud(self):
+        """Re-fit the info card to its current text (its height changes as hints
+        wrap to different lengths) and reposition it."""
+        if self._info_hud and self._info_hud.isVisible():
+            self._position_info_hud()
+
+    def _show_info_hud(self):
+        if self._info_hud and self.isVisible():
+            self._position_info_hud()
+            self._info_hud.show()
+            self._info_hud.raise_()
+
+    def _hide_info_hud(self):
+        if self._info_hud:
+            self._info_hud.hide()
+
+    def _set_info(self, text):
+        """Set the info-card text (idle style for the idle prompt, active blue
+        otherwise) and re-fit the card to the new content."""
+        self.infoBar.setObjectName('infoBarIdle' if text == _INFO_IDLE
+                                   else 'infoBar')
+        self.infoBar.setStyleSheet('')
+        self.infoBar.setText(text)
+        self.infoBar.style().unpolish(self.infoBar)
+        self.infoBar.style().polish(self.infoBar)
+        self._refresh_info_hud()
 
     def _build_action_bar(self):
         bar = QWidget()
@@ -1923,7 +2010,7 @@ class FlyPathDialog(QWidget):
             # Keep the label short so it never widens the panel; the full
             # instructions go to the info bar below.
             self.setBreaksBtn.setText('Setting Breaks…')
-            self.infoBar.setText(
+            self._set_info(
                 'Click a centre-line vertex to break the mission there; click it '
                 'again to remove the break. Press Escape when done.')
         else:
@@ -1939,7 +2026,7 @@ class FlyPathDialog(QWidget):
             canvas.unsetMapTool(current)
         self._break_tool = None
         self.setBreaksBtn.setText('Set Mission Breaks')
-        self.infoBar.setText(_INFO_IDLE)
+        self._set_info(_INFO_IDLE)
 
     def _corridor_line_parts(self):
         """Centre-line parts as lists of QgsPointXY, in the line's own CRS."""
@@ -2585,7 +2672,7 @@ class FlyPathDialog(QWidget):
 
         n_zones = layer.featureCount()
         area_word = 'area' if n_zones == 1 else 'areas'
-        self.infoBar.setText(
+        self._set_info(
             'Takeoff zone: %d %s shown in purple within %.0f m of the first '
             'waypoint, ± %.2f%% GSD variance (tolerance %.1f m).'
             % (n_zones, area_word, result['radius_m'], result['gsd_var'],
@@ -2804,7 +2891,7 @@ class FlyPathDialog(QWidget):
         self.iface.mapCanvas().refresh()
         where = ('the survey area' if self.contourExtentCombo.currentData() == 'survey'
                  else 'the takeoff circles')
-        self.infoBar.setText(
+        self._set_info(
             'DEM contours: %d levels every %.1f m over %s.'
             % (result['n_levels'], result['interval'], where))
 
@@ -3382,7 +3469,7 @@ class FlyPathDialog(QWidget):
         self.editPolygonBtn.setText('✓ Finish Editing')
         noun = ('corridor centre line' if self._mission_kind() == 'corridor'
                 else 'survey polygon')
-        self.infoBar.setText(
+        self._set_info(
             f'Editing the {noun}: drag a vertex to move it, click an '
             'edge to add one, or select a vertex and press Delete to remove '
             'it. Click Finish Editing when done.'
@@ -3395,7 +3482,7 @@ class FlyPathDialog(QWidget):
         if tool is not None:
             self.iface.mapCanvas().setMapTool(tool)
             self._prev_tool_before_edit = None
-        self.infoBar.setText(_INFO_IDLE)
+        self._set_info(_INFO_IDLE)
 
     def _on_drawing_cancelled(self):
         self.drawPolygonBtn.setChecked(False)
@@ -3742,10 +3829,12 @@ class FlyPathDialog(QWidget):
         # Bring the HUD back when the panel reopens, if there is a live plan.
         if self._hud is not None and self._live_waypoints:
             self._show_hud()
+        self._show_info_hud()   # the info card follows the panel's visibility
 
     def hideEvent(self, event):
         super().hideEvent(event)
         self._hide_hud()
+        self._hide_info_hud()
 
     # ── Map preview ───────────────────────────────────────────────────────
 
@@ -4958,7 +5047,7 @@ class FlyPathDialog(QWidget):
         else:
             # Auto-detected MTP device path: copy over USB via Windows Shell.
             QApplication.setOverrideCursor(_WaitCursor)
-            self.infoBar.setText('Sending the mission to the RC, please wait…')
+            self._set_info('Sending the mission to the RC, please wait…')
             QApplication.processEvents()
             try:
                 ok, detail = self._export_to_mtp_rc(
@@ -4968,7 +5057,7 @@ class FlyPathDialog(QWidget):
                 )
             finally:
                 QApplication.restoreOverrideCursor()
-                self.infoBar.setText(_INFO_IDLE)
+                self._set_info(_INFO_IDLE)
 
         if ok:
             # The mission now holds our new waypoints (same date). Update the
@@ -5209,7 +5298,7 @@ class FlyPathDialog(QWidget):
         if self._thumb_dir:
             shutil.rmtree(self._thumb_dir, ignore_errors=True)
             self._thumb_dir = None
-        # Remove the map-canvas HUD and its resize hook.
+        # Remove the map-canvas HUDs and their resize hook.
         if self._hud is not None:
             try:
                 self.iface.mapCanvas().removeEventFilter(self)
@@ -5217,6 +5306,9 @@ class FlyPathDialog(QWidget):
                 pass
             self._hud.deleteLater()
             self._hud = None
+        if self._info_hud is not None:
+            self._info_hud.deleteLater()
+            self._info_hud = None
         # Drop the in-memory DEM tiles.
         self._terrain.clear()
 
