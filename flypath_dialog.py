@@ -1319,24 +1319,35 @@ class FlyPathDialog(QWidget):
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
 
+        # Elevation Tolerance and its GSD Variance read-out share one row.
         self.takeoffToleranceSpin = QDoubleSpinBox()
         self.takeoffToleranceSpin.setRange(0.1, 50.0)
         self.takeoffToleranceSpin.setValue(2.0)
         self.takeoffToleranceSpin.setSingleStep(0.5)
         self.takeoffToleranceSpin.setDecimals(1)
         self.takeoffToleranceSpin.setSuffix(' m')
+        self.takeoffToleranceSpin.setMaximumWidth(90)
         self._tip(self.takeoffToleranceSpin,
             'How far the takeoff ground elevation may differ from the mission '
             'start. A tighter tolerance keeps the GSD more consistent between '
             'flights but leaves a smaller takeoff area.')
-        form.addRow('Elevation Tolerance', self.takeoffToleranceSpin)
-
         self.takeoffGsdVarLabel = QLabel('—')
         self.takeoffGsdVarLabel.setObjectName('takeoffGsdVarLabel')
         self._tip(self.takeoffGsdVarLabel,
             'The GSD change this tolerance allows at the current altitude. '
             'Smaller is better when comparing maps between flights.')
-        form.addRow('GSD Variance', self.takeoffGsdVarLabel)
+        tol_row = QWidget()
+        tol_layout = QHBoxLayout(tol_row)
+        tol_layout.setContentsMargins(0, 0, 0, 0)
+        tol_layout.setSpacing(8)
+        tol_layout.addWidget(self.takeoffToleranceSpin)
+        tol_layout.addSpacing(12)
+        gsd_caption = QLabel('GSD Variance')
+        gsd_caption.setObjectName('inlineFormLabel')
+        tol_layout.addWidget(gsd_caption)
+        tol_layout.addWidget(self.takeoffGsdVarLabel)
+        tol_layout.addStretch()
+        form.addRow('Elevation Tolerance', tol_row)
 
         self.contourExtentCombo = QComboBox()
         self.contourExtentCombo.addItem('Survey area', 'survey')
@@ -1349,39 +1360,27 @@ class FlyPathDialog(QWidget):
 
         outer.addLayout(form)
 
+        # One toggle button per overlay: click to show, click again to hide.
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 0, 0)
         btn_row.setSpacing(4)
         self.showTakeoffZoneBtn = QPushButton('Show Takeoff Zone')
         self.showTakeoffZoneBtn.setObjectName('showTakeoffZoneBtn')
+        self.showTakeoffZoneBtn.setCheckable(True)
         self._tip(self.showTakeoffZoneBtn,
-            'Sample the DEM around the mission and highlight the ground that '
-            'keeps the mission at the same altitude within the tolerance and '
-            'radio range set above.')
-        self.clearTakeoffZoneBtn = QPushButton('Clear')
-        self.clearTakeoffZoneBtn.setObjectName('clearTakeoffZoneBtn')
-        self._tip(self.clearTakeoffZoneBtn,
-            'Remove the takeoff-zone overlay from the map.')
-        btn_row.addWidget(self.showTakeoffZoneBtn)
-        btn_row.addWidget(self.clearTakeoffZoneBtn)
-        outer.addLayout(btn_row)
-
-        contour_row = QHBoxLayout()
-        contour_row.setContentsMargins(0, 0, 0, 0)
-        contour_row.setSpacing(4)
+            'Toggle the takeoff-zone overlay: sample the DEM around the first '
+            'waypoint and highlight the ground that keeps the mission at the same '
+            'altitude within the tolerance. Click again to hide it.')
         self.showContoursBtn = QPushButton('Show Contours')
         self.showContoursBtn.setObjectName('showContoursBtn')
+        self.showContoursBtn.setCheckable(True)
         self._tip(self.showContoursBtn,
-            'Draw DEM elevation contours over the chosen extent, one line per '
-            'elevation-tolerance step, so you can see how the terrain shapes '
-            'the takeoff zone.')
-        self.clearContoursBtn = QPushButton('Clear')
-        self.clearContoursBtn.setObjectName('clearContoursBtn')
-        self._tip(self.clearContoursBtn,
-            'Remove the DEM contour lines from the map.')
-        contour_row.addWidget(self.showContoursBtn)
-        contour_row.addWidget(self.clearContoursBtn)
-        outer.addLayout(contour_row)
+            'Toggle DEM elevation contours over the chosen extent, one line per '
+            'elevation-tolerance step, so you can see how the terrain shapes the '
+            'takeoff zone. Click again to hide them.')
+        btn_row.addWidget(self.showTakeoffZoneBtn)
+        btn_row.addWidget(self.showContoursBtn)
+        outer.addLayout(btn_row)
 
         return group
 
@@ -1847,10 +1846,8 @@ class FlyPathDialog(QWidget):
         self.demCombo.currentIndexChanged.connect(self._on_dem_changed)
         self.takeoffToleranceSpin.valueChanged.connect(self._update_takeoff_gsd_var)
         self.altitudeSpin.valueChanged.connect(self._update_takeoff_gsd_var)
-        self.showTakeoffZoneBtn.clicked.connect(self._on_show_takeoff_zone)
-        self.clearTakeoffZoneBtn.clicked.connect(self._on_clear_takeoff_zone)
-        self.showContoursBtn.clicked.connect(self._on_show_contours)
-        self.clearContoursBtn.clicked.connect(self._on_clear_contours)
+        self.showTakeoffZoneBtn.toggled.connect(self._on_toggle_takeoff_zone)
+        self.showContoursBtn.toggled.connect(self._on_toggle_contours)
         self.featureCombo.currentIndexChanged.connect(self._on_feature_changed)
         self.useSelectionBtn.clicked.connect(self._on_use_qgis_selection)
         self.destCombo.currentIndexChanged.connect(self._on_destination_changed)
@@ -2652,19 +2649,30 @@ class FlyPathDialog(QWidget):
                                self.altitudeSpin.value())
         self.takeoffGsdVarLabel.setText('± %.2f %%' % var)
 
-    def _on_show_takeoff_zone(self):
-        """Sample the DEM around the mission and draw the takeoff zone(s) on the
-        map: one dark-purple region per split sub-mission. Validates the inputs,
-        runs the sampling, renders the overlay, and reports a concise status
-        line."""
+    def _on_toggle_takeoff_zone(self, checked):
+        """Toggle the takeoff-zone overlay from the single on/off button."""
+        if checked:
+            if self._show_takeoff_zone():
+                self.showTakeoffZoneBtn.setText('Hide Takeoff Zone')
+            else:
+                self._sync_toggle(self.showTakeoffZoneBtn, False,
+                                  'Show Takeoff Zone')
+        else:
+            self._on_clear_takeoff_zone()
+            self.showTakeoffZoneBtn.setText('Show Takeoff Zone')
+
+    def _show_takeoff_zone(self):
+        """Sample the DEM around the mission and draw the takeoff zone(s): one
+        purple region per split sub-mission. Returns True when a zone is drawn,
+        False (with a message) otherwise."""
         if (not self._missions and not self._waypoints
                 and not self._has_survey_area(silent=True)):
             QMessageBox.information(self, 'Takeoff Zone',
                 'Define a survey area and preview a mission first, then show its '
                 'takeoff zone.')
-            return
+            return False
         tolerance_m = self.takeoffToleranceSpin.value()
-        self._on_clear_takeoff_zone()
+        self._remove_takeoff_layer()
         try:
             QApplication.setOverrideCursor(_WaitCursor)
             try:
@@ -2676,24 +2684,24 @@ class FlyPathDialog(QWidget):
                 'Could not read the ground elevation.\n\n%s\n\nSelect a DEM that '
                 'covers the area, or check your internet connection for the '
                 'online elevation source.' % exc)
-            return
+            return False
         if result is None:
             QMessageBox.information(self, 'Takeoff Zone',
                 'Preview a mission first, then show its takeoff zone.')
-            return
+            return False
         if result['n_sampled'] == 0:
             QMessageBox.warning(self, 'Takeoff Zone',
                 'The DEM does not cover the area around this mission, so no '
                 'ground elevations could be read.\n\nSelect a DEM that covers '
                 'the takeoff area, or switch to the online elevation source.')
-            return
+            return False
         layer = self._build_takeoff_zone_layer(result)
         if layer is None:
             QMessageBox.information(self, 'Takeoff Zone',
                 'No takeoff ground was found within %.0f m of the first waypoint '
                 'at its elevation (within %.1f m).\n\nTry a larger tolerance.'
                 % (result['radius_m'], tolerance_m))
-            return
+            return False
         self._takeoff_layer_id = layer.id()
         self.iface.mapCanvas().refresh()
 
@@ -2704,13 +2712,28 @@ class FlyPathDialog(QWidget):
             'waypoint, ± %.2f%% GSD variance (tolerance %.1f m).'
             % (n_zones, area_word, result['radius_m'], result['gsd_var'],
                tolerance_m))
+        return True
 
-    def _on_clear_takeoff_zone(self):
-        """Remove the takeoff-zone overlay from the map, if one is shown."""
+    def _remove_takeoff_layer(self):
+        """Remove the takeoff-zone map layer only, without touching the button."""
         if self._takeoff_layer_id:
             QgsProject.instance().removeMapLayer(self._takeoff_layer_id)
             self._takeoff_layer_id = None
             self.iface.mapCanvas().refresh()
+
+    def _on_clear_takeoff_zone(self):
+        """Remove the takeoff-zone overlay and put the toggle button back to off."""
+        self._remove_takeoff_layer()
+        self._sync_toggle(self.showTakeoffZoneBtn, False, 'Show Takeoff Zone')
+
+    @staticmethod
+    def _sync_toggle(button, checked, text):
+        """Set a toggle button's checked state and label without emitting toggled
+        (so it can be synced from code without re-entering its handler)."""
+        button.blockSignals(True)
+        button.setChecked(checked)
+        button.setText(text)
+        button.blockSignals(False)
 
     # ── DEM contours ──────────────────────────────────────────────────────
 
@@ -2874,17 +2897,29 @@ class FlyPathDialog(QWidget):
         root.insertLayer(insert_at, layer)
         return layer
 
-    def _on_show_contours(self):
+    def _on_toggle_contours(self, checked):
+        """Toggle the DEM contour overlay from the single on/off button."""
+        if checked:
+            if self._show_contours():
+                self.showContoursBtn.setText('Hide Contours')
+            else:
+                self._sync_toggle(self.showContoursBtn, False, 'Show Contours')
+        else:
+            self._on_clear_contours()
+            self.showContoursBtn.setText('Show Contours')
+
+    def _show_contours(self):
         """Sample the DEM over the chosen extent and draw elevation contours, one
-        line per elevation-tolerance step."""
+        line per elevation-tolerance step. Returns True when contours are drawn,
+        False (with a message) otherwise."""
         if (not self._missions and not self._waypoints
                 and not self._has_survey_area(silent=True)):
             QMessageBox.information(self, 'DEM Contours',
                 'Define a survey area and preview a mission first, then show the '
                 'contours.')
-            return
+            return False
         extent = self.contourExtentCombo.currentData()
-        self._on_clear_contours()
+        self._remove_contour_layer()
         try:
             QApplication.setOverrideCursor(_WaitCursor)
             try:
@@ -2896,38 +2931,44 @@ class FlyPathDialog(QWidget):
                 'Could not read the ground elevation.\n\n%s\n\nSelect a DEM that '
                 'covers the area, or check your internet connection for the '
                 'online elevation source.' % exc)
-            return
+            return False
         if result is None:
             QMessageBox.information(self, 'DEM Contours',
                 'Preview a mission first, then show the contours.')
-            return
+            return False
         if result['n_valid'] == 0:
             QMessageBox.warning(self, 'DEM Contours',
                 'The DEM does not cover this area, so no ground elevations could '
                 'be read.\n\nSelect a DEM that covers it, or switch to the online '
                 'elevation source.')
-            return
+            return False
         layer = self._build_contour_layer(result)
         if layer is None:
             QMessageBox.information(self, 'DEM Contours',
                 'The terrain here is flat within the %.1f m contour interval, so '
                 'there are no lines to draw.\n\nLower the elevation tolerance for '
                 'a finer interval.' % result['interval'])
-            return
+            return False
         self._contour_layer_id = layer.id()
         self.iface.mapCanvas().refresh()
-        where = ('the survey area' if self.contourExtentCombo.currentData() == 'survey'
+        where = ('the survey area' if extent == 'survey'
                  else 'the takeoff circles')
         self._set_info(
             'DEM contours: %d levels every %.1f m over %s.'
             % (result['n_levels'], result['interval'], where))
+        return True
 
-    def _on_clear_contours(self):
-        """Remove the DEM contour overlay from the map, if one is shown."""
+    def _remove_contour_layer(self):
+        """Remove the contour map layer only, without touching the button."""
         if self._contour_layer_id:
             QgsProject.instance().removeMapLayer(self._contour_layer_id)
             self._contour_layer_id = None
             self.iface.mapCanvas().refresh()
+
+    def _on_clear_contours(self):
+        """Remove the DEM contour overlay and put the toggle button back to off."""
+        self._remove_contour_layer()
+        self._sync_toggle(self.showContoursBtn, False, 'Show Contours')
 
     def _set_feature_row_visible(self, visible):
         """Show or hide the Feature combo together with its form label, so no
