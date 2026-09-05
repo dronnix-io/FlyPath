@@ -67,6 +67,9 @@ class Drone:
     # even when False, so unfinished/unverified drones stay in the code but out
     # of the user's drop-down until they're ready.
     available: bool = True
+    # Max transmission (signal) range in km under FCC, from DJI specs. Used to
+    # bound the takeoff zone so the pilot stays within range. None = unknown.
+    signal_range_km: float = None
 
     def speed_range(self):
         """(min, max) waypoint speed in m/s for this drone."""

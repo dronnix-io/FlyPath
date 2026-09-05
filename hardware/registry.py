@@ -79,6 +79,8 @@ def _build(name, entry):
         info=entry['info'],
         verified=entry.get('verified', ''),
         available=bool(entry.get('available', True)),
+        signal_range_km=(float(aircraft['signal_range_km'])
+                         if 'signal_range_km' in aircraft else None),
     )
 
 
