@@ -1318,15 +1318,16 @@ class FlyPathDialog(QWidget):
         form.addRow('GSD Variance', self.takeoffGsdVarLabel)
 
         self.takeoffRadiusSpin = QDoubleSpinBox()
-        self.takeoffRadiusSpin.setRange(0.1, 50.0)
-        self.takeoffRadiusSpin.setValue(5.0)
+        self.takeoffRadiusSpin.setRange(0.1, 10.0)
+        self.takeoffRadiusSpin.setValue(1.0)
         self.takeoffRadiusSpin.setSingleStep(0.5)
         self.takeoffRadiusSpin.setDecimals(1)
         self.takeoffRadiusSpin.setSuffix(' km')
         self._tip(self.takeoffRadiusSpin,
             'How far the takeoff point may sit from every waypoint, so the '
-            'drone stays in radio range. Defaults to half the selected drone\'s '
-            'signal range.')
+            'drone keeps a dependable control link. Defaults to a conservative '
+            'fraction of the drone\'s advertised range, since the advertised '
+            'figure is an ideal open-field maximum, not real reliable range.')
         form.addRow('Takeoff Radius', self.takeoffRadiusSpin)
 
         outer.addLayout(form)
@@ -2347,7 +2348,13 @@ class FlyPathDialog(QWidget):
     # ── Takeoff zone ──────────────────────────────────────────────────────
 
     _TAKEOFF_MAX_STEPS = 60        # grid resolution cap per side (bounds sampling)
-    _TAKEOFF_SEARCH_CAP_M = 5000.0  # max search radius sampled around the mission
+    _TAKEOFF_SEARCH_CAP_M = 3000.0  # max search radius sampled around the mission
+    # Fraction of a drone's advertised max transmission range taken as a realistic
+    # reliable-link radius. DJI's figures are open-field, line-of-sight, no-
+    # interference maxima; a real control link in an obstructed, noisy environment
+    # holds over only a small fraction of that. 5% puts the common 20 km drones at
+    # a ~1 km default takeoff radius, which the user can still adjust per mission.
+    _SIGNAL_RANGE_FRACTION = 0.05
 
     def _mission_parts(self):
         """The plan split into sub-missions as [[(lon, lat), ...], ...].
@@ -2500,9 +2507,10 @@ class FlyPathDialog(QWidget):
         return layer
 
     def _set_default_takeoff_radius(self):
-        """Default the takeoff radius to half the selected drone's signal range,
-        so the whole flight stays comfortably within radio range. Left unchanged
-        when the drone's range is unknown."""
+        """Default the takeoff radius to a realistic reliable-link fraction of the
+        selected drone's advertised transmission range, so the whole flight stays
+        comfortably within a dependable control link (not the open-field maximum).
+        Left unchanged when the drone's range is unknown."""
         drone = self.droneModelCombo.currentText()
         if not registry.has(drone):
             return
@@ -2510,7 +2518,7 @@ class FlyPathDialog(QWidget):
         if not rng:
             return
         self.takeoffRadiusSpin.blockSignals(True)
-        self.takeoffRadiusSpin.setValue(rng / 2.0)
+        self.takeoffRadiusSpin.setValue(rng * self._SIGNAL_RANGE_FRACTION)
         self.takeoffRadiusSpin.blockSignals(False)
 
     def _update_takeoff_gsd_var(self):
