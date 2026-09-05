@@ -877,16 +877,6 @@ class FlyPathDialog(QWidget):
             'shoots automatically (stop-and-shoot), so no manual interval is '
             'needed. Slower and uses more battery because the drone stops at '
             'each photo.')
-        capture_row = QWidget()
-        capture_layout = QHBoxLayout(capture_row)
-        capture_layout.setContentsMargins(0, 0, 0, 0)
-        capture_layout.setSpacing(12)
-        capture_layout.addWidget(self.captureSemiRadio)
-        capture_layout.addWidget(self.captureFullRadio)
-        capture_layout.addStretch()
-        self._captureRow = capture_row
-        form.addRow('Capture', capture_row)
-
         # Flight Path: how the drone connects waypoints. DJI Fly reshuffles a
         # straight-line mission if it is saved or cloud-synced on the controller
         # (issue #13), so Curved is the recommended default.
@@ -906,15 +896,24 @@ class FlyPathDialog(QWidget):
             'mapping geometry). DJI Fly reconnects the waypoints out of order if '
             'you save or cloud-sync the mission on the controller, so use this '
             'only when you will not re-save it there.')
-        path_row = QWidget()
-        path_layout = QHBoxLayout(path_row)
-        path_layout.setContentsMargins(0, 0, 0, 0)
-        path_layout.setSpacing(12)
-        path_layout.addWidget(self.pathCurvedRadio)
-        path_layout.addWidget(self.pathStraightRadio)
-        path_layout.addStretch()
-        self._pathRow = path_row
-        form.addRow('Flight Path', path_row)
+
+        # Capture and Flight Path share one compact row.
+        capture_row = QWidget()
+        capture_layout = QHBoxLayout(capture_row)
+        capture_layout.setContentsMargins(0, 0, 0, 0)
+        capture_layout.setSpacing(8)
+        capture_layout.addWidget(self.captureSemiRadio)
+        capture_layout.addWidget(self.captureFullRadio)
+        capture_layout.addSpacing(16)
+        self._pathInlineLabel = QLabel('Flight Path')
+        self._pathInlineLabel.setObjectName('inlineFormLabel')
+        capture_layout.addWidget(self._pathInlineLabel)
+        capture_layout.addWidget(self.pathCurvedRadio)
+        capture_layout.addWidget(self.pathStraightRadio)
+        capture_layout.addStretch()
+        self._captureRow = capture_row
+        self._pathRow = capture_row
+        form.addRow('Capture', capture_row)
 
         self.droneModelCombo = QComboBox()
         self._tip(self.droneModelCombo,
