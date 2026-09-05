@@ -945,8 +945,10 @@ class FlyPathDialog(QWidget):
 
         self.demCombo = QComboBox()
         self._tip(self.demCombo,
-            'Optional raster layer with ground elevations in band 1 '
-            'to aid in keeping constant distance to ground calculations.')
+            'Elevation source used for terrain follow and the takeoff zone. '
+            'Pick a raster layer with ground elevations in band 1 for accurate, '
+            'high-resolution results; with none, an online ~30 m global source '
+            'is used, which is coarser and noisier for tight tolerances.')
         form.addRow('DEM', self.demCombo)
 
         self.featureCombo = QComboBox()
@@ -2044,8 +2046,9 @@ class FlyPathDialog(QWidget):
         # a waypoint per photo); show it when terrain follow is on in semi mode.
         self._set_row_visible(self._organizer_form, self.terrainToleranceSpin,
                               self.terrainFollowCheck.isChecked() and not full)
-        self._set_row_visible(self._area_form, self.demCombo,
-                              self.terrainFollowCheck.isChecked())
+        # The DEM feeds both terrain follow and the takeoff zone, so it stays
+        # available even when terrain follow is off.
+        self._set_row_visible(self._area_form, self.demCombo, True)
 
     # ── Terrain follow ────────────────────────────────────────────────────
 
