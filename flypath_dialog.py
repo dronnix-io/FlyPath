@@ -743,6 +743,7 @@ class FlyPathDialog(QWidget):
         self._thumb_dir          = None   # session cache for pulled RC mission thumbnails
         self._current_thumb_full = None   # full-res preview path for the zoom viewer
         self._render_cache       = {}     # uuid -> rendered waypoint preview path
+        self._takeoff_layer_id   = None   # map layer id of the takeoff-zone overlay
 
         self._build_ui()
         self._setup_combos()
@@ -752,6 +753,8 @@ class FlyPathDialog(QWidget):
         self._apply_drone_capabilities()
         self._update_gsd()
         self._update_interval()
+        self._set_default_takeoff_radius()
+        self._update_takeoff_gsd_var()
 
     # ── Hover-hint helper ─────────────────────────────────────────────────
 
@@ -820,6 +823,8 @@ class FlyPathDialog(QWidget):
         params_row.addLayout(flight_col, 1)
         params_row.addLayout(right_col, 1)
         scroll_layout.addLayout(params_row)
+
+        scroll_layout.addWidget(self._build_takeoff_group())
 
         # Statistics live in a HUD card overlaid on the map canvas (outside the
         # panel), shown when a plan exists. Built here so the stat labels exist
@@ -1269,6 +1274,82 @@ class FlyPathDialog(QWidget):
 
         return group
 
+    def _build_takeoff_group(self):
+        """Takeoff Zone controls: find the ground a pilot can launch from to keep
+        a repeat mission at the same altitude (and GSD) every flight.
+
+        Consumer DJI missions fly relative to the takeoff point, so launching
+        from ground at a different elevation shifts the whole mission's height
+        above ground. This highlights the ground within an elevation tolerance
+        of the mission start and within radio range of every waypoint."""
+        group = QGroupBox('Takeoff Zone')
+        outer = QVBoxLayout(group)
+        outer.setSpacing(6)
+
+        blurb = QLabel(
+            'Ground you can take off from to keep this mission at the same '
+            'altitude, and so the same GSD, on every repeat flight. Preview a '
+            'mission and pick a DEM first.')
+        blurb.setWordWrap(True)
+        blurb.setObjectName('takeoffBlurb')
+        outer.addWidget(blurb)
+
+        form = QFormLayout()
+        form.setLabelAlignment(_AlignLeft | _AlignVCenter)
+        form.setSpacing(6)
+
+        self.takeoffToleranceSpin = QDoubleSpinBox()
+        self.takeoffToleranceSpin.setRange(0.1, 50.0)
+        self.takeoffToleranceSpin.setValue(2.0)
+        self.takeoffToleranceSpin.setSingleStep(0.5)
+        self.takeoffToleranceSpin.setDecimals(1)
+        self.takeoffToleranceSpin.setSuffix(' m')
+        self._tip(self.takeoffToleranceSpin,
+            'How far the takeoff ground elevation may differ from the mission '
+            'start. A tighter tolerance keeps the GSD more consistent between '
+            'flights but leaves a smaller takeoff area.')
+        form.addRow('Elevation Tolerance', self.takeoffToleranceSpin)
+
+        self.takeoffGsdVarLabel = QLabel('—')
+        self.takeoffGsdVarLabel.setObjectName('takeoffGsdVarLabel')
+        self._tip(self.takeoffGsdVarLabel,
+            'The GSD change this tolerance allows at the current altitude. '
+            'Smaller is better when comparing maps between flights.')
+        form.addRow('GSD Variance', self.takeoffGsdVarLabel)
+
+        self.takeoffRadiusSpin = QDoubleSpinBox()
+        self.takeoffRadiusSpin.setRange(0.1, 50.0)
+        self.takeoffRadiusSpin.setValue(5.0)
+        self.takeoffRadiusSpin.setSingleStep(0.5)
+        self.takeoffRadiusSpin.setDecimals(1)
+        self.takeoffRadiusSpin.setSuffix(' km')
+        self._tip(self.takeoffRadiusSpin,
+            'How far the takeoff point may sit from every waypoint, so the '
+            'drone stays in radio range. Defaults to half the selected drone\'s '
+            'signal range.')
+        form.addRow('Takeoff Radius', self.takeoffRadiusSpin)
+
+        outer.addLayout(form)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(4)
+        self.showTakeoffZoneBtn = QPushButton('Show Takeoff Zone')
+        self.showTakeoffZoneBtn.setObjectName('showTakeoffZoneBtn')
+        self._tip(self.showTakeoffZoneBtn,
+            'Sample the DEM around the mission and highlight the ground that '
+            'keeps the mission at the same altitude within the tolerance and '
+            'radio range set above.')
+        self.clearTakeoffZoneBtn = QPushButton('Clear')
+        self.clearTakeoffZoneBtn.setObjectName('clearTakeoffZoneBtn')
+        self._tip(self.clearTakeoffZoneBtn,
+            'Remove the takeoff-zone overlay from the map.')
+        btn_row.addWidget(self.showTakeoffZoneBtn)
+        btn_row.addWidget(self.clearTakeoffZoneBtn)
+        outer.addLayout(btn_row)
+
+        return group
+
     def _build_stats_hud(self):
         """Flight-stats HUD: a compact, semi-transparent card overlaid on a
         corner of the map canvas, shown only when a plan exists. Sits by the
@@ -1650,6 +1731,10 @@ class FlyPathDialog(QWidget):
         self.splitSpin.valueChanged.connect(self._on_split_changed)
         self.layerCombo.currentIndexChanged.connect(self._on_layer_changed)
         self.demCombo.currentIndexChanged.connect(self._on_dem_changed)
+        self.takeoffToleranceSpin.valueChanged.connect(self._update_takeoff_gsd_var)
+        self.altitudeSpin.valueChanged.connect(self._update_takeoff_gsd_var)
+        self.showTakeoffZoneBtn.clicked.connect(self._on_show_takeoff_zone)
+        self.clearTakeoffZoneBtn.clicked.connect(self._on_clear_takeoff_zone)
         self.featureCombo.currentIndexChanged.connect(self._on_feature_changed)
         self.useSelectionBtn.clicked.connect(self._on_use_qgis_selection)
         self.destCombo.currentIndexChanged.connect(self._on_destination_changed)
@@ -1692,6 +1777,7 @@ class FlyPathDialog(QWidget):
         self._update_camera_info()
         self._apply_speed_range()
         self._apply_drone_capabilities()
+        self._set_default_takeoff_radius()
         self._on_param_changed()
 
     def _apply_drone_capabilities(self):
@@ -2319,6 +2405,75 @@ class FlyPathDialog(QWidget):
 
         gsd_var = gsd_variance_pct(tolerance_m, self.altitudeSpin.value())
         return zone_wgs, ref_elev, gsd_var, len(candidates), spacing
+
+    def _set_default_takeoff_radius(self):
+        """Default the takeoff radius to half the selected drone's signal range,
+        so the whole flight stays comfortably within radio range. Left unchanged
+        when the drone's range is unknown."""
+        drone = self.droneModelCombo.currentText()
+        if not registry.has(drone):
+            return
+        rng = registry.get(drone).signal_range_km
+        if not rng:
+            return
+        self.takeoffRadiusSpin.blockSignals(True)
+        self.takeoffRadiusSpin.setValue(rng / 2.0)
+        self.takeoffRadiusSpin.blockSignals(False)
+
+    def _update_takeoff_gsd_var(self):
+        """Show the GSD change the current tolerance allows at the current
+        altitude, so the trade-off is visible before sampling the DEM."""
+        var = gsd_variance_pct(self.takeoffToleranceSpin.value(),
+                               self.altitudeSpin.value())
+        self.takeoffGsdVarLabel.setText('± %.2f %%' % var)
+
+    def _on_show_takeoff_zone(self):
+        """Sample the DEM around the mission and report its takeoff zone. The map
+        overlay is drawn in a later step; this validates the inputs, runs the
+        sampling, and summarises what was found."""
+        if not self._waypoints and not self._has_survey_area():
+            QMessageBox.information(self, 'Takeoff Zone',
+                'Define a survey area and preview a mission first, then show its '
+                'takeoff zone.')
+            return
+        tolerance_m = self.takeoffToleranceSpin.value()
+        proximity_m = self.takeoffRadiusSpin.value() * 1000.0
+        try:
+            QApplication.setOverrideCursor(_WaitCursor)
+            try:
+                result = self._compute_takeoff_zone(tolerance_m, proximity_m)
+            finally:
+                QApplication.restoreOverrideCursor()
+        except _TerrainError as exc:
+            QMessageBox.warning(self, 'Takeoff Zone',
+                'Could not read the ground elevation.\n\n%s\n\nSelect a DEM that '
+                'covers the area, or check your internet connection for the '
+                'online elevation source.' % exc)
+            return
+        if result is None:
+            QMessageBox.information(self, 'Takeoff Zone',
+                'Preview a mission first, then show its takeoff zone.')
+            return
+        zone, ref_elev, gsd_var, n_sampled, spacing = result
+        if not zone:
+            QMessageBox.information(self, 'Takeoff Zone',
+                'No takeoff ground was found within %.1f m of the mission start '
+                'elevation and within %.1f km of every waypoint.\n\nTry a larger '
+                'tolerance or radius.'
+                % (tolerance_m, proximity_m / 1000.0))
+            return
+        QMessageBox.information(self, 'Takeoff Zone',
+            'Found %d takeoff points on a %.0f m grid.\n\n'
+            'Reference elevation: %.1f m\n'
+            'GSD variance at this tolerance: ± %.2f %%'
+            % (len(zone), spacing, ref_elev, gsd_var))
+
+    def _on_clear_takeoff_zone(self):
+        """Remove the takeoff-zone overlay from the map, if one is shown."""
+        if self._takeoff_layer_id:
+            QgsProject.instance().removeMapLayer(self._takeoff_layer_id)
+            self._takeoff_layer_id = None
+            self.iface.mapCanvas().refresh()
 
     def _set_feature_row_visible(self, visible):
         """Show or hide the Feature combo together with its form label, so no
