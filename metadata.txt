@@ -3,8 +3,21 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
-version=2.0.3
-changelog=2.0.3 - Fixed missions getting scrambled when saved again or cloud-synced on the
+version=2.1.0
+changelog=2.1.0 - New Takeoff Zone tool for repeatable mapping. Consumer DJI missions fly
+    relative to the takeoff point, so launching from ground at a different elevation shifts the
+    whole mission's height above ground, and its GSD, on every repeat flight. Toggle Show Takeoff
+    Zone to highlight, within a fixed radius of the first waypoint, the ground whose elevation
+    matches that waypoint's within an Elevation Tolerance you set (shown live as a GSD variance).
+    On flat ground it is a full circle; where the terrain changes it is the matching-elevation part
+    of that circle. Each split mission gets its own region in its own tone of purple. A companion
+    Show Contours toggle draws DEM elevation contours, one line per tolerance step, over the whole
+    survey area or just the takeoff circles. Both read the selected DEM (a local raster if chosen,
+    otherwise the online source), and the DEM selector is now always available, not only with
+    terrain follow. Panel tidy-up: Capture and Flight Path share a row, the takeoff controls use
+    single on/off buttons, and the hover-hint and status text moved to a card on the map under the
+    Mission Stats card.
+    2.0.3 - Fixed missions getting scrambled when saved again or cloud-synced on the
     DJI RC controller: after a re-save, DJI Fly reconnected the waypoints out of order. The cause
     was the dead-straight flight-line style, which DJI does not round-trip. New Flight Path option
     lets you choose Curved or Straight. Curved (the new default) matches DJI Fly's native path and
