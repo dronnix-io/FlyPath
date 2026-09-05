@@ -2349,62 +2349,149 @@ class FlyPathDialog(QWidget):
     _TAKEOFF_MAX_STEPS = 60        # grid resolution cap per side (bounds sampling)
     _TAKEOFF_SEARCH_CAP_M = 5000.0  # max search radius sampled around the mission
 
-    def _compute_takeoff_zone(self, tolerance_m, proximity_m):
-        """Sample the DEM over the search area and return the takeoff zone.
+    def _mission_parts(self):
+        """The plan split into sub-missions as [[(lon, lat), ...], ...].
 
-        Returns (zone_wgs84, ref_elevation, gsd_var_pct, n_sampled, spacing_m),
-        where zone_wgs84 is [(lon, lat, elev), ...] the ground the pilot can take
-        off from to keep the mission's GSD repeatable. Uses the currently selected
-        DEM (a local raster if one is chosen, otherwise the online source, exactly
-        like terrain follow). Raises _TerrainError if the reference elevation
-        cannot be read; returns None if there is no mission yet."""
-        if self._waypoints:
-            waypoints = self._waypoints
+        Uses the last preview when there is one, so the split the user sees on the
+        map is exactly what the takeoff zones are computed from; otherwise it
+        generates and splits the mission the same way the preview does. Returns
+        None when there is no mission to plan."""
+        if self._missions:
+            return [list(m) for m in self._missions]
+        result = self._generate_waypoints()
+        if result is None:
+            return None
+        waypoints, _ = result
+        if self._mission_kind() == 'corridor':
+            missions_h = self._corridor_missions_with_heights()
         else:
-            result = self._generate_waypoints()
-            if result is None:
-                return None
-            waypoints = result[0]
-        if not waypoints:
+            missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
+        return [wps for wps, _, _ in missions_h]
+
+    def _compute_takeoff_zones(self, tolerance_m, proximity_m):
+        """Sample the DEM and return one takeoff zone per split sub-mission.
+
+        Each sub-mission is a separate flight launched from its own takeoff, so
+        each gets its own reference elevation (the DEM at that sub-mission's first
+        waypoint) and its own proximity constraint (its own waypoints). Uses the
+        currently selected DEM: a local raster if one is chosen, otherwise the
+        online source, exactly like terrain follow.
+
+        Returns a dict {'zones', 'gsd_var', 'n_sampled', 'to_wgs'} where each zone
+        is {'index', 'ref_elev', 'spacing', 'cells_utm': [(x, y), ...]}. Raises
+        _TerrainError if a reference elevation cannot be read; returns None if
+        there is no mission yet."""
+        parts = self._mission_parts()
+        if parts is None:
+            return None
+        parts = [p for p in parts if p]
+        if not parts:
             return None
 
-        first_lon, first_lat = waypoints[0]
-        ref_elev = self._terrain.sample(first_lon, first_lat)   # may raise _TerrainError
-
+        # One metric CRS for the whole plan (split missions sit close together),
+        # so all the squares tile on a single grid.
+        origin_lon, origin_lat = parts[0][0]
         wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
-        utm = _utm_crs_for(first_lon, first_lat)
+        utm = _utm_crs_for(origin_lon, origin_lat)
         to_utm = QgsCoordinateTransform(wgs84, utm, QgsProject.instance())
         to_wgs = QgsCoordinateTransform(utm, wgs84, QgsProject.instance())
 
-        mission_utm = []
-        for lon, lat in waypoints:
-            p = to_utm.transform(QgsPointXY(lon, lat))
-            mission_utm.append((p.x(), p.y()))
+        zones = []
+        n_sampled = 0
+        for idx, mission in enumerate(parts):
+            first_lon, first_lat = mission[0]
+            ref_elev = self._terrain.sample(first_lon, first_lat)   # may raise
 
-        # Sample out to the proximity cap, but no further than a practical radius
-        # so the DEM sampling stays bounded (the proximity filter still applies).
-        margin = min(proximity_m, self._TAKEOFF_SEARCH_CAP_M)
-        bounds = search_bounds(mission_utm, margin)
-        span = max(bounds[2] - bounds[0], bounds[3] - bounds[1])
-        spacing = max(20.0, span / self._TAKEOFF_MAX_STEPS)
+            mission_utm = []
+            for lon, lat in mission:
+                p = to_utm.transform(QgsPointXY(lon, lat))
+                mission_utm.append((p.x(), p.y()))
 
-        candidates = []
-        for gx, gy in sample_grid(bounds, spacing):
-            wp = to_wgs.transform(QgsPointXY(gx, gy))
-            try:
-                elev = self._terrain.sample(wp.x(), wp.y())
-            except _TerrainError:
-                continue
-            candidates.append((gx, gy, elev))
+            # Sample out to the proximity cap, but no further than a practical
+            # radius so the DEM sampling stays bounded (the proximity filter
+            # still applies).
+            margin = min(proximity_m, self._TAKEOFF_SEARCH_CAP_M)
+            bounds = search_bounds(mission_utm, margin)
+            span = max(bounds[2] - bounds[0], bounds[3] - bounds[1])
+            spacing = max(20.0, span / self._TAKEOFF_MAX_STEPS)
 
-        zone_utm = takeoff_zone(candidates, mission_utm, ref_elev,
-                                tolerance_m, proximity_m)
-        zone_wgs = [(to_wgs.transform(QgsPointXY(gx, gy)).x(),
-                     to_wgs.transform(QgsPointXY(gx, gy)).y(), elev)
-                    for gx, gy, elev in zone_utm]
+            candidates = []
+            for gx, gy in sample_grid(bounds, spacing):
+                wp = to_wgs.transform(QgsPointXY(gx, gy))
+                try:
+                    elev = self._terrain.sample(wp.x(), wp.y())
+                except _TerrainError:
+                    continue
+                candidates.append((gx, gy, elev))
+            n_sampled += len(candidates)
+
+            zone_utm = takeoff_zone(candidates, mission_utm, ref_elev,
+                                    tolerance_m, proximity_m)
+            zones.append({
+                'index': idx,
+                'ref_elev': ref_elev,
+                'spacing': spacing,
+                'cells_utm': [(x, y) for x, y, _ in zone_utm],
+            })
 
         gsd_var = gsd_variance_pct(tolerance_m, self.altitudeSpin.value())
-        return zone_wgs, ref_elev, gsd_var, len(candidates), spacing
+        return {'zones': zones, 'gsd_var': gsd_var, 'n_sampled': n_sampled,
+                'to_wgs': to_wgs}
+
+    def _build_takeoff_zone_layer(self, result):
+        """Build the takeoff-zone overlay: one dissolved dark-purple region per
+        split sub-mission, drawn under the flight path. Each grid cell becomes a
+        square, and a mission's squares are unioned into one clean region carrying
+        its mission index and reference elevation. Returns the layer, or None when
+        every zone came back empty."""
+        to_wgs = result['to_wgs']
+        layer = QgsVectorLayer(
+            'Polygon?crs=EPSG:4326&field=mission:integer'
+            '&field=ref_elevation_m:double',
+            'FlyPath — Takeoff Zone', 'memory')
+        layer.setCustomProperty('flypath_internal', True)
+
+        feats = []
+        for z in result['zones']:
+            cells = z['cells_utm']
+            if not cells:
+                continue
+            half = z['spacing'] / 2.0
+            squares = [
+                QgsGeometry.fromPolygonXY([[
+                    QgsPointXY(x - half, y - half),
+                    QgsPointXY(x + half, y - half),
+                    QgsPointXY(x + half, y + half),
+                    QgsPointXY(x - half, y + half),
+                    QgsPointXY(x - half, y - half),
+                ]])
+                for x, y in cells
+            ]
+            region = QgsGeometry.unaryUnion(squares)   # dissolve into one region
+            region.transform(to_wgs)
+            feat = QgsFeature()
+            feat.setGeometry(region)
+            feat.setAttributes([z['index'], round(z['ref_elev'], 1)])
+            feats.append(feat)
+        if not feats:
+            return None
+
+        layer.dataProvider().addFeatures(feats)
+        symbol = QgsFillSymbol.createSimple({
+            'color': '106,27,154,110',      # translucent deep purple fill
+            'outline_color': '#4A148C',     # darker purple edge
+            'outline_width': '0.4',
+        })
+        layer.renderer().setSymbol(symbol)
+        layer.triggerRepaint()
+
+        # Add at the bottom of the layer tree so the zone sits under the flight
+        # path and waypoint markers instead of hiding them.
+        proj = QgsProject.instance()
+        proj.addMapLayer(layer, False)
+        root = proj.layerTreeRoot()
+        root.insertLayer(len(root.children()), layer)
+        return layer
 
     def _set_default_takeoff_radius(self):
         """Default the takeoff radius to half the selected drone's signal range,
@@ -2428,20 +2515,23 @@ class FlyPathDialog(QWidget):
         self.takeoffGsdVarLabel.setText('± %.2f %%' % var)
 
     def _on_show_takeoff_zone(self):
-        """Sample the DEM around the mission and report its takeoff zone. The map
-        overlay is drawn in a later step; this validates the inputs, runs the
-        sampling, and summarises what was found."""
-        if not self._waypoints and not self._has_survey_area():
+        """Sample the DEM around the mission and draw the takeoff zone(s) on the
+        map: one dark-purple region per split sub-mission. Validates the inputs,
+        runs the sampling, renders the overlay, and reports a concise status
+        line."""
+        if (not self._missions and not self._waypoints
+                and not self._has_survey_area()):
             QMessageBox.information(self, 'Takeoff Zone',
                 'Define a survey area and preview a mission first, then show its '
                 'takeoff zone.')
             return
         tolerance_m = self.takeoffToleranceSpin.value()
         proximity_m = self.takeoffRadiusSpin.value() * 1000.0
+        self._on_clear_takeoff_zone()
         try:
             QApplication.setOverrideCursor(_WaitCursor)
             try:
-                result = self._compute_takeoff_zone(tolerance_m, proximity_m)
+                result = self._compute_takeoff_zones(tolerance_m, proximity_m)
             finally:
                 QApplication.restoreOverrideCursor()
         except _TerrainError as exc:
@@ -2454,19 +2544,24 @@ class FlyPathDialog(QWidget):
             QMessageBox.information(self, 'Takeoff Zone',
                 'Preview a mission first, then show its takeoff zone.')
             return
-        zone, ref_elev, gsd_var, n_sampled, spacing = result
-        if not zone:
+        layer = self._build_takeoff_zone_layer(result)
+        if layer is None:
             QMessageBox.information(self, 'Takeoff Zone',
                 'No takeoff ground was found within %.1f m of the mission start '
                 'elevation and within %.1f km of every waypoint.\n\nTry a larger '
                 'tolerance or radius.'
                 % (tolerance_m, proximity_m / 1000.0))
             return
-        QMessageBox.information(self, 'Takeoff Zone',
-            'Found %d takeoff points on a %.0f m grid.\n\n'
-            'Reference elevation: %.1f m\n'
-            'GSD variance at this tolerance: ± %.2f %%'
-            % (len(zone), spacing, ref_elev, gsd_var))
+        self._takeoff_layer_id = layer.id()
+        self.iface.mapCanvas().refresh()
+
+        n_zones = sum(1 for z in result['zones'] if z['cells_utm'])
+        area_word = 'area' if n_zones == 1 else 'areas'
+        self.infoBar.setText(
+            'Takeoff zone: %d %s shown in purple, ± %.2f%% GSD variance '
+            '(tolerance %.1f m, radius %.1f km).'
+            % (n_zones, area_word, result['gsd_var'], tolerance_m,
+               proximity_m / 1000.0))
 
     def _on_clear_takeoff_zone(self):
         """Remove the takeoff-zone overlay from the map, if one is shown."""
@@ -3610,6 +3705,8 @@ class FlyPathDialog(QWidget):
                 QgsProject.instance().removeMapLayer(lid)
         self._preview_layer_ids = []
         self._clear_corridor_band()
+        # The takeoff zone belongs to the plan being cleared, so drop it too.
+        self._on_clear_takeoff_zone()
 
         if reset_area:
             # Full reset — also stop any active draw and remove the boundary
