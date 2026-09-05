@@ -2520,7 +2520,7 @@ class FlyPathDialog(QWidget):
         runs the sampling, renders the overlay, and reports a concise status
         line."""
         if (not self._missions and not self._waypoints
-                and not self._has_survey_area()):
+                and not self._has_survey_area(silent=True)):
             QMessageBox.information(self, 'Takeoff Zone',
                 'Define a survey area and preview a mission first, then show its '
                 'takeoff zone.')
@@ -2543,6 +2543,12 @@ class FlyPathDialog(QWidget):
         if result is None:
             QMessageBox.information(self, 'Takeoff Zone',
                 'Preview a mission first, then show its takeoff zone.')
+            return
+        if result['n_sampled'] == 0:
+            QMessageBox.warning(self, 'Takeoff Zone',
+                'The DEM does not cover the area around this mission, so no '
+                'ground elevations could be read.\n\nSelect a DEM that covers '
+                'the takeoff area, or switch to the online elevation source.')
             return
         layer = self._build_takeoff_zone_layer(result)
         if layer is None:
