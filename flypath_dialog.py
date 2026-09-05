@@ -551,6 +551,18 @@ def _mission_color(i):
     return _MISSION_COLORS[i % len(_MISSION_COLORS)]
 
 
+# Distinct tones of purple, one per split mission's takeoff zone, so overlapping
+# circles stay tellable apart. Ordered dark -> light; all clearly purple.
+_TAKEOFF_PURPLES = [
+    (74, 20, 140), (123, 31, 162), (156, 39, 176), (103, 58, 183),
+    (171, 71, 188), (63, 81, 181), (186, 104, 200), (149, 117, 205),
+]
+
+
+def _takeoff_purple(i):
+    return _TAKEOFF_PURPLES[i % len(_TAKEOFF_PURPLES)]
+
+
 class _HoverFilter(QObject):
     """Event filter that writes a hint to a shared info label on mouse enter/leave."""
 
@@ -2568,6 +2580,7 @@ class FlyPathDialog(QWidget):
         layer.setCustomProperty('flypath_internal', True)
 
         feats = []
+        indices = []
         for z in result['zones']:
             cx, cy = z['center_utm']
             disk = QgsGeometry.fromPointXY(QgsPointXY(cx, cy)).buffer(radius_m, 48)
@@ -2592,16 +2605,12 @@ class FlyPathDialog(QWidget):
             feat.setGeometry(region)
             feat.setAttributes([z['index'], round(z['ref_elev'], 1)])
             feats.append(feat)
+            indices.append(z['index'])
         if not feats:
             return None
 
         layer.dataProvider().addFeatures(feats)
-        symbol = QgsFillSymbol.createSimple({
-            'color': '106,27,154,110',      # translucent deep purple fill
-            'outline_color': '#4A148C',     # darker purple edge
-            'outline_width': '0.4',
-        })
-        layer.renderer().setSymbol(symbol)
+        layer.setRenderer(self._takeoff_renderer(indices))
         layer.triggerRepaint()
 
         # Place the zone directly beneath FlyPath's own path/marker layers, so it
@@ -2617,6 +2626,24 @@ class FlyPathDialog(QWidget):
                 insert_at = i + 1
         root.insertLayer(insert_at, layer)
         return layer
+
+    def _takeoff_renderer(self, indices):
+        """Rule-based renderer giving each mission's takeoff zone its own tone of
+        purple, so overlapping circles are tellable apart. A single (unsplit) zone
+        keeps the plain deep purple."""
+        single = len(indices) <= 1
+        root = QgsRuleBasedRenderer.Rule(None)
+        for m in indices:
+            r, g, b = _takeoff_purple(m)
+            sym = QgsFillSymbol.createSimple({
+                'color': '%d,%d,%d,120' % (r, g, b),      # translucent fill
+                'outline_color': '#%02X%02X%02X' % (r, g, b),
+                'outline_width': '0.5',
+            })
+            label = 'Takeoff zone' if single else 'Takeoff %d' % (m + 1)
+            root.appendChild(QgsRuleBasedRenderer.Rule(
+                sym, filterExp='"mission" = %d' % m, label=label))
+        return QgsRuleBasedRenderer(root)
 
     def _update_takeoff_gsd_var(self):
         """Show the GSD change the current tolerance allows at the current
