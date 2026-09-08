@@ -3,8 +3,17 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
-version=2.2.0
-changelog=2.2.0 - New Launch Height Offset for taking off from a raised spot. If you launch
+version=2.2.1
+changelog=2.2.1 - 2D mapping route improvements. The flight route now starts at a corner of
+    the survey area and sweeps across it, instead of starting mid-area and drawing a long line
+    back across the middle. Automatic flight direction is fixed and improved: it used to fall
+    back to 0 degrees on any concave (L-shaped, notched or tailed) area because of an internal
+    error, and it only checked every 5 degrees; it now checks every whole degree and picks the
+    direction whose actual flight route is the shortest to fly, not just the one with the fewest
+    turns. Also fixed a panel layout issue where the Survey Area section grew taller when the
+    export destination was Save to computer; it now stays the same compact size in both modes.
+    Corridor mapping is unchanged.
+    2.2.0 - New Launch Height Offset for taking off from a raised spot. If you launch
     from something above the ground at the first waypoint, such as a car roof or a hilltop, enter
     that height and FlyPath shifts every waypoint height so the real height above ground still
     matches the plan, without changing the GSD, overlap or flight lines. It applies to 2D and
