@@ -320,14 +320,22 @@ def _flight_cost(poly_utm, pts, step, deg):
 
 
 def _polylines(geom):
-    """Return the list of polylines in a (possibly multi) line geometry."""
+    """Return the list of polylines in a (possibly multi) line geometry.
+
+    Branch on isMultipart(): PyQGIS raises TypeError when asPolyline() is called
+    on a MultiLineString (and asMultiPolyline() on a LineString), on both QGIS 3
+    and 4. A scan line clipped to a concave area is a MultiLineString, so calling
+    asPolyline() first used to raise here; find_optimal_direction swallowed the
+    error and fell back to 0 degrees, so Auto always returned 0 on concave areas.
+    """
+    if geom is None or geom.isEmpty():
+        return []
+    if QgsWkbTypes.geometryType(geom.wkbType()) != _LineGeometry:
+        return []
+    if geom.isMultipart():
+        return geom.asMultiPolyline()
     line = geom.asPolyline()
-    if line:
-        return [line]
-    multi = geom.asMultiPolyline()
-    if multi:
-        return multi
-    return []
+    return [line] if line else []
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
