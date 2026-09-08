@@ -5,6 +5,7 @@ Pure Python, no QGIS. Run with pytest, or directly:
     python tests/test_grid_route.py
 """
 
+import math
 import os
 import sys
 
@@ -93,6 +94,31 @@ def test_split_then_merge_shape():
     cols += [(float(x), [(0.0, 10.0), (20.0, 30.0)]) for x in range(1, 4)]
     cols += [(4.0, [(0.0, 30.0)])]
     route = boustrophedon_route(cols)
+    _assert_no_pass_crosses_a_gap(cols, route)
+    _covers_every_segment(cols, route)
+
+
+def _max_leg(route):
+    return max(math.hypot(route[i + 1][0] - route[i][0],
+                          route[i + 1][1] - route[i][1])
+               for i in range(len(route) - 1))
+
+
+def test_body_tail_starts_at_corner_without_a_transit():
+    # A tall body (x 0..9) that splits into a long low tail (x 10..30) and a
+    # short high branch (x 10..12). The route must start at the x=0 corner and
+    # never fly a long transit across the area to pick up a strip. (The old
+    # ordering started at the mid-x branch leaf and jumped the full width back,
+    # which put the first waypoint mid-area and drew a long line across it.)
+    cols  = [(float(x), [(0.0, 10.0)]) for x in range(0, 10)]
+    cols += [(float(x), [(0.0, 4.0), (6.0, 10.0)]) for x in range(10, 13)]
+    cols += [(float(x), [(0.0, 4.0)]) for x in range(13, 31)]
+    route = boustrophedon_route(cols)
+    xs = [p[0] for p in route]
+    assert route[0][0] == min(xs)                     # start at the corner, not mid
+    # The longest pass is height 10; a transit would jump many columns across,
+    # so every leg must stay within a pass plus a couple of line spacings.
+    assert _max_leg(route) <= 12.5, _max_leg(route)
     _assert_no_pass_crosses_a_gap(cols, route)
     _covers_every_segment(cols, route)
 

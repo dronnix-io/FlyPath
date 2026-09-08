@@ -109,17 +109,29 @@ def cell_turns(cell, densify_spacing=None):
 
 
 def _visit_order(turnlists, adjacency):
-    """Depth-first cell order, starting from a leaf so a path-shaped area is
-    walked end to end. Keeps neighbouring cells consecutive."""
+    """Depth-first cell order that sweeps the area cleanly, corner to corner.
+
+    Each connected component starts at its across-extreme pass (a corner of the
+    area), so the route begins at an edge rather than at an interior branch cell.
+    At every branch the shorter spurs are walked first and the branch that
+    reaches farthest across is walked last, so the sweep finishes at the far edge
+    and no long transit is ever needed to pick up a strip left behind.
+
+    (Rooting at the lowest-degree leaf and diving into the long branch first used
+    to start a body-plus-tail area at the interior neck and then jump the full
+    width back, which put the first waypoint mid-area and drew a long transit
+    across it.)"""
     n = len(turnlists)
     if n == 0:
         return []
 
-    def rank(k):
-        return (len(adjacency[k]), turnlists[k][0][0], turnlists[k][0][1])
+    far_x = [max(p[0] for p in tl) for tl in turnlists]   # how far across a cell reaches
+
+    def start_key(k):
+        return (turnlists[k][0][0], turnlists[k][0][1])
 
     order, visited = [], set()
-    for root in sorted(range(n), key=rank):          # leaves (low degree) first
+    for root in sorted(range(n), key=start_key):     # across-extreme corner first
         if root in visited:
             continue
         stack = [root]
@@ -129,8 +141,9 @@ def _visit_order(turnlists, adjacency):
                 continue
             visited.add(node)
             order.append(node)
-            nbrs = sorted(adjacency[node] - visited,
-                          key=lambda k: (turnlists[k][0][0], turnlists[k][0][1]),
+            # Push neighbours so the farthest-reaching branch is popped LAST and
+            # the short spurs are picked up on the way, keeping legs short.
+            nbrs = sorted(adjacency[node] - visited, key=lambda k: far_x[k],
                           reverse=True)
             stack.extend(nbrs)
     return order
