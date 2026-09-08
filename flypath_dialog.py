@@ -50,6 +50,7 @@ try:
     _IMG_RGB32    = QImage.Format.Format_RGB32
     _SP_IGNORED   = QSizePolicy.Policy.Ignored
     _SP_PREFERRED = QSizePolicy.Policy.Preferred
+    _SP_FIXED     = QSizePolicy.Policy.Fixed
 except AttributeError:
     # Old PyQt5 without scoped enums; fetch unscoped names dynamically so the
     # scoped forms above remain the only static enum references in the file.
@@ -77,6 +78,7 @@ except AttributeError:
     _IMG_RGB32    = getattr(QImage, 'Format_RGB32')
     _SP_IGNORED   = getattr(QSizePolicy, 'Ignored')
     _SP_PREFERRED = getattr(QSizePolicy, 'Preferred')
+    _SP_FIXED     = getattr(QSizePolicy, 'Fixed')
 
 from qgis.core import (
     Qgis,
@@ -1083,6 +1085,10 @@ class FlyPathDialog(QWidget):
         self._sourceStack.addWidget(self._layerRow)      # index 0 = Layer
         self._sourceStack.addWidget(self._selectionRow)  # index 1 = Selection
         self._sourceStack.addWidget(self._drawRow)       # index 2 = Draw
+        # Pin the stacked row's height so it never stretches to absorb the space
+        # freed when the Export section is short (Save to computer). Otherwise the
+        # Survey Area grew taller in that mode, opening a gap under Source.
+        self._sourceStack.setSizePolicy(_SP_PREFERRED, _SP_FIXED)
         form.addRow(self._sourceStack)
 
         # DEM feeds terrain follow, the takeoff zone and the contours, so it is
