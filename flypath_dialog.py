@@ -15,7 +15,7 @@ from qgis.PyQt.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QCheckBox, QRadioButton, QButtonGroup,
     QMessageBox, QFileDialog, QApplication,
     QStackedWidget, QDialog, QTreeWidget, QTreeWidgetItem, QDialogButtonBox,
-    QGraphicsView, QGraphicsScene,
+    QGraphicsView, QGraphicsScene, QSizePolicy,
 )
 from qgis.PyQt.QtCore import (
     Qt, QObject, QEvent, QSettings, QVariant, QSize, QPointF, QUrl, pyqtSignal,
@@ -48,6 +48,8 @@ try:
     _UA_HEADER    = QNetworkRequest.KnownHeaders.UserAgentHeader
     _NET_NO_ERROR = QNetworkReply.NetworkError.NoError
     _IMG_RGB32    = QImage.Format.Format_RGB32
+    _SP_IGNORED   = QSizePolicy.Policy.Ignored
+    _SP_PREFERRED = QSizePolicy.Policy.Preferred
 except AttributeError:
     # Old PyQt5 without scoped enums; fetch unscoped names dynamically so the
     # scoped forms above remain the only static enum references in the file.
@@ -73,6 +75,8 @@ except AttributeError:
     _UA_HEADER    = getattr(QNetworkRequest, 'UserAgentHeader')
     _NET_NO_ERROR = getattr(QNetworkReply, 'NoError')
     _IMG_RGB32    = getattr(QImage, 'Format_RGB32')
+    _SP_IGNORED   = getattr(QSizePolicy, 'Ignored')
+    _SP_PREFERRED = getattr(QSizePolicy, 'Preferred')
 
 from qgis.core import (
     Qgis,
@@ -1667,6 +1671,7 @@ class FlyPathDialog(QWidget):
         idx  = self.destCombo.findData(mode)
         self.destCombo.setCurrentIndex(idx if idx >= 0 else 0)
         self.destStack.setCurrentIndex(self.destCombo.currentIndex())
+        self._fit_dest_stack()
         self._update_export_button()
 
         return bar
@@ -4169,11 +4174,32 @@ class FlyPathDialog(QWidget):
 
     def _on_destination_changed(self, _=None):
         self.destStack.setCurrentIndex(self.destCombo.currentIndex())
+        self._fit_dest_stack()
         QSettings('FlyPath', 'FlyPath').setValue(
             'dest_mode', self.destCombo.currentData()
         )
         self._refresh_split_part_combo()
         self._update_export_button()
+
+    def _fit_dest_stack(self):
+        """Size the destination stack to the current panel only.
+
+        A QStackedWidget normally reserves the height of its tallest page, so the
+        short 'Save to computer' panel left a large empty gap below it (the taller
+        'Send to DJI RC' panel's height), pushing the scrollable sections, and the
+        Takeoff Zone, up out of view. Giving the hidden pages an Ignored size
+        policy drops them from the stack's size, so it collapses to the visible
+        panel."""
+        current = self.destStack.currentIndex()
+        for i in range(self.destStack.count()):
+            page = self.destStack.widget(i)
+            if i == current:
+                page.setSizePolicy(_SP_PREFERRED, _SP_PREFERRED)
+            else:
+                page.setSizePolicy(_SP_IGNORED, _SP_IGNORED)
+        self.destStack.currentWidget().adjustSize()
+        self.destStack.adjustSize()
+        self.destStack.updateGeometry()
 
     def _on_local_folder_changed(self, text):
         QSettings('FlyPath', 'FlyPath').setValue('local_export_dir', text.strip())
