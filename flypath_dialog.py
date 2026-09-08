@@ -343,10 +343,11 @@ QWidget {
     font-family: "Segoe UI", Arial, sans-serif;
 }
 QGroupBox {
-    border: 1px solid #3A3D45;
-    border-radius: 4px;
+    background-color: #202430;
+    border: 1px solid #454A57;
+    border-radius: 5px;
     margin-top: 10px;
-    padding-top: 6px;
+    padding-top: 8px;
     font-weight: bold;
     color: #7FB3E8;
 }
@@ -811,7 +812,7 @@ class FlyPathDialog(QWidget):
 
         content = QWidget()
         scroll_layout = QVBoxLayout(content)
-        scroll_layout.setSpacing(8)
+        scroll_layout.setSpacing(11)   # clearer gaps between the section cards
         scroll_layout.setContentsMargins(8, 8, 8, 8)
 
         # Info label must exist before group builders call self._tip(). It no

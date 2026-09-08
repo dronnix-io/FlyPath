@@ -11,7 +11,8 @@ changelog=2.2.0 - New Launch Height Offset for taking off from a raised spot. If
     corridor missions and to every split mission, and defaults to 0 for a normal ground launch.
     Also fixed a layout gap in the Export Mission section: choosing Save to computer no longer
     leaves a large empty space where the Send to DJI RC panel would be, so the Takeoff Zone and
-    the other sections stay in view.
+    the other sections stay in view. The panel sections now read as clearer cards, so the growing
+    list of sections is easier to scan.
     2.1.0 - New Takeoff Zone tool for repeatable mapping. Consumer DJI missions fly
     relative to the takeoff point, so launching from ground at a different elevation shifts the
     whole mission's height above ground, and its GSD, on every repeat flight. Toggle Show Takeoff
