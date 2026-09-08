@@ -1064,6 +1064,21 @@ class FlyPathDialog(QWidget):
             'updates the other (and the flight path when you preview).')
         form.addRow('GSD', self.gsdSpin)
 
+        self.launchOffsetSpin = QDoubleSpinBox()
+        self.launchOffsetSpin.setRange(-50.0, 50.0)
+        self.launchOffsetSpin.setValue(0.0)
+        self.launchOffsetSpin.setSingleStep(0.5)
+        self.launchOffsetSpin.setDecimals(1)
+        self.launchOffsetSpin.setSuffix(' m')
+        self._tip(self.launchOffsetSpin,
+            'Height of your actual takeoff spot above the ground at the first '
+            'waypoint (for example about 2 m when launching from a car roof). '
+            'It shifts every waypoint height so the real height above ground '
+            'matches the plan, without changing the GSD, overlap or flight lines. '
+            'Leave at 0 when you take off from the ground. Applies per mission, '
+            'so each split mission uses it too.')
+        form.addRow('Launch Offset', self.launchOffsetSpin)
+
         self.sideOverlapSpin = QSpinBox()
         self.sideOverlapSpin.setRange(50, 95)
         self.sideOverlapSpin.setValue(70)
@@ -4839,11 +4854,19 @@ class FlyPathDialog(QWidget):
 
         Builds the full MissionSpec; the consumer writer ignores the enterprise
         fields (polygon, overlaps, direction, margin) and vice versa. `heights`
-        (terrain follow) is a per-waypoint executeHeight list or None."""
+        (terrain follow) is a per-waypoint executeHeight list or None.
+
+        The Launch Offset is subtracted from the written heights only (the single
+        altitude and, when present, every terrain-follow executeHeight), so a
+        raised launch spot keeps the real height above ground on plan. The
+        planning altitude that drives GSD, overlap and the flight lines is
+        untouched. This runs per mission, so every split mission gets it too, for
+        both 2D and corridor missions (they share this writer)."""
         drone = registry.get(self.droneModelCombo.currentText())
+        offset = self.launchOffsetSpin.value()
         spec = MissionSpec(
             waypoints=waypoints,
-            altitude_m=self.altitudeSpin.value(),
+            altitude_m=self.altitudeSpin.value() - offset,
             speed_ms=self.speedSpin.value(),
             finish_action=self.finishActionCombo.currentText(),
             rc_lost_action=self.rcLostActionCombo.currentText(),
@@ -4856,7 +4879,8 @@ class FlyPathDialog(QWidget):
             direction_deg=self.directionSpin.value(),
             margin_m=self.marginSpin.value(),
             capture_mode=self._mission_type(),
-            heights=heights,
+            heights=([h - offset for h in heights]
+                     if heights is not None else None),
             curved_path=self._path_curved(),
         )
         write_mission(drone, spec, filepath)
