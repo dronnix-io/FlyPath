@@ -119,33 +119,11 @@ def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
     if rotated_poly is None or rotated_poly.isEmpty():
         raise ValueError('Survey polygon has no exterior ring — check the polygon geometry.')
 
-    bbox = rotated_poly.boundingBox()
-    x_start = bbox.xMinimum()
-    x_end   = bbox.xMaximum()
-    y_lo    = bbox.yMinimum() - shot_spacing
-    y_hi    = bbox.yMaximum() + shot_spacing
-
-    # 7 ── Sweep scan lines. For each line, record only the in-polygon pieces
-    #      (a concave area splits one line into several). Simply concatenating a
-    #      line's pieces would fly the drone straight across the gaps between
-    #      them, so the pieces are grouped into contiguous strips and each strip
-    #      is snaked on its own (boustrophedon decomposition).
-    columns = []
-    x = x_start
-    while x <= x_end + line_spacing * 0.5:
-        scan = QgsGeometry.fromPolylineXY([
-            QgsPointXY(x, y_lo),
-            QgsPointXY(x, y_hi),
-        ])
-        clipped = scan.intersection(rotated_poly)
-        segs = []
-        if not clipped.isEmpty() and not clipped.isNull():
-            for (x1, y1), (x2, y2) in _line_segments(clipped):
-                segs.append((y1, y2) if y1 <= y2 else (y2, y1))
-            segs.sort()
-        columns.append((x, segs))
-        x += line_spacing
-
+    # 7 ── Sweep scan lines into in-polygon pieces and snake them into a route.
+    #      A concave area splits a line into several pieces; boustrophedon_route
+    #      groups the pieces into contiguous strips and snakes each, so the drone
+    #      never flies a pass across a gap.
+    columns = _scan_columns(rotated_poly, line_spacing, shot_spacing)
     turn_pts_rot = _boustrophedon_route(columns, densify_spacing)
 
     if not turn_pts_rot:
@@ -172,17 +150,15 @@ def find_optimal_direction(polygon_geom, polygon_crs, line_spacing_m):
     Return the flight direction (degrees CW from North) that minimises the
     estimated mission flight time for the actual polygon shape.
 
-    The total length of the flight lines needed to cover an area is roughly
-    (area / line_spacing) regardless of direction, so flight time is dominated
-    by the number of passes and turns. This routine picks the direction that
-    yields the fewest flight-line segments inside the real polygon at the given
-    line spacing. Counting real segments (not the convex-hull width) means
-    concave, L-shaped or irregular areas, where a single pass is split into
-    several segments across a notch, are handled correctly. Ties are broken by
-    the smaller perpendicular span (tighter alignment with the long axis).
-
-    A coarse-to-fine angle search (every 5 deg, then refined to 1 deg around the
-    best) keeps it fast. Uses only QgsGeometry APIs common to QGIS 3 and 4.
+    It evaluates every whole degree from 0 to 179 (an exhaustive 1 deg sweep) and
+    picks the direction whose actual flight route is the shortest to fly. Because
+    scoring the real route for all 180 angles would be slow on big areas, it does
+    it in two stages: a fast pass counts the in-polygon flight-line segments per
+    angle (fewest turns, the dominant term) with the scan-line count capped
+    (~200), and then the actual route length is measured only for the handful of
+    fewest-segment candidates, choosing the one that flies the least distance.
+    Counting real segments handles concave, L-shaped or irregular areas, where a
+    pass is split across a notch. Uses only QgsGeometry APIs common to QGIS 3/4.
 
     Parameters
     ----------
@@ -218,11 +194,19 @@ def find_optimal_direction(polygon_geom, polygon_crs, line_spacing_m):
         diag = math.hypot(bb.width(), bb.height())
         step = spacing if (diag <= 0 or diag / spacing <= 200) else diag / 200.0
 
-        coarse = _best_angle(poly_utm, pts, step, range(0, 180, 5))
-        lo, hi = int(coarse) - 4, int(coarse) + 4
-        fine   = _best_angle(poly_utm, pts, step,
-                             [a % 180 for a in range(lo, hi + 1)])
-        return float(fine % 180)
+        # Stage 1: fewest-turns score for every 1 degree (fast, capped).
+        costs = {deg: _flight_cost(poly_utm, pts, step, float(deg))
+                 for deg in range(0, 180)}
+        min_seg = min(c[0] for c in costs.values())
+        # Stage 2: among the angles within a couple of segments of the fewest,
+        # measure the real route length and take the genuinely shortest one.
+        cands = sorted((d for d, (s, _sp) in costs.items() if s <= min_seg + 2),
+                       key=lambda d: costs[d])[:30]
+        cen = poly_utm.centroid().asPoint()
+        cx, cy = cen.x(), cen.y()
+        best = min(cands,
+                   key=lambda d: _route_length(poly_utm, cx, cy, d, spacing))
+        return float(best % 180)
     except Exception:
         return 0.0
 
@@ -339,6 +323,43 @@ def _polylines(geom):
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
+
+def _scan_columns(rotated_poly, line_spacing, pad):
+    """Sweep vertical scan lines across a polygon already rotated so the flight
+    direction is +Y. Returns [(x, [(y_low, y_high), ...]), ...] left to right: the
+    in-polygon pieces of each scan line, as consumed by boustrophedon_route. A
+    concave area yields several pieces on a line; `pad` extends the sweep past the
+    polygon's ends so the endpoints are captured."""
+    bbox = rotated_poly.boundingBox()
+    x, x_end = bbox.xMinimum(), bbox.xMaximum()
+    y_lo, y_hi = bbox.yMinimum() - pad, bbox.yMaximum() + pad
+    columns = []
+    while x <= x_end + line_spacing * 0.5:
+        scan = QgsGeometry.fromPolylineXY([QgsPointXY(x, y_lo), QgsPointXY(x, y_hi)])
+        clipped = scan.intersection(rotated_poly)
+        segs = []
+        if not clipped.isEmpty() and not clipped.isNull():
+            for (x1, y1), (x2, y2) in _line_segments(clipped):
+                segs.append((y1, y2) if y1 <= y2 else (y2, y1))
+            segs.sort()
+        columns.append((x, segs))
+        x += line_spacing
+    return columns
+
+
+def _route_length(poly_utm, cx, cy, deg, line_spacing):
+    """Total flown length (m) of the endpoint route at flight direction `deg`,
+    used to pick the shortest-path direction. inf if the angle yields no route."""
+    rotated = _rotate_polygon(poly_utm, cx, cy, -math.radians(deg))
+    if rotated is None or rotated.isEmpty():
+        return float('inf')
+    route = _boustrophedon_route(_scan_columns(rotated, line_spacing, line_spacing))
+    if len(route) < 2:
+        return float('inf')
+    return sum(math.hypot(route[i + 1][0] - route[i][0],
+                          route[i + 1][1] - route[i][1])
+               for i in range(len(route) - 1))
+
 
 def _utm_crs_for(lon, lat):
     """Return the WGS84 UTM CRS appropriate for the given lon/lat."""
