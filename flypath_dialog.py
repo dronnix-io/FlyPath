@@ -357,6 +357,15 @@ QGroupBox::title {
     left: 8px;
     padding: 0 4px;
 }
+/* Per-section colour coding: a distinct hue per group for the title and border,
+   so the growing list of sections is easy to tell apart at a glance. */
+QGroupBox#missionGroup   { border-color: #3F6FA8; color: #7FB3E8; }
+QGroupBox#areaGroup      { border-color: #3E8E63; color: #7FD69C; }
+QGroupBox#flightGroup    { border-color: #A6772F; color: #F0B45A; }
+QGroupBox#organizerGroup { border-color: #6E52A6; color: #B98CFF; }
+QGroupBox#safetyGroup    { border-color: #A65454; color: #F08A8A; }
+QGroupBox#takeoffGroup   { border-color: #37847A; color: #5FD0C0; }
+QGroupBox#exportGroup    { border-color: #9C5C86; color: #E79AD0; }
 QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox {
     background-color: #2A2D35;
     border: 1px solid #3A3D45;
@@ -489,6 +498,7 @@ QLabel#flightTimeLabel, QLabel#distanceLabel, QLabel#photosLabel,
 QLabel#linesLabel, QLabel#batteriesLabel, QLabel#coverageLabel {
     color: #F0A500; font-weight: bold;
 }
+QLabel#selectionInfo { color: #8A93A0; font-size: 11px; }
 QLabel#frontOverlapWarnLabel {
     color: #E05050; font-weight: bold;
 }
@@ -769,6 +779,7 @@ class FlyPathDialog(QWidget):
         self._render_cache       = {}     # uuid -> rendered waypoint preview path
         self._takeoff_layer_id   = None   # map layer id of the takeoff-zone overlay
         self._contour_layer_id   = None   # map layer id of the DEM contour overlay
+        self._source_mode        = 'layer'  # survey-area source: layer|selection|draw
 
         self._build_ui()
         self._setup_combos()
@@ -776,6 +787,7 @@ class FlyPathDialog(QWidget):
         self._update_camera_info()
         self._apply_speed_range()
         self._apply_drone_capabilities()
+        self._apply_source_mode()
         self._update_gsd()
         self._update_interval()
         self._update_takeoff_gsd_var()
@@ -874,6 +886,7 @@ class FlyPathDialog(QWidget):
 
     def _build_mission_group(self):
         group = QGroupBox('Mission Setup')
+        group.setObjectName('missionGroup')
         form  = QFormLayout(group)
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
@@ -957,53 +970,81 @@ class FlyPathDialog(QWidget):
 
     def _build_area_group(self):
         group = QGroupBox('Survey Area')
+        group.setObjectName('areaGroup')
         form  = QFormLayout(group)
         self._area_form = form   # kept so corridor mode can relabel the Area row
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
 
+        # Source: use an existing polygon (layer / selection) or draw one. Only
+        # the fields for the chosen source are shown, keeping the section compact.
+        self.sourceLayerRadio     = QRadioButton('Layer')
+        self.sourceSelectionRadio = QRadioButton('Selection')
+        self.sourceDrawRadio      = QRadioButton('Draw')
+        self.sourceLayerRadio.setChecked(True)
+        self._sourceGroup = QButtonGroup(self)
+        self._sourceGroup.addButton(self.sourceLayerRadio)
+        self._sourceGroup.addButton(self.sourceSelectionRadio)
+        self._sourceGroup.addButton(self.sourceDrawRadio)
+        self._tip(self.sourceLayerRadio,
+            'Use an existing area from a polygon layer in the project.')
+        self._tip(self.sourceSelectionRadio,
+            'Adopt the polygon currently selected in QGIS. Select a feature on '
+            'the map first, then use the button below.')
+        self._tip(self.sourceDrawRadio,
+            'Draw the survey area directly on the map.')
+        source_row = QWidget()
+        source_layout = QHBoxLayout(source_row)
+        source_layout.setContentsMargins(0, 0, 0, 0)
+        source_layout.setSpacing(10)
+        source_layout.addWidget(self.sourceLayerRadio)
+        source_layout.addWidget(self.sourceSelectionRadio)
+        source_layout.addWidget(self.sourceDrawRadio)
+        source_layout.addStretch()
+        form.addRow('Source', source_row)
+
+        # From-layer: the layer and its feature (FID) picker share one line.
         self.layerCombo = QComboBox()
         self._tip(self.layerCombo,
-            'Select a polygon layer from the QGIS project. '
-            'Only polygon layers are listed. '
-            'For multi-feature layers a Feature selector will appear below.')
-        form.addRow('Layer', self.layerCombo)
-
-        self.demCombo = QComboBox()
-        self._tip(self.demCombo,
-            'Elevation source used for terrain follow and the takeoff zone. '
-            'Pick a raster layer with ground elevations in band 1 for accurate, '
-            'high-resolution results; with none, an online ~30 m global source '
-            'is used, which is coarser and noisier for tight tolerances.')
-        form.addRow('DEM', self.demCombo)
-
+            'Select a polygon layer from the QGIS project. Only polygon layers '
+            'are listed. For a multi-feature layer, pick the feature beside it.')
         self.featureCombo = QComboBox()
         self.featureCombo.setVisible(False)
         self._tip(self.featureCombo,
-            'Select which polygon feature to use as the survey area '
-            'when the chosen layer contains more than one feature.')
-        self._featureComboRow = form.rowCount()
-        form.addRow('Feature', self.featureCombo)
-        # Keep a handle on the row's label so it can be hidden together with the
-        # combo. Qt's QFormLayout does not hide a field's label when the field is
-        # hidden (row-level hiding only arrived in Qt 6.4), which would otherwise
-        # leave an orphaned 'Feature' label with an empty gap on QGIS 3 and 4.
-        self._featureLabel = form.labelForField(self.featureCombo)
-        if self._featureLabel is not None:
-            self._featureLabel.setVisible(False)
+            'Which feature of the layer to use as the survey area, when the '
+            'layer has more than one.')
+        self._featureLabel = None   # the feature picker shares the Layer row now
+        self._layerRow = QWidget()
+        layer_layout = QHBoxLayout(self._layerRow)
+        layer_layout.setContentsMargins(0, 0, 0, 0)
+        layer_layout.setSpacing(4)
+        layer_caption = QLabel('Layer')
+        layer_caption.setObjectName('inlineFormLabel')
+        layer_layout.addWidget(layer_caption)
+        layer_layout.addWidget(self.layerCombo, 3)
+        self._featureCaption = QLabel('Feature')
+        self._featureCaption.setObjectName('inlineFormLabel')
+        self._featureCaption.setVisible(False)   # only when a feature picker shows
+        layer_layout.addWidget(self._featureCaption)
+        layer_layout.addWidget(self.featureCombo, 2)
 
         self.useSelectionBtn = QPushButton('Use QGIS Selection')
         self.useSelectionBtn.setObjectName('useSelectionBtn')
         self._tip(self.useSelectionBtn,
             'Adopt the polygon currently selected with the QGIS selection tool. '
             'Exactly one polygon must be selected across all layers.')
-        form.addRow(self.useSelectionBtn)
+        self.selectionInfoLabel = QLabel('— none selected —')
+        self.selectionInfoLabel.setObjectName('selectionInfo')
+        self._tip(self.selectionInfoLabel,
+            'The layer and feature ID adopted from the current QGIS selection.')
+        self._selectionRow = QWidget()
+        sel_layout = QHBoxLayout(self._selectionRow)
+        sel_layout.setContentsMargins(0, 0, 0, 0)
+        sel_layout.setSpacing(6)
+        sel_layout.addWidget(self.selectionInfoLabel, 1)   # left of the button
+        sel_layout.addWidget(self.useSelectionBtn)
 
-        draw_row = QWidget()
-        draw_layout = QHBoxLayout(draw_row)
-        draw_layout.setContentsMargins(0, 0, 0, 0)
-        draw_layout.setSpacing(4)
-
+        # Draw: draw / edit / remove.
         self.drawPolygonBtn = QPushButton('Draw Polygon on Map')
         self.drawPolygonBtn.setObjectName('drawPolygonBtn')
         self.drawPolygonBtn.setCheckable(True)
@@ -1026,20 +1067,53 @@ class FlyPathDialog(QWidget):
             'Remove the drawn polygon and reset the survey area.')
         self.removePolygonBtn.setVisible(False)
 
+        self._drawRow = QWidget()
+        draw_layout = QHBoxLayout(self._drawRow)
+        draw_layout.setContentsMargins(0, 0, 0, 0)
+        draw_layout.setSpacing(4)
         draw_layout.addWidget(self.drawPolygonBtn)
         draw_layout.addWidget(self.editPolygonBtn)
         draw_layout.addWidget(self.removePolygonBtn)
-        form.addRow(draw_row)
 
-        self.areaLabel = QLabel('—')
+        # All three sources share ONE stacked row, so the control that appears
+        # under Source is always at the exact same position and height and only
+        # its content swaps. (Separate form rows drift, because hidden QFormLayout
+        # rows do not collapse identically.)
+        self._sourceStack = QStackedWidget()
+        self._sourceStack.addWidget(self._layerRow)      # index 0 = Layer
+        self._sourceStack.addWidget(self._selectionRow)  # index 1 = Selection
+        self._sourceStack.addWidget(self._drawRow)       # index 2 = Draw
+        form.addRow(self._sourceStack)
+
+        # DEM feeds terrain follow, the takeoff zone and the contours, so it is
+        # shown for both sources.
+        self.demCombo = QComboBox()
+        self._tip(self.demCombo,
+            'Elevation source used for terrain follow and the takeoff zone. '
+            'Pick a raster layer with ground elevations in band 1 for accurate, '
+            'high-resolution results; with none, an online ~30 m global source '
+            'is used, which is coarser and noisier for tight tolerances.')
+        form.addRow('DEM', self.demCombo)
+
+        # Keep every source's controls the same height, so the row that appears
+        # under Source looks identical (same position and height) whether the
+        # source is Layer, Selection or Draw.
+        for _w in (self.layerCombo, self.featureCombo, self.useSelectionBtn,
+                   self.drawPolygonBtn, self.editPolygonBtn, self.removePolygonBtn):
+            _w.setMinimumHeight(28)
+
+        # The area read-out is not shown here (it duplicates Coverage in the
+        # Mission Stats card). The label object is kept, hidden, so the many
+        # places that update it stay valid.
+        self.areaLabel = QLabel('—', group)
         self.areaLabel.setObjectName('areaLabel')
-        self._tip(self.areaLabel, 'Total area of the survey polygon in hectares.')
-        form.addRow('Area', self.areaLabel)
+        self.areaLabel.setVisible(False)
 
         return group
 
     def _build_flight_group(self):
         group = QGroupBox('Flight Parameters')
+        group.setObjectName('flightGroup')
         form  = QFormLayout(group)
         self._flight_form = form   # kept so mission-type logic can hide rows
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
@@ -1198,6 +1272,7 @@ class FlyPathDialog(QWidget):
         deliverable mission files: how many to split it into, the per-mission
         waypoint cap, and whether to add a perpendicular cross-hatch pass."""
         group = QGroupBox('Adv. Mission Organizers')
+        group.setObjectName('organizerGroup')
         form  = QFormLayout(group)
         self._organizer_form = form   # kept so capability logic can hide rows
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
@@ -1290,6 +1365,7 @@ class FlyPathDialog(QWidget):
 
     def _build_advanced_group(self):
         group = QGroupBox('Safety Actions')
+        group.setObjectName('safetyGroup')
         group.setMaximumWidth(210)
         form  = QFormLayout(group)
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
@@ -1327,6 +1403,7 @@ class FlyPathDialog(QWidget):
         tolerance: a full circle on flat ground, and the matching part of that
         circle where the terrain rises or falls."""
         group = QGroupBox('Takeoff Zone')
+        group.setObjectName('takeoffGroup')
         self._tip(group,
             'Ground within %d m of the first waypoint at its elevation, so '
             'repeat flights keep the same altitude and GSD. A full circle on '
@@ -1418,6 +1495,8 @@ class FlyPathDialog(QWidget):
              'Total distance the drone will fly along all flight lines.'),
             ('coverageLabel',   'Coverage',
              'Total survey area in hectares as calculated from the polygon.'),
+            ('corridorLengthLabel', 'Corridor Length',
+             'Total length of the corridor centre line (corridor missions only).'),
             ('linesLabel',      'Lines',
              'Number of parallel flight lines needed to cover the survey area.'),
             ('waypointsLabel',  'Waypoints',
@@ -1447,6 +1526,7 @@ class FlyPathDialog(QWidget):
         title = QLabel('Mission Stats')
         title.setObjectName('hudTitle')
         grid.addWidget(title, 0, 0, 1, 2)
+        self._hudCaptions = {}
         for i, (attr, caption, tip) in enumerate(fields):
             cap = QLabel(f'{caption}')          # single column: one stat per row
             cap.setObjectName('hudCaption')
@@ -1454,8 +1534,11 @@ class FlyPathDialog(QWidget):
             val.setObjectName(attr)
             val.setToolTip(tip)
             setattr(self, attr, val)
+            self._hudCaptions[attr] = cap
             grid.addWidget(cap, 1 + i, 0)
             grid.addWidget(val, 1 + i, 1)
+        # Corridor length applies only to corridor missions; hidden otherwise.
+        self._set_hud_length_visible(False)
         hud.setStyleSheet(
             '#flypathHud { background-color: rgba(24, 27, 34, 0.88); '
             'border: 1px solid #3A3D45; border-radius: 7px; }'
@@ -1465,7 +1548,7 @@ class FlyPathDialog(QWidget):
             '#flypathHud QLabel#flightTimeLabel, #flypathHud QLabel#distanceLabel, '
             '#flypathHud QLabel#coverageLabel, #flypathHud QLabel#linesLabel, '
             '#flypathHud QLabel#waypointsLabel, #flypathHud QLabel#photosLabel, '
-            '#flypathHud QLabel#batteriesLabel '
+            '#flypathHud QLabel#batteriesLabel, #flypathHud QLabel#corridorLengthLabel '
             '{ color: #F0A500; font-weight: bold; }'
         )
         hud.hide()
@@ -1475,6 +1558,13 @@ class FlyPathDialog(QWidget):
             except TypeError:
                 pass
         return hud
+
+    def _set_hud_length_visible(self, visible):
+        """Show or hide the Corridor Length stat (value + caption) in the HUD."""
+        self.corridorLengthLabel.setVisible(visible)
+        cap = self._hudCaptions.get('corridorLengthLabel')
+        if cap is not None:
+            cap.setVisible(visible)
 
     # ── Flight-stats HUD placement / visibility ───────────────────────────
 
@@ -1595,20 +1685,15 @@ class FlyPathDialog(QWidget):
         self.infoBar.style().polish(self.infoBar)
         self._refresh_info_hud()
 
-    def _build_action_bar(self):
-        bar = QWidget()
-        bar.setObjectName('actionBar')
-        layout = QVBoxLayout(bar)
-        layout.setSpacing(6)
-        layout.setContentsMargins(8, 6, 8, 10)
-
-        settings = QSettings('FlyPath', 'FlyPath')
-
-        # ── Map actions first (you preview, then choose where it goes) ────────
-        map_row = QWidget()
-        map_layout = QHBoxLayout(map_row)
-        map_layout.setContentsMargins(0, 0, 0, 0)
-        map_layout.setSpacing(4)
+    def _build_preview_row(self):
+        """The Preview on Map / Clear Preview buttons as a plain row (no card),
+        pinned in the action bar so they are always reachable without scrolling,
+        and kept separate from the Export card below."""
+        row = QWidget()
+        row.setObjectName('previewRow')
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(4)
 
         self.previewBtn = QPushButton('Preview on Map')
         self.previewBtn.setMinimumHeight(30)
@@ -1623,12 +1708,26 @@ class FlyPathDialog(QWidget):
             'Remove the flight path preview layers from the map '
             'and reset the survey area selection.')
 
-        map_layout.addWidget(self.previewBtn, 2)
-        map_layout.addWidget(self.clearPreviewBtn, 1)
-        layout.addWidget(map_row)
+        row_layout.addWidget(self.previewBtn, 2)
+        row_layout.addWidget(self.clearPreviewBtn, 1)
+        return row
 
-        # ── Export section: its own group, separate from the map actions ──────
+    def _build_action_bar(self):
+        bar = QWidget()
+        bar.setObjectName('actionBar')
+        layout = QVBoxLayout(bar)
+        layout.setSpacing(6)
+        layout.setContentsMargins(8, 6, 8, 10)
+
+        settings = QSettings('FlyPath', 'FlyPath')
+
+        # Preview / Clear pinned here (outside the scroll) so they are always
+        # reachable without scrolling, above the separate Export card.
+        layout.addWidget(self._build_preview_row())
+
+        # ── Export card ───────────────────────────────────────────────────────
         export_group = QGroupBox('Export Mission')
+        export_group.setObjectName('exportGroup')
         export_layout = QVBoxLayout(export_group)
         export_layout.setSpacing(6)
         export_layout.setContentsMargins(8, 8, 8, 8)
@@ -1875,6 +1974,7 @@ class FlyPathDialog(QWidget):
         self.terrainFollowCheck.toggled.connect(self._on_terrain_toggled)
         self.terrainToleranceSpin.valueChanged.connect(self._on_param_changed)
         self.splitSpin.valueChanged.connect(self._on_split_changed)
+        self._sourceGroup.buttonClicked.connect(self._on_source_mode_changed)
         self.layerCombo.currentIndexChanged.connect(self._on_layer_changed)
         self.demCombo.currentIndexChanged.connect(self._on_dem_changed)
         self.takeoffToleranceSpin.valueChanged.connect(self._update_takeoff_gsd_var)
@@ -2017,6 +2117,7 @@ class FlyPathDialog(QWidget):
         self.areaLabel.setToolTip('Total length of the corridor centre line.'
                                   if corridor
                                   else 'Total area of the survey polygon in hectares.')
+        self._set_hud_length_visible(corridor)   # length stat is corridor-only
         self.drawPolygonBtn.setText(self._draw_btn_default_text())
         self.layerCombo.setToolTip(
             'Select a line layer for the corridor centre line. Only line layers '
@@ -2445,6 +2546,7 @@ class FlyPathDialog(QWidget):
 
         self._set_survey_geometry(feat.geometry(), layer.crs(),
                                   layer_id=layer.id(), fid=fid)
+        self.selectionInfoLabel.setText('%s  ·  FID %s' % (layer.name(), fid))
 
     # ── Survey area ───────────────────────────────────────────────────────
 
@@ -3004,11 +3106,37 @@ class FlyPathDialog(QWidget):
         self._sync_toggle(self.showContoursBtn, False, 'Show Contours')
 
     def _set_feature_row_visible(self, visible):
-        """Show or hide the Feature combo together with its form label, so no
-        orphaned 'Feature' label is ever left behind."""
+        """Show or hide the Feature (FID) picker, with its 'Feature' caption, that
+        sits beside the Layer combo. Hiding it lets the Layer combo take the row."""
         self.featureCombo.setVisible(visible)
-        if self._featureLabel is not None:
-            self._featureLabel.setVisible(visible)
+        self._featureCaption.setVisible(visible)
+
+    def _source_mode_value(self):
+        """Which survey-area source is selected: 'layer', 'selection' or 'draw'."""
+        if self.sourceDrawRadio.isChecked():
+            return 'draw'
+        if self.sourceSelectionRadio.isChecked():
+            return 'selection'
+        return 'layer'
+
+    def _apply_source_mode(self):
+        """Switch the shared source row to the chosen source's controls: the
+        layer + feature combos ('layer'), the Use QGIS Selection button
+        ('selection'), or the draw buttons ('draw'). One stacked row keeps them
+        all at the same position and height."""
+        mode = self._source_mode_value()
+        self._sourceStack.setCurrentIndex(
+            {'layer': 0, 'selection': 1, 'draw': 2}[mode])
+
+    def _on_source_mode_changed(self, _=None):
+        """Switching source starts from a clean slate so areas from different
+        sources never mix. Clicking the already-selected source does nothing."""
+        mode = self._source_mode_value()
+        if mode == self._source_mode:
+            return
+        self._source_mode = mode
+        self._apply_source_mode()
+        self._on_clear_preview(reset_area=True)
 
     def _clear_survey_from_feature(self):
         """Drop the current survey area and its stats (no feature chosen)."""
@@ -3793,7 +3921,7 @@ class FlyPathDialog(QWidget):
         generated corridor route (the same path the preview draws). Coverage is
         the centre-line length times the total mapped width; 'lines' is the
         number of parallel passes."""
-        self.areaLabel.setText(self._corridor_length_text())
+        self.corridorLengthLabel.setText(self._corridor_length_text())
         drone = self.droneModelCombo.currentText()
 
         def blank_path_stats():
@@ -3916,7 +4044,7 @@ class FlyPathDialog(QWidget):
     def _clear_stats(self):
         for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
                      'waypointsLabel', 'linesLabel', 'batteriesLabel',
-                     'coverageLabel'):
+                     'coverageLabel', 'corridorLengthLabel'):
             getattr(self, attr).setText('—')
         self.areaLabel.setText('—')
         self._hide_hud()
@@ -4165,6 +4293,7 @@ class FlyPathDialog(QWidget):
             self.layerCombo.setCurrentIndex(0)
             self.featureCombo.clear()
             self.featureCombo.setVisible(False)
+            self.selectionInfoLabel.setText('— none selected —')
             self._clear_stats()
 
         self.iface.mapCanvas().refresh()

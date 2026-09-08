@@ -9,10 +9,12 @@ changelog=2.2.0 - New Launch Height Offset for taking off from a raised spot. If
     that height and FlyPath shifts every waypoint height so the real height above ground still
     matches the plan, without changing the GSD, overlap or flight lines. It applies to 2D and
     corridor missions and to every split mission, and defaults to 0 for a normal ground launch.
-    Also fixed a layout gap in the Export Mission section: choosing Save to computer no longer
-    leaves a large empty space where the Send to DJI RC panel would be, so the Takeoff Zone and
-    the other sections stay in view. The panel sections now read as clearer cards, so the growing
-    list of sections is easier to scan.
+    The panel also got a refresh so its growing set of sections stays easy to scan: each section
+    is now a colour-coded card, the Survey Area is more compact with a Source selector (Layer,
+    Selection or Draw) that shows only the fields for the chosen source, the Preview and Clear
+    buttons are pinned in a footer so they stay reachable, and the Export section no longer leaves
+    an empty gap when Save to computer is selected. The corridor centre-line length now appears in
+    the Mission Stats card.
     2.1.0 - New Takeoff Zone tool for repeatable mapping. Consumer DJI missions fly
     relative to the takeoff point, so launching from ground at a different elevation shifts the
     whole mission's height above ground, and its GSD, on every repeat flight. Toggle Show Takeoff
