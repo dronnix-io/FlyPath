@@ -3,8 +3,16 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
-version=2.1.0
-changelog=2.1.0 - New Takeoff Zone tool for repeatable mapping. Consumer DJI missions fly
+version=2.2.0
+changelog=2.2.0 - New Launch Height Offset for taking off from a raised spot. If you launch
+    from something above the ground at the first waypoint, such as a car roof or a hilltop, enter
+    that height and FlyPath shifts every waypoint height so the real height above ground still
+    matches the plan, without changing the GSD, overlap or flight lines. It applies to 2D and
+    corridor missions and to every split mission, and defaults to 0 for a normal ground launch.
+    Also fixed a layout gap in the Export Mission section: choosing Save to computer no longer
+    leaves a large empty space where the Send to DJI RC panel would be, so the Takeoff Zone and
+    the other sections stay in view.
+    2.1.0 - New Takeoff Zone tool for repeatable mapping. Consumer DJI missions fly
     relative to the takeoff point, so launching from ground at a different elevation shifts the
     whole mission's height above ground, and its GSD, on every repeat flight. Toggle Show Takeoff
     Zone to highlight, within a fixed radius of the first waypoint, the ground whose elevation
