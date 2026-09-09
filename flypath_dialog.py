@@ -15,13 +15,14 @@ from qgis.PyQt.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QCheckBox, QRadioButton, QButtonGroup,
     QMessageBox, QFileDialog, QApplication,
     QStackedWidget, QDialog, QTreeWidget, QTreeWidgetItem, QDialogButtonBox,
+    QInputDialog,
     QGraphicsView, QGraphicsScene, QSizePolicy,
 )
 from qgis.PyQt.QtCore import (
     Qt, QObject, QEvent, QSettings, QVariant, QSize, QPointF, QUrl, pyqtSignal,
 )
 from qgis.PyQt.QtGui import (
-    QColor, QFont, QPixmap, QPainter, QPen, QPolygonF, QImage,
+    QColor, QFont, QPixmap, QPainter, QPen, QPolygonF, QImage, QDesktopServices,
 )
 from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
@@ -118,6 +119,8 @@ from .terrain import (
 )
 from .wpml import MissionSpec, write_mission
 from .hardware import registry
+from . import flypath_sync
+from .flypath_sync import FlypathSyncError
 
 try:
     _PolygonGeometry = QgsWkbTypes.GeometryType.PolygonGeometry
@@ -368,6 +371,7 @@ QGroupBox#organizerGroup { border-color: #6E52A6; color: #B98CFF; }
 QGroupBox#safetyGroup    { border-color: #A65454; color: #F08A8A; }
 QGroupBox#takeoffGroup   { border-color: #37847A; color: #5FD0C0; }
 QGroupBox#exportGroup    { border-color: #9C5C86; color: #E79AD0; }
+QGroupBox#webGroup       { border-color: #3F7FA8; color: #7FC8E8; }
 QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox {
     background-color: #2A2D35;
     border: 1px solid #3A3D45;
@@ -450,6 +454,15 @@ QPushButton#exportBtn {
 }
 QPushButton#exportBtn:hover   { background-color: #FFB520; }
 QPushButton#exportBtn:pressed { background-color: #D09000; }
+QPushButton#webSendBtn {
+    background-color: #2A6B8C; color: #DFF3FF;
+}
+QPushButton#webSendBtn:hover    { background-color: #35809F; }
+QPushButton#webSendBtn:disabled { background-color: #33363E; color: #6A6D75; }
+QPushButton#webLoadBtn {
+    background-color: #3A3D45; color: #D0D0D0; font-weight: normal;
+}
+QPushButton#webLoadBtn:hover { background-color: #4A4D55; }
 QPushButton#clearPreviewBtn {
     background-color: #3A3D45; color: #D0D0D0; font-weight: normal;
 }
@@ -1771,6 +1784,7 @@ class FlyPathDialog(QWidget):
         export_layout.addWidget(self.exportBtn)
 
         layout.addWidget(export_group)
+        layout.addWidget(self._build_web_group())
 
         # Restore last-used destination mode
         mode = settings.value('dest_mode', 'local')
@@ -1781,6 +1795,41 @@ class FlyPathDialog(QWidget):
         self._update_export_button()
 
         return bar
+
+    def _build_web_group(self):
+        """FlyPath Account card: push the previewed mission into the pilot's
+        flypath.io dashboard, or pull one back down to keep planning it here.
+
+        Deliberately its own card, below Export Mission: 'Send to DJI RC' puts a
+        mission on the controller you fly with, this puts it in your account on
+        the website, and the two must not read as the same action."""
+        group = QGroupBox('FlyPath Account')
+        group.setObjectName('webGroup')
+        layout = QHBoxLayout(group)
+        layout.setSpacing(4)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        self.webSendBtn = QPushButton('Send to FlyPath')
+        self.webSendBtn.setObjectName('webSendBtn')
+        self.webSendBtn.setMinimumHeight(30)
+        self._tip(self.webSendBtn,
+            'Send the previewed mission to your flypath.io account as a new '
+            'draft, so you can open, rename or share it from the dashboard. '
+            'Preview the mission first; it never overwrites a mission that is '
+            'already on the website.')
+
+        self.webLoadBtn = QPushButton('Load from FlyPath')
+        self.webLoadBtn.setObjectName('webLoadBtn')
+        self.webLoadBtn.setMinimumHeight(30)
+        self._tip(self.webLoadBtn,
+            'List the missions in your flypath.io account and load one into '
+            'QGIS as an independent local copy: its survey area, drone and '
+            'settings, ready to keep planning here.')
+
+        layout.addWidget(self.webSendBtn, 1)
+        layout.addWidget(self.webLoadBtn, 1)
+        self._update_web_buttons()
+        return group
 
     def _build_local_dest_panel(self, settings):
         panel = QWidget()
@@ -2004,6 +2053,8 @@ class FlyPathDialog(QWidget):
         self.previewBtn.clicked.connect(self._on_preview)
         self.clearPreviewBtn.clicked.connect(self._on_clear_preview)
         self.exportBtn.clicked.connect(self._on_export)
+        self.webSendBtn.clicked.connect(self._on_send_to_website)
+        self.webLoadBtn.clicked.connect(self._on_load_from_website)
 
     def _on_param_changed(self):
         self._update_gsd()
@@ -4099,6 +4150,7 @@ class FlyPathDialog(QWidget):
         line_layer = self._build_path_layer(missions)
         wp_layer   = self._build_waypoints_layer(missions, heights, ground)
         self._preview_layer_ids = [line_layer.id(), wp_layer.id()]
+        self._update_web_buttons()
         self.iface.mapCanvas().refresh()
 
     def _path_renderer(self, n_missions):
@@ -4302,7 +4354,363 @@ class FlyPathDialog(QWidget):
             self.selectionInfoLabel.setText('— none selected —')
             self._clear_stats()
 
+        self._update_web_buttons()
         self.iface.mapCanvas().refresh()
+
+    # ── FlyPath website sync ────────────────────────────────
+
+    def _update_web_buttons(self):
+        """Sending is gated on a previewed mission: nothing incomplete or
+        unreviewed can be pushed into the pilot's account."""
+        if not hasattr(self, 'webSendBtn'):
+            return                       # called while the action bar is built
+        self.webSendBtn.setEnabled(bool(self._preview_layer_ids and self._missions))
+
+    def _web_token(self):
+        """The token stored on this machine, asking for it once if there is
+        none. Returns None when the pilot cancels the prompt."""
+        token = flypath_sync.load_token()
+        if token:
+            return token
+        token, ok = QInputDialog.getText(
+            self, 'FlyPath Token',
+            flypath_sync.NO_TOKEN_MESSAGE + '\n\nToken:')
+        token = (token or '').strip()
+        if not (ok and token):
+            return None
+        flypath_sync.save_token(token)
+        return token
+
+    def _run_web(self, title, work):
+        """Run one website call with the token, a wait cursor and the sync
+        buttons disabled (a slow connection should look busy, not crashed).
+        Returns work()'s value, or None when it failed or was cancelled — the
+        error is shown as a message box here so flypath_sync stays Qt-free."""
+        token = self._web_token()
+        if token is None:
+            return None
+        self.webSendBtn.setEnabled(False)
+        self.webLoadBtn.setEnabled(False)
+        QApplication.setOverrideCursor(_WaitCursor)
+        QApplication.processEvents()     # paint the busy state before blocking
+        try:
+            return work(token)
+        except FlypathSyncError as exc:
+            if exc.status == 401:
+                # The token is gone or was regenerated: forget it so the next
+                # attempt asks for the new one instead of failing again.
+                flypath_sync.save_token('')
+            QMessageBox.warning(self, title, str(exc))
+            return None
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.webLoadBtn.setEnabled(True)
+            self._update_web_buttons()
+
+    # ── Push ─────────────────────────────────────────────
+
+    def _on_send_to_website(self):
+        """Push the previewed mission into the pilot's account as a new draft."""
+        if not (self._preview_layer_ids and self._missions):
+            QMessageBox.information(
+                self, 'Preview First',
+                'Preview the mission on the map first, then send the plan you '
+                'can see to your FlyPath account.')
+            return
+        name = 'QGIS ' + datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+        # Build the payload first: a mission the website cannot take (an
+        # unsupported drone, say) should fail before the pilot is asked to paste
+        # a token for it.
+        try:
+            payload = self._website_payload(name)
+        except FlypathSyncError as exc:
+            QMessageBox.warning(self, 'Send to FlyPath', str(exc))
+            return
+        base_url = flypath_sync.load_base_url()
+        result = self._run_web(
+            'Send to FlyPath',
+            lambda token: flypath_sync.push_mission(base_url, token, payload))
+        if not result:
+            return
+        url = flypath_sync.mission_url(result.get('id'), base_url)
+        reply = QMessageBox.question(
+            self, 'Sent to FlyPath',
+            'Saved to your FlyPath account as a new draft:\n\n'
+            '%s\n%s\n\nOpen it in your browser?'
+            % (result.get('name') or name, url),
+            _MB_YES | _MB_NO, _MB_YES)
+        if reply == _MB_YES:
+            QDesktopServices.openUrl(QUrl(url))
+
+    def _website_payload(self, name):
+        """The mission as the website's API expects it. Points travel as
+        [lat, lon] pairs (the website's own order), the drone as the website's
+        own code, and never an id — a push always creates a new draft."""
+        corridor = self._mission_kind() == 'corridor'
+        drone = registry.get(self.droneModelCombo.currentText())
+        if not drone.website_code:
+            raise FlypathSyncError(
+                '%s is not one of the drones flypath.io offers, so this mission '
+                'cannot be sent there. Choose another drone, or export a KMZ '
+                'instead.' % drone.name)
+        area = (self._survey_line_wgs84() if corridor
+                else self._survey_polygon_wgs84())
+        if not area:
+            raise FlypathSyncError('This mission has no survey area to send.')
+        # ponytail: full-automatic routes are pushed as flown, one point per
+        # photo, while the website reads waypoints as flight-line endpoints in
+        # pairs. The area and settings it saves regenerate the route correctly
+        # there; if the drawn route on the website matters, push turn points.
+        waypoints = list(self._waypoints or [])
+        for label, points in (('survey area', area), ('waypoints', waypoints)):
+            if len(points) > flypath_sync.MAX_MISSION_POINTS:
+                raise FlypathSyncError(
+                    'This mission has %d %s; FlyPath accepts at most %d. Use '
+                    'semi-automatic capture, or a smaller area, to send it.'
+                    % (len(points), label, flypath_sync.MAX_MISSION_POINTS))
+        return {
+            'name': name,
+            'drone_model': drone.website_code,
+            'polygon':   [[lat, lon] for lon, lat in area],
+            'waypoints': [[lat, lon] for lon, lat in waypoints],
+            'settings':  self._website_settings(),
+            'estimates': self._website_estimates(),
+        }
+
+    def _website_settings(self):
+        """The mission parameters the website knows, by its own key names.
+
+        Plugin-only settings (launch offset, GSD, photo interval, gimbal angle,
+        DEM choice, takeoff-zone tolerance, corridor mission breaks) are left
+        out rather than invented as new server-side keys. Values outside the
+        website's own ranges are not clamped here: the server rejects them with
+        a message the pilot is shown as-is."""
+        corridor = self._mission_kind() == 'corridor'
+        actions = []
+        for label, combo, table in (
+                ('Finish Action', self.finishActionCombo,
+                 flypath_sync.WEBSITE_FINISH_ACTIONS),
+                ('RC Lost Action', self.rcLostActionCombo,
+                 flypath_sync.WEBSITE_RC_LOST_ACTIONS)):
+            code = table.get(combo.currentText())
+            if code is None:
+                raise FlypathSyncError(
+                    'FlyPath has no website equivalent for %s "%s". Choose '
+                    'another one to send this mission.'
+                    % (label, combo.currentText()))
+            actions.append(code)
+        settings = {
+            'mapping_style':  self._mission_kind(),
+            'capture_mode':   self._mission_type(),
+            'flight_path':    'curved' if self._path_curved() else 'straight',
+            'finish_action':  actions[0],
+            'rc_lost_action': actions[1],
+            'altitude':       round(self.altitudeSpin.value(), 1),
+            'speed':          round(self.speedSpin.value(), 1),
+            'side_overlap':   self.sideOverlapSpin.value(),
+            'terrain_follow': bool(self.terrainFollowCheck.isChecked()),
+            'split_count':    self.splitSpin.value(),
+            'split_max_wp':   self.maxWaypointsSpin.value(),
+        }
+        if corridor:
+            # The plugin's Buffer is the half-width each side; the website's
+            # corridor_width is the full mapped width.
+            settings['corridor_width'] = round(self.bufferSpin.value() * 2.0, 1)
+        else:
+            # Flight lines are bidirectional, so a heading and its opposite are
+            # the same grid; the website's range stops below 180.
+            settings['direction'] = round(self.directionSpin.value() % 180.0, 1)
+            settings['margin'] = round(self.marginSpin.value(), 1)
+            settings['cross_hatch'] = bool(self.crossHatchCheck.isChecked())
+        if self._mission_type() == 'full':
+            # Semi-automatic front overlap is derived from speed and interval,
+            # not a setting the pilot chose, so it is not sent as one.
+            settings['front_overlap'] = self.frontOverlapSpin.value()
+        if self.terrainFollowCheck.isChecked():
+            settings['terrain_tolerance'] = round(self.terrainToleranceSpin.value(), 1)
+        return settings
+
+    def _website_estimates(self):
+        """The figures the website's mission card shows, taken from the same
+        stats card the pilot just reviewed, so both tools report one number."""
+        return {
+            'distance_m': int(round(self._path_length_m(self._waypoints or []))),
+            'time':       self.flightTimeLabel.text(),
+            'distance':   self.distanceLabel.text(),
+            'photos':     self.photosLabel.text(),
+            'waypoints':  self.waypointsLabel.text(),
+            'batteries':  self.batteriesLabel.text(),
+            'area':       self.coverageLabel.text(),
+            'flight_count': len(self._missions or []),
+        }
+
+    # ── Pull ─────────────────────────────────────────────
+
+    def _on_load_from_website(self):
+        """List the account's missions and load the chosen one into QGIS as an
+        independent local copy."""
+        base_url = flypath_sync.load_base_url()
+        missions = self._run_web(
+            'Load from FlyPath',
+            lambda token: flypath_sync.list_missions(base_url, token))
+        if missions is None:
+            return
+        if not missions:
+            QMessageBox.information(
+                self, 'No Missions Yet',
+                'Your FlyPath account has no missions yet.\n\nPlan one here '
+                'and use Send to FlyPath, or start one on the website.')
+            return
+        labels = ['%s  ·  %s' % (m.get('name') or 'Untitled mission',
+                                  self._web_date(m.get('updated_at')))
+                  for m in missions]
+        label, ok = QInputDialog.getItem(
+            self, 'Load from FlyPath', 'Mission to load into QGIS:',
+            labels, 0, False)
+        if not ok:
+            return
+        chosen = missions[labels.index(label)]
+        mission = self._run_web(
+            'Load from FlyPath',
+            lambda token: flypath_sync.get_mission(base_url, token,
+                                                   chosen.get('id')))
+        if mission is None:
+            return
+        try:
+            adjusted = self._apply_website_mission(mission)
+        except FlypathSyncError as exc:
+            QMessageBox.warning(self, 'Cannot Load Mission', str(exc))
+            return
+        note = ''
+        if adjusted:
+            note = ('\n\nThese settings are outside this plugin\'s own range '
+                    'and were adjusted to the nearest value it can fly:\n  '
+                    + '\n  '.join(adjusted))
+        QMessageBox.information(
+            self, 'Loaded from FlyPath',
+            '"%s" is now a local mission in QGIS.\n\nIt is an independent '
+            'copy: editing it here never changes the mission on the website, '
+            'and sending it back creates a new draft there.%s'
+            % (mission.get('name') or 'Mission', note))
+
+    @staticmethod
+    def _web_date(updated_at):
+        """'2026-01-02T03:04:05.678+00:00' -> '2026-01-02 03:04'."""
+        return (updated_at or '')[:16].replace('T', ' ') or 'never saved'
+
+    def _apply_website_mission(self, mission):
+        """Rebuild a website mission as a local one. Everything the plugin
+        cannot represent is rejected before any map state changes, so a refused
+        load leaves the current plan untouched. Returns the settings whose value
+        the plugin's own range could not hold, as lines for the caller to show:
+        those are adjusted, never silently."""
+        settings = mission.get('settings') or {}
+        if not isinstance(settings, dict):
+            raise FlypathSyncError('This mission\'s settings could not be read.')
+        style = settings.get('mapping_style', '2d')
+        if style not in ('2d', 'corridor'):
+            raise FlypathSyncError(
+                'This mission is a "%s" survey, which this plugin cannot plan. '
+                'Only 2D and corridor missions can be loaded.' % style)
+        corridor = style == 'corridor'
+
+        drone_name = registry.name_for_website_code(mission.get('drone_model'))
+        if drone_name is None or drone_name not in registry.names():
+            raise FlypathSyncError(
+                'This mission is planned for a drone this plugin does not '
+                'offer (%s), so its settings would not carry over.'
+                % (mission.get('drone_model') or 'none set'))
+
+        capture = settings.get('capture_mode', 'semi')
+        if capture not in ('semi', 'full'):
+            raise FlypathSyncError(
+                'This mission uses a capture mode this plugin does not know '
+                '(%s).' % capture)
+        finish = flypath_sync.label_for_code(
+            flypath_sync.WEBSITE_FINISH_ACTIONS, settings.get('finish_action'))
+        rc_lost = flypath_sync.label_for_code(
+            flypath_sync.WEBSITE_RC_LOST_ACTIONS, settings.get('rc_lost_action'))
+        for label, code, value in (
+                ('finish action', settings.get('finish_action'), finish),
+                ('RC lost action', settings.get('rc_lost_action'), rc_lost)):
+            if code is not None and value is None:
+                raise FlypathSyncError(
+                    'This mission uses a %s this plugin does not offer (%s).'
+                    % (label, code))
+
+        points = mission.get('polygon') or []
+        needed = 2 if corridor else 3
+        if len(points) < needed:
+            raise FlypathSyncError(
+                'This mission has no %s yet — draw one on the website first, '
+                'or plan it here.'
+                % ('centre line' if corridor else 'survey area'))
+        try:
+            vertices = [QgsPointXY(float(lon), float(lat)) for lat, lon in points]
+        except (TypeError, ValueError):
+            raise FlypathSyncError('This mission\'s survey area could not be read.')
+
+        # ── Nothing above changed any state; from here the load applies. ──
+        self.missionTypeCombo.setCurrentText(
+            'Corridor Mapping' if corridor else '2D Mapping')
+        self.droneModelCombo.setCurrentText(drone_name)
+        (self.captureFullRadio if capture == 'full'
+         else self.captureSemiRadio).setChecked(True)
+        if settings.get('flight_path') in ('curved', 'straight'):
+            (self.pathCurvedRadio if settings['flight_path'] == 'curved'
+             else self.pathStraightRadio).setChecked(True)
+        if finish:
+            self.finishActionCombo.setCurrentText(finish)
+        if rc_lost:
+            self.rcLostActionCombo.setCurrentText(rc_lost)
+
+        # Spin boxes clamp anything outside their own range, so a value the
+        # website allows but this plugin does not lands at the nearest one it
+        # can fly. Every such change is collected and reported, so the pilot is
+        # never handed a plan quietly different from the one on the website.
+        adjusted = []
+        fields = [('altitude', self.altitudeSpin, settings.get('altitude')),
+                  ('speed', self.speedSpin, settings.get('speed')),
+                  ('side overlap', self.sideOverlapSpin, settings.get('side_overlap')),
+                  ('front overlap', self.frontOverlapSpin, settings.get('front_overlap')),
+                  ('margin', self.marginSpin, settings.get('margin')),
+                  ('direction', self.directionSpin, settings.get('direction')),
+                  ('terrain tolerance', self.terrainToleranceSpin,
+                   settings.get('terrain_tolerance')),
+                  ('split count', self.splitSpin, settings.get('split_count')),
+                  ('max waypoints', self.maxWaypointsSpin, settings.get('split_max_wp'))]
+        if isinstance(settings.get('corridor_width'), (int, float)):
+            # The website's corridor_width is the full mapped width; the
+            # plugin's Buffer is the half-width each side.
+            fields.append(('buffer (half of the corridor width)', self.bufferSpin,
+                           float(settings['corridor_width']) / 2.0))
+        for label, widget, value in fields:
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            widget.setValue(type(widget.value())(value))
+            if abs(widget.value() - float(value)) > 1e-6:
+                adjusted.append('%s: %g -> %g' % (label, value, widget.value()))
+        self.crossHatchCheck.setChecked(bool(settings.get('cross_hatch')))
+        self.terrainFollowCheck.setChecked(bool(settings.get('terrain_follow')))
+
+        # A pulled mission is a standalone local copy, like a drawn one: it is
+        # not tied to any layer feature, so it uses the Draw source and the same
+        # construction path drawing does.
+        self.sourceDrawRadio.setChecked(True)
+        self._source_mode = 'draw'
+        self._apply_source_mode()
+
+        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
+        if corridor:
+            geom = QgsGeometry.fromPolylineXY(vertices)
+            self._show_drawn_line(geom, wgs84)
+            self._set_survey_line(geom, wgs84)
+        else:
+            geom = QgsGeometry.fromPolygonXY([vertices])
+            self._show_drawn_polygon(geom, wgs84)
+            self._set_survey_polygon(geom, wgs84)
+        self._on_param_changed()
+        return adjusted
 
     # ── Export ────────────────────────────────────────────────────────────
 
@@ -5091,6 +5499,22 @@ class FlyPathDialog(QWidget):
         if len(coords) > 1 and coords[0] == coords[-1]:
             coords = coords[:-1]
         return coords
+
+    def _survey_line_wgs84(self):
+        """Corridor centre line as [(lon, lat), ...] in WGS84, or None. The
+        website stores one line per mission, so a multi-part centre line is
+        refused rather than joined into a line the drone never flies."""
+        parts = self._corridor_line_parts()
+        if not parts or self._survey_line_crs is None:
+            return None
+        if len(parts) > 1:
+            raise FlypathSyncError(
+                'FlyPath stores one corridor centre line, but this one has %d '
+                'separate lines. Send them as separate missions.' % len(parts))
+        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
+        xform = QgsCoordinateTransform(self._survey_line_crs, wgs84,
+                                       QgsProject.instance())
+        return [(pt.x(), pt.y()) for pt in (xform.transform(v) for v in parts[0])]
 
     def _front_overlap_fraction(self):
         """Current along-track (front) overlap as a fraction 0..0.99.

@@ -64,6 +64,7 @@ A walkthrough of installing and using FlyPath in QGIS: defining a survey area, s
 - **Direct RC export**: auto-detects the connected DJI RC (over USB, or as a removable drive), lists the missions DJI Fly tracks, and replaces the one you pick, transferred silently over USB with no prompts or pop-up windows
 - **Mission preview in the RC picker**: every mission on the RC is drawn as a live flight-path thumbnail rendered from its own waypoints and labelled with its waypoint count, so you can see exactly which mission to replace before sending the new one; click a preview to open a zoomable viewer, and the list and preview refresh instantly after each replace
 - **Local folder export**: pick a folder and FlyPath saves a dated `.kmz` file there, then offers to open the folder
+- **FlyPath account sync**: paste the plugin token from your flypath.io profile once, then **Send to FlyPath** pushes the mission you just previewed straight into your website dashboard as a new draft (with a link to open it), and **Load from FlyPath** lists the missions in your account and brings one back into QGIS as an independent local copy - its survey area, drone and settings, ready to keep planning. Sending always creates a new draft, so neither side can overwrite the other, and the token is stored on your machine and only ever sent as a request header
 - Contextual hints shown in a card on the map, hover over any parameter to see what it does
 - Dark-themed dock panel, designed to complement the QGIS interface
 

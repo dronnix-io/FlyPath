@@ -81,6 +81,7 @@ def _build(name, entry):
         available=bool(entry.get('available', True)),
         signal_range_km=(float(aircraft['signal_range_km'])
                          if 'signal_range_km' in aircraft else None),
+        website_code=entry.get('website_code') or None,
     )
 
 
@@ -118,3 +119,12 @@ def get(name):
 def all_drones():
     """All Drone objects."""
     return list(_DRONES.values())
+
+
+def name_for_website_code(code):
+    """The drone name for a flypath.io drone code, or None if this plugin does
+    not support that drone (used when pulling a mission from the website)."""
+    for name, drone in _DRONES.items():
+        if drone.website_code and drone.website_code == code:
+            return name
+    return None

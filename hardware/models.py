@@ -70,6 +70,10 @@ class Drone:
     # Max transmission (signal) range in km under FCC, from DJI specs. Used to
     # bound the takeoff zone so the pilot stays within range. None = unknown.
     signal_range_km: float = None
+    # The flypath.io DroneConfig.code for the same drone, used when a mission is
+    # pushed to or pulled from the website (flypath_sync.py). None for a drone
+    # the website does not offer, which makes the sync refuse rather than guess.
+    website_code: str = None
 
     def speed_range(self):
         """(min, max) waypoint speed in m/s for this drone."""
