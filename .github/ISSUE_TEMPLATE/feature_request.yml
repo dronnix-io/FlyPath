@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest an idea or improvement for FlyPath
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Describe what you are trying to do and why, so the
+        feature can be designed to fit real missions.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What are you trying to do that FlyPath does not let you do today?
+      placeholder: When I plan a corridor I want to...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would the feature look like in the plugin?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      validations:
+        required: false
+  - type: input
+    id: drone
+    attributes:
+      label: Which drone would this be for?
+      placeholder: DJI Air 3S
+    validations:
+      required: false

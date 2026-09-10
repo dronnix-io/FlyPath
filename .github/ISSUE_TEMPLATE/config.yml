@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contact the maintainer
+    url: mailto:salar@dronnix.com
+    about: For anything that is not a bug or feature request, email Salar at Dronnix.
+  - name: FlyPath on the QGIS Plugin Repository
+    url: https://plugins.qgis.org/plugins/FlyPath/
+    about: Install FlyPath from the QGIS Plugin Manager.
