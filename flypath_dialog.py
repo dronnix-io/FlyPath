@@ -699,8 +699,11 @@ class _RcFolderBrowser(QDialog):
         finally:
             QApplication.restoreOverrideCursor()
         for name in names:
-            item = QTreeWidgetItem([name])
-            item.setData(0, _ROLE_PARTS, parts + [name])
+            name = name.split('\0')
+            if len(name) == 1:
+                name.append(name[0])
+            item = QTreeWidgetItem([name[1]])
+            item.setData(0, _ROLE_PARTS, parts + [name[0]])
             item.setData(0, _ROLE_LOADED, False)
             item.addChild(QTreeWidgetItem(['…']))   # dummy → shows arrow
             if parent_item is None:
