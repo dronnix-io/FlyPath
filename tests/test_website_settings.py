@@ -3,6 +3,7 @@ import importlib
 import os
 from pathlib import Path
 import sys
+import unittest
 from types import SimpleNamespace
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
@@ -10,9 +11,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 def test_settings_round_trip():
-    from qgis.core import QgsApplication
-    from qgis.gui import QgsMapCanvas
-    module = importlib.import_module(Path(__file__).resolve().parents[1].name + '.flypath_dialog')
+    try:
+        from qgis.core import QgsApplication
+        from qgis.gui import QgsMapCanvas
+        module = importlib.import_module(Path(__file__).resolve().parents[1].name + '.flypath_dialog')
+    except ImportError as exc:
+        raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
     app = QgsApplication.instance() or QgsApplication([], False)
     app.initQgis()
     canvas = QgsMapCanvas()

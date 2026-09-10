@@ -4694,6 +4694,7 @@ class FlyPathDialog(QWidget):
         load leaves the current plan untouched. Returns the settings whose value
         the plugin's own range could not hold, as lines for the caller to show:
         those are adjusted, never silently."""
+        flypath_sync.validate_mission(mission)
         settings = mission.get('settings') or {}
         if not isinstance(settings, dict):
             raise FlypathSyncError('This mission\'s settings could not be read.')
@@ -4710,8 +4711,7 @@ class FlyPathDialog(QWidget):
         if drone_name is None or drone_name not in registry.names():
             raise FlypathSyncError(
                 'This mission is planned for a drone this plugin does not '
-                'offer (%s), so its settings would not carry over.'
-                % (mission.get('drone_model') or 'none set'))
+                'offer, so its settings would not carry over.')
 
         capture = settings.get('capture_mode', 'semi')
         if capture not in ('semi', 'full'):
@@ -4741,6 +4741,13 @@ class FlyPathDialog(QWidget):
             vertices = [QgsPointXY(float(lon), float(lat)) for lat, lon in points]
         except (TypeError, ValueError):
             raise FlypathSyncError('This mission\'s survey area could not be read.')
+
+        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
+        geom = (QgsGeometry.fromPolylineXY(vertices) if corridor
+                else QgsGeometry.fromPolygonXY([vertices]))
+        if (geom.isEmpty() or not geom.isGeosValid()
+                or (geom.length() <= 0 if corridor else geom.area() <= 0)):
+            raise FlypathSyncError('This mission has an invalid survey geometry.')
 
         # ── Nothing above changed any state; from here the load applies. ──
         # Restore Auto only after loading: intermediate control signals must
@@ -4781,7 +4788,8 @@ class FlyPathDialog(QWidget):
         for label, widget, value in fields:
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 continue
-            widget.setValue(type(widget.value())(value))
+            bounded = max(widget.minimum(), min(widget.maximum(), value))
+            widget.setValue(type(widget.value())(bounded))
             if abs(widget.value() - float(value)) > 1e-6:
                 adjusted.append('%s: %g -> %g' % (label, value, widget.value()))
         self.crossHatchCheck.setChecked(bool(settings.get('cross_hatch')))
@@ -4794,13 +4802,10 @@ class FlyPathDialog(QWidget):
         self._source_mode = 'draw'
         self._apply_source_mode()
 
-        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
         if corridor:
-            geom = QgsGeometry.fromPolylineXY(vertices)
             self._show_drawn_line(geom, wgs84)
             self._set_survey_line(geom, wgs84)
         else:
-            geom = QgsGeometry.fromPolygonXY([vertices])
             self._show_drawn_polygon(geom, wgs84)
             self._set_survey_polygon(geom, wgs84)
         # Geometry establishes the split range. An explicit saved choice must
@@ -4810,7 +4815,8 @@ class FlyPathDialog(QWidget):
         if settings.get('split_enabled') is False:
             split_count = 1
         if isinstance(split_count, (int, float)) and not isinstance(split_count, bool):
-            self.splitSpin.setValue(int(split_count))
+            self.splitSpin.setValue(int(max(self.splitSpin.minimum(),
+                                           min(self.splitSpin.maximum(), split_count))))
             if self.splitSpin.value() != split_count:
                 adjusted.append('split count: %g -> %g' % (split_count, self.splitSpin.value()))
         self._on_param_changed()
