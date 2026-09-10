@@ -12,7 +12,7 @@ owns every message box; this module only raises FlypathSyncError with a message
 that is already fit to show to the pilot.
 
 The personal access token is pasted once from the website's profile page. It is
-kept in QSettings on this machine and only ever leaves it as an
+kept in QGIS's encrypted authentication vault and only ever leaves it as an
 `Authorization: Token <value>` request header — never in a URL, a body, a log
 line, the QGIS project file or an exported mission.
 """
@@ -44,13 +44,6 @@ MAX_JSON_DEPTH = 32
 # Network calls run on the UI thread (as the DEM fetches already do), so the
 # timeout is what bounds how long QGIS can look frozen on a dead connection.
 TIMEOUT_S = 20
-
-_SETTINGS_ORG = 'FlyPath'
-_SETTINGS_APP = 'FlyPath'
-# The QSettings key the token is stored under, and the text shown when none is
-# set. Both name a secret without being one, hence the scanner suppressions.
-_TOKEN_KEY = 'website_token'   # nosec B105
-_BASE_URL_KEY = 'website_base_url'
 
 NO_TOKEN_MESSAGE = (           # nosec B105
     'No FlyPath token set.\n\n'
@@ -212,27 +205,33 @@ def validate_mission(mission):
         raise FlypathSyncError('FlyPath sent invalid mission geometry or settings.') from None
 
 
-# ── Token storage (QSettings, imported lazily so the module stays QGIS-free) ──
+# ── QGIS credential vault (lazy imports keep network tests QGIS-free) ──
 
 def load_token():
-    """The token stored on this machine, or '' when none has been pasted yet."""
-    from qgis.PyQt.QtCore import QSettings
-    return (QSettings(_SETTINGS_ORG, _SETTINGS_APP).value(_TOKEN_KEY, '') or '').strip()
+    """Read this origin's protected credential, migrating legacy settings."""
+    if __package__:
+        from .flypath_credentials import load_token as load
+    else:
+        from flypath_credentials import load_token as load
+    return load()
 
 
 def save_token(token):
-    """Store (or, with an empty value, forget) the token for this machine."""
-    from qgis.PyQt.QtCore import QSettings
-    QSettings(_SETTINGS_ORG, _SETTINGS_APP).setValue(_TOKEN_KEY, (token or '').strip())
+    """Store in the encrypted vault, or forget local access with ''."""
+    if __package__:
+        from .flypath_credentials import save_token as save
+    else:
+        from flypath_credentials import save_token as save
+    return save(token)
 
 
 def load_base_url():
-    """The site to talk to: flypath.io, unless a different address is set in
-    QSettings under 'website_base_url' (a staging or local server, so testing
-    against one needs no code change)."""
-    from qgis.PyQt.QtCore import QSettings
-    stored = QSettings(_SETTINGS_ORG, _SETTINGS_APP).value(_BASE_URL_KEY, '')
-    return (stored or '').strip() or DEFAULT_BASE_URL
+    """The validated HTTPS origin associated with the connection."""
+    if __package__:
+        from .flypath_credentials import load_base_url as load
+    else:
+        from flypath_credentials import load_base_url as load
+    return load()
 
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────
