@@ -48,6 +48,7 @@ class MissionLibrary(QWidget):
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
         self.status = QLabel()
+        self.status.setTextFormat(_PlainText)
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.connect_button = QPushButton('Connect account…')
@@ -87,13 +88,21 @@ class MissionLibrary(QWidget):
         self.update_buttons()
 
     def update_buttons(self):
-        connected = bool(flypath_sync.load_token())
+        storage_error = None
+        try:
+            connected = bool(flypath_sync.load_token())
+        except flypath_sync.FlypathSyncError as exc:
+            connected = False
+            storage_error = str(exc)
         link = self.planner._current_website_link()
         self.link_label.setText('Editing: %s' % link['name'] if link else 'Current mission is not linked to FlyPath.')
         self.send_button.setText('Save changes' if link else 'Save to FlyPath…')
         self.copy_button.setVisible(bool(link))
         self.connect_button.setVisible(not connected)
-        self.disconnect_button.setVisible(connected)
+        self.disconnect_button.setVisible(connected or storage_error is not None)
+        self.disconnect_button.setToolTip(
+            'Forget access on this device and unlink the mission. This does not '
+            'revoke the token on the website. Rotate old tokens to invalidate backups.')
         self.refresh_button.setEnabled(connected)
         self.import_button.setEnabled(connected and self.missions.currentItem() is not None)
         # Saving stays clickable without a preview: the planner answers a
@@ -110,24 +119,39 @@ class MissionLibrary(QWidget):
                                       self.import_button.isEnabled() else
                                       'Select a mission in the list first.')
         if not connected:
-            self.status.setText('Connect your FlyPath account to browse missions.')
+            self.status.setText(storage_error or 'Connect your FlyPath account to browse missions.')
 
     def connect_account(self):
         if self.planner._web_token():
             self.refresh()
 
     def disconnect_account(self):
-        flypath_sync.save_token('')
-        self.planner._website_link = None
-        self.missions.clear()
-        self.update_buttons()
+        error = None
+        try:
+            flypath_sync.save_token('')
+        except flypath_sync.FlypathSyncError as exc:
+            error = str(exc)
+        finally:
+            self.planner._website_link = None
+            self.missions.clear()
+            self.update_buttons()
+        if error:
+            self.disconnect_button.setVisible(True)
+            self.status.setText(error)
+            QMessageBox.warning(self, 'Disconnect incomplete', error)
+        else:
+            self.status.setText('Access forgotten on this device. The token is still valid on the website: revoke or rotate it in Profile to invalidate other copies and old settings backups.')
 
     def refresh(self):
         item = self.missions.currentItem()
         link = self.planner._current_website_link()
         keep = item.data(0, _UserRole) if item is not None else (link or {}).get('id')
         self.missions.clear()
-        if not flypath_sync.load_token():
+        try:
+            connected = bool(flypath_sync.load_token())
+        except flypath_sync.FlypathSyncError:
+            connected = False
+        if not connected:
             self.update_buttons()
             return
         self.status.setText('Loading missions…')
