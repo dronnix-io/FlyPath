@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess  # nosec B404
+import sys
 import tempfile
 import zipfile
 
@@ -19,6 +20,7 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.PyQt.QtCore import (
     Qt, QObject, QEvent, QSettings, QVariant, QSize, QPointF, QUrl, pyqtSignal,
+    QStorageInfo, QDir,
 )
 from qgis.PyQt.QtGui import (
     QColor, QFont, QPixmap, QPainter, QPen, QPolygonF, QImage, QDesktopServices,
@@ -103,6 +105,7 @@ from qgis.core import (
     QgsCoordinateTransform,
     QgsDistanceArea,
     QgsNetworkAccessManager,
+    QgsMessageLog,
 )
 from .map_tools import PolygonDrawTool, LineDrawTool, VertexPickTool
 from .grid_planner import (
@@ -4662,6 +4665,8 @@ class FlyPathDialog(QWidget):
         finally:
             QApplication.restoreOverrideCursor()
 
+        QgsMessageLog.logMessage(f'status: {status}, missions: {missions}, wp_path: {wp_path}, detail: {detail}')
+
         if status == 'ok':
             self._set_rc_target(wp_path)
             self._populate_mission_combo(missions)
@@ -4735,27 +4740,39 @@ class FlyPathDialog(QWidget):
 
     def _list_shell_children(self, parts):
         """Return the child folder names of a shell path (parts from This PC)."""
-        ps_exe = os.path.join(
-            os.environ.get('SystemRoot', r'C:\Windows'),
-            r'System32\WindowsPowerShell\v1.0\powershell.exe'
-        )
-        tmp_dir = tempfile.mkdtemp(prefix='flypath_')
-        try:
-            sp = os.path.join(tmp_dir, 'children.ps1')
-            with open(sp, 'w', encoding='utf-8') as fh:
-                fh.write(self._shell_children_script(parts))
+        if sys.platform == 'win32':
+            ps_exe = os.path.join(
+                os.environ.get('SystemRoot', r'C:\Windows'),
+                r'System32\WindowsPowerShell\v1.0\powershell.exe'
+            )
+            tmp_dir = tempfile.mkdtemp(prefix='flypath_')
             try:
-                r = subprocess.run(  # nosec B603
-                    [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
-                     '-ExecutionPolicy', 'Bypass', '-File', sp],
-                    capture_output=True, text=True, timeout=40,
-                    creationflags=_NO_WINDOW, startupinfo=_STARTUPINFO
-                )
-            except Exception:
-                return []
-            return [ln[2:] for ln in r.stdout.splitlines() if ln.startswith('D|')]
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+                sp = os.path.join(tmp_dir, 'children.ps1')
+                with open(sp, 'w', encoding='utf-8') as fh:
+                    fh.write(self._shell_children_script(parts))
+                try:
+                    r = subprocess.run(  # nosec B603
+                        [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
+                        '-ExecutionPolicy', 'Bypass', '-File', sp],
+                        capture_output=True, text=True, timeout=40,
+                        creationflags=_NO_WINDOW, startupinfo=_STARTUPINFO
+                    )
+                except Exception:
+                    return []
+                return [ln[2:] for ln in r.stdout.splitlines() if ln.startswith('D|')]
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+        elif sys.platform == 'linux':
+            if len(parts) == 0:
+                # We are filling in root, lets leave a few shortcuts
+                rv = ['/\0System Root', QDir.homePath() + '\0Home']
+                gvfspath = f'/run/user/{os.getuid()}/gvfs'
+                if os.path.isdir(gvfspath):
+                    rv.extend([f'{os.path.join(gvfspath, x)}\0{x}' for x in os.listdir(gvfspath)])
+                return rv
+
+            parts = os.path.join('/', *parts)
+            return [d for d in sorted(os.listdir(parts)) if os.path.isdir(os.path.join(parts, d))]
 
     @staticmethod
     def _shell_children_script(parts):
