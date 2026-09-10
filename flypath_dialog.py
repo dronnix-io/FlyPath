@@ -4416,17 +4416,29 @@ class FlyPathDialog(QWidget):
 
     def _current_website_link(self):
         link = getattr(self, '_website_link', None)
-        scope = flypath_sync.account_key(flypath_sync.load_base_url(), flypath_sync.load_token())
+        if not link:
+            return None
+        try:
+            scope = flypath_sync.account_key(flypath_sync.load_base_url(), flypath_sync.load_token())
+        except FlypathSyncError:
+            self._website_link = None
+            return None
         if link and link['account'] != scope:
             self._website_link = None
             return None
         return link
 
     def _remember_website_mission(self, mission):
+        try:
+            scope = flypath_sync.account_key(flypath_sync.load_base_url(), flypath_sync.load_token())
+        except FlypathSyncError:
+            self._website_link = None
+            self._update_web_buttons()
+            return
         self._website_link = {
             'id': mission.get('id'), 'revision': mission.get('revision'),
             'name': mission.get('name') or 'Mission',
-            'account': flypath_sync.account_key(flypath_sync.load_base_url(), flypath_sync.load_token()),
+            'account': scope,
         }
         self._update_web_buttons()
 
@@ -4438,7 +4450,18 @@ class FlyPathDialog(QWidget):
     def _web_token(self):
         """The token stored on this machine, asking for it once if there is
         none. Returns None when the pilot cancels the prompt."""
-        token = flypath_sync.load_token()
+        from .flypath_credentials import unlock_storage
+        parent = getattr(self, '_mission_library', None) or self
+        try:
+            origin = flypath_sync.load_base_url()
+            unlock_storage()
+            token = flypath_sync.load_token()
+            if flypath_sync.load_base_url() != origin:
+                raise FlypathSyncError('The FlyPath website changed while connecting. Retry Connect account for the new website.')
+        except FlypathSyncError as exc:
+            QMessageBox.warning(parent, 'FlyPath credentials', str(exc))
+            self._update_web_buttons()
+            return None
         if token:
             return token
         try:
@@ -4447,11 +4470,22 @@ class FlyPathDialog(QWidget):
             password = getattr(QLineEdit, 'Password')
         token, ok = QInputDialog.getText(
             getattr(self, '_mission_library', None) or self, 'FlyPath Token',
-            flypath_sync.NO_TOKEN_MESSAGE + '\n\nToken:', password)
+            'Connect to %s.\n\nOpen Profile on this website, generate a plugin '
+            'token, and paste it here. QGIS will store it in its encrypted '
+            'authentication vault. If a token expires or is revoked, reconnect '
+            'with a new token; your local plan is kept.\n\nToken:' % origin,
+            password)
         token = (token or '').strip()
         if not (ok and token):
             return None
-        flypath_sync.save_token(token)
+        try:
+            if flypath_sync.load_base_url() != origin:
+                raise FlypathSyncError('The FlyPath website changed while entering the token. Nothing was saved. Retry Connect account for the new website.')
+            flypath_sync.save_token(token)
+        except FlypathSyncError as exc:
+            QMessageBox.warning(parent, 'FlyPath credentials', str(exc))
+            self._update_web_buttons()
+            return None
         return token
 
     def _run_web(self, title, work, *, raise_conflict=False):
@@ -4459,6 +4493,11 @@ class FlyPathDialog(QWidget):
         buttons disabled (a slow connection should look busy, not crashed).
         Returns work()'s value, or None when it failed or was cancelled — the
         error is shown as a message box here so flypath_sync stays Qt-free."""
+        try:
+            origin = flypath_sync.load_base_url()
+        except FlypathSyncError as exc:
+            QMessageBox.warning(self, title, str(exc))
+            return None
         token = self._web_token()
         if token is None:
             return None
@@ -4469,13 +4508,19 @@ class FlyPathDialog(QWidget):
         # ponytail: retain synchronous HTTP; use a QGIS task if request latency disrupts planning.
         QApplication.processEvents()     # paint the busy state before blocking
         try:
+            if (flypath_sync.load_base_url() != origin or
+                    flypath_sync.load_token() != token):
+                raise FlypathSyncError('The FlyPath connection changed before sending. No request was made. Retry with the intended website and account.')
             return work(token)
         except FlypathSyncError as exc:
             if exc.status == 401:
                 # The token is gone or was regenerated: forget it so the next
                 # attempt asks for the new one instead of failing again.
-                flypath_sync.save_token('')
                 self._website_link = None
+                try:
+                    flypath_sync.save_token('')
+                except FlypathSyncError as storage_error:
+                    QMessageBox.warning(self, 'FlyPath credentials', str(storage_error))
             if exc.status == 409 and raise_conflict:
                 raise
             QMessageBox.warning(self, title, str(exc))
@@ -4509,7 +4554,11 @@ class FlyPathDialog(QWidget):
         except FlypathSyncError as exc:
             QMessageBox.warning(parent, 'Cannot Save Mission', str(exc))
             return
-        base_url = flypath_sync.load_base_url()
+        try:
+            base_url = flypath_sync.load_base_url()
+        except FlypathSyncError as exc:
+            QMessageBox.warning(parent, 'FlyPath credentials', str(exc))
+            return
         try:
             result = self._run_web(
                 'Save to FlyPath',
@@ -4527,7 +4576,7 @@ class FlyPathDialog(QWidget):
         reply = QMessageBox.question(
             parent, 'Saved to FlyPath',
             ('Changes saved to "%s".' if updating else 'New mission "%s" saved.')
-            % self._website_link['name'] + '\n\nOpen it in your browser?',
+            % (result.get('name') or 'Mission') + '\n\nOpen it in your browser?',
             _MB_YES | _MB_NO, _MB_YES)
         if reply == _MB_YES:
             QDesktopServices.openUrl(QUrl(url))
@@ -4657,7 +4706,11 @@ class FlyPathDialog(QWidget):
 
     def _on_load_from_website(self, mission_id):
         """Load a library selection as an independent local copy."""
-        base_url = flypath_sync.load_base_url()
+        try:
+            base_url = flypath_sync.load_base_url()
+        except FlypathSyncError as exc:
+            QMessageBox.warning(self, 'FlyPath credentials', str(exc))
+            return
         mission = self._run_web(
             'Load from FlyPath',
             lambda token: flypath_sync.get_mission(base_url, token,

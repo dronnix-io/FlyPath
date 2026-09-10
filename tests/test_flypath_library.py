@@ -43,7 +43,8 @@ def test_library():
         assert not library.isWindow(), 'Library must be embedded in the dock'
         dock.setCurrentWidget(library)
         library.refresh()
-        assert not library.send_button.isEnabled()
+        # Save stays reachable so the planner can explain why Preview is needed.
+        assert library.send_button.isEnabled()
         assert not library.import_button.isEnabled()
         library.missions.setCurrentItem(library.missions.topLevelItem(1))
         assert library.import_button.isEnabled()
