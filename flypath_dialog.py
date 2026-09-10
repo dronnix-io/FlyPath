@@ -23,6 +23,7 @@ from qgis.PyQt.QtCore import (
 )
 from qgis.PyQt.QtGui import (
     QColor, QFont, QPixmap, QPainter, QPen, QPolygonF, QImage, QDesktopServices,
+    QIcon,
 )
 from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
@@ -37,6 +38,7 @@ try:
     _FrameNoFrame = QFrame.Shape.NoFrame
     _FontBold     = QFont.Weight.Bold
     _WaitCursor   = Qt.CursorShape.WaitCursor
+    _PointingCursor = Qt.CursorShape.PointingHandCursor
     _KeepAspect   = Qt.AspectRatioMode.KeepAspectRatio
     _SmoothTrans  = Qt.TransformationMode.SmoothTransformation
     _ScrollHandDrag  = QGraphicsView.DragMode.ScrollHandDrag
@@ -65,6 +67,7 @@ except AttributeError:
     _FrameNoFrame = getattr(QFrame, 'NoFrame')
     _FontBold     = getattr(QFont, 'Bold')
     _WaitCursor   = getattr(Qt, 'WaitCursor')
+    _PointingCursor = getattr(Qt, 'PointingHandCursor')
     _KeepAspect   = getattr(Qt, 'KeepAspectRatio')
     _SmoothTrans  = getattr(Qt, 'SmoothTransformation')
     _ScrollHandDrag   = getattr(QGraphicsView, 'ScrollHandDrag')
@@ -552,10 +555,42 @@ QLabel#infoBarIdle {
     border-top: 1px solid #2A2D35;
     border-left: 3px solid #3A3D45;
 }
+QWidget#linksFooter {
+    border-top: 1px solid #2A2D35;
+    background-color: #15181E;
+}
+QPushButton#footerRepo {
+    color: #C9D1D9; background-color: transparent;
+    border: none; font-size: 11px; font-weight: bold;
+    padding: 1px 2px; text-align: left;
+}
+QPushButton#footerRepo:hover { color: #FFFFFF; }
+QPushButton#footerLink {
+    color: #8A93A0; background-color: transparent;
+    border: none; font-size: 10px; padding: 1px 6px;
+    text-align: left;
+}
+QPushButton#footerLink:hover { color: #F0A500; }
+QPushButton#footerSite {
+    color: #7FB3E8; background-color: transparent;
+    border: none; font-size: 10px; padding: 1px 2px;
+    text-align: left;
+}
+QPushButton#footerSite:hover { color: #A9D0FF; }
 """
 
 
 _INFO_IDLE = 'ⓘ  Hover over any field to see what it does.'
+
+# Community links shown in the panel footer. FlyPath is free and open-source, so
+# issue reports and contributions are how it grows; these open in the system
+# browser. The repo header links to GitHub; a separate link points to the site.
+_REPO_URL     = 'https://github.com/dronnix-io/FlyPath'
+_BUG_URL      = _REPO_URL + '/issues/new?template=bug_report.yml'
+_FEATURE_URL  = _REPO_URL + '/issues/new?template=feature_request.yml'
+_CONTRIB_URL  = _REPO_URL + '/blob/main/CONTRIBUTING.md'
+_README_URL   = _REPO_URL + '#readme'
+_SITE_URL     = 'https://flypath.io'
 
 # ── Map preview colour constants ───────────────────────────────────────────
 _COLOR_START_MARKER  = '#CC2222'   # red filled circle — first waypoint
@@ -884,6 +919,7 @@ class FlyPathDialog(QWidget):
         scroll.setWidget(content)
         outer.addWidget(scroll, 1)
         outer.addWidget(self._build_action_bar())
+        outer.addWidget(self._build_links_footer())
 
         # Let the dock shrink only down to the natural minimum width of its
         # content (where the two-column sections still fit), not smaller. The
@@ -1726,6 +1762,58 @@ class FlyPathDialog(QWidget):
         row_layout.addWidget(self.previewBtn, 2)
         row_layout.addWidget(self.clearPreviewBtn, 1)
         return row
+
+    def _footer_link(self, text, tip, url, object_name='footerLink', icon=None):
+        """One flat, borderless link for the footer. Opens `url` in the system
+        browser. `icon` is an optional QIcon shown before the text."""
+        btn = QPushButton(text)
+        btn.setObjectName(object_name)
+        btn.setFlat(True)
+        btn.setCursor(_PointingCursor)
+        btn.setToolTip(tip)
+        if icon is not None:
+            btn.setIcon(icon)
+            btn.setIconSize(QSize(15, 15))
+        btn.clicked.connect(
+            lambda _=False, u=url: QDesktopServices.openUrl(QUrl(u)))
+        return btn
+
+    def _build_links_footer(self):
+        """A slim community-links strip pinned at the very bottom of the panel.
+
+        FlyPath is free and open-source, so this gives users a one-click path to
+        the project: a GitHub section (report a bug, request a feature,
+        contribute, read the docs, and the repo itself, marked with the GitHub
+        mark so it is unmistakable) and a link to the flypath.io website. Styled
+        as flat borderless links so it reads as a footer and leaves the mission
+        controls above it untouched. Each link opens in the system browser."""
+        plugin_dir = os.path.dirname(os.path.abspath(__file__))
+        gh_icon = QIcon(os.path.join(plugin_dir, 'github.svg'))
+        fp_icon = QIcon(os.path.join(plugin_dir, 'icon.svg'))
+
+        footer = QWidget()
+        footer.setObjectName('linksFooter')
+        row = QHBoxLayout(footer)
+        row.setContentsMargins(8, 4, 8, 5)
+        row.setSpacing(2)
+
+        # GitHub mark + short label, itself a link to the repo, names the group.
+        row.addWidget(self._footer_link(
+            ' GitHub', 'Open the FlyPath repository on GitHub',
+            _REPO_URL, object_name='footerRepo', icon=gh_icon))
+        for label, tip, url in [
+            ('Bug',        'Report a bug',           _BUG_URL),
+            ('Feature',    'Request a feature',      _FEATURE_URL),
+            ('Contribute', 'How to contribute',      _CONTRIB_URL),
+            ('Docs',       'Read the documentation', _README_URL),
+        ]:
+            row.addWidget(self._footer_link(label, tip, url))
+        row.addStretch()
+        # The project website, pinned to the right end of the same line.
+        row.addWidget(self._footer_link(
+            ' flypath.io', 'Visit the FlyPath website', _SITE_URL,
+            object_name='footerSite', icon=fp_icon))
+        return footer
 
     def _build_action_bar(self):
         bar = QWidget()

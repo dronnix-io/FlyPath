@@ -1,0 +1,69 @@
+name: Bug report
+description: Something in FlyPath does not work as expected
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. The more detail you give,
+        the faster it can be fixed. If a mission was rejected by DJI Fly, please
+        attach the KMZ if you can.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, and what went wrong?
+      placeholder: I generated a 2D mapping mission and DJI Fly rejected the file.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      placeholder: The mission should load and fly.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: A numbered list is ideal.
+      placeholder: |
+        1. Select a polygon layer
+        2. Set altitude to 60 m
+        3. Click Generate
+        4. Send to RC
+    validations:
+      required: true
+  - type: input
+    id: qgis-version
+    attributes:
+      label: QGIS version
+      placeholder: "3.44.10"
+    validations:
+      required: true
+  - type: input
+    id: drone
+    attributes:
+      label: Drone model
+      placeholder: DJI Mini 4 Pro
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, the mission KMZ, or log output can be pasted or attached here.
+    validations:
+      required: false

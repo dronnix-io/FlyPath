@@ -301,14 +301,17 @@ FlyPath/
 
 ## Contributing
 
-Contributions are welcome. To get started:
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Commit your changes
-4. Open a pull request against `main`
+Contributions are welcome. FlyPath uses a fork and pull request workflow: fork the repository, create a branch, and open a pull request against `main`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide, including the checks to run before you push.
 
 For bug reports and feature requests, please use the [issue tracker](https://github.com/dronnix-io/FlyPath/issues).
+
+### From inside the plugin
+
+You do not need to leave QGIS to reach the project. A links bar sits at the bottom of the FlyPath panel:
+
+![The FlyPath panel footer, with links to the GitHub repository, bug reports, feature requests, the contributing guide, the docs, and flypath.io](docs/images/community_footer.png)
+
+From there you can open the GitHub repository, report a bug, request a feature, read the contributing guide and the docs, or visit the FlyPath website. Each link opens in your browser.
 
 ---
 
@@ -323,5 +326,7 @@ This project is licensed under the **GNU General Public License v3.0**, see the 
 [Dronnix](https://www.dronnix.com) is a drone mapping and geospatial AI company specialising in data collection and analysis for solar panel inspection, agriculture, urban growth monitoring, construction progress tracking, and large-scale mapping missions.
 
 FlyPath is part of Dronnix's open tooling layer, free and open-source to support the drone mapping community.
+
+The project also has a home on the web at [flypath.io](https://flypath.io), a place for guides, supported drones, and news as FlyPath grows. The site is under active development.
 
 **Contact:** [salar@dronnix.com](mailto:salar@dronnix.com)
