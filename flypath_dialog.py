@@ -20,7 +20,7 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.PyQt.QtCore import (
     Qt, QObject, QEvent, QSettings, QVariant, QSize, QPointF, QUrl, pyqtSignal,
-    QStorageInfo, QDir,
+    QDir,
 )
 from qgis.PyQt.QtGui import (
     QColor, QFont, QPixmap, QPainter, QPen, QPolygonF, QImage, QDesktopServices,
