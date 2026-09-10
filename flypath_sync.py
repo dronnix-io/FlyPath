@@ -17,6 +17,7 @@ kept in QSettings on this machine and only ever leaves it as an
 line, the QGIS project file or an exported mission.
 """
 
+import hashlib
 import json
 import urllib.error
 import urllib.request
@@ -91,6 +92,21 @@ def push_mission(base_url, token, payload):
     return _call(base_url, token, '', data=payload)
 
 
+def account_key(base_url, token):
+    """Session-only scope for a mission link; never retain the raw token."""
+    return (_root(base_url), hashlib.sha256(token.strip().encode('utf-8')).hexdigest())
+
+
+def update_mission(base_url, token, mission_id, revision, payload):
+    """Update a linked mission; 409 leaves both versions intact."""
+    if type(mission_id) is not int or mission_id < 1:
+        raise FlypathSyncError('This mission has no usable FlyPath id. Load it again.')
+    if type(revision) is not int or revision < 1:
+        raise FlypathSyncError('This mission has no revision. Update the website and load it again before saving changes.')
+    return _call(base_url, token, '%s/' % mission_id,
+                 data={**payload, 'revision': revision}, method='PATCH')
+
+
 def list_missions(base_url, token):
     """The account's missions as [{'id', 'name', 'updated_at'}, ...], newest
     first (the API's own order)."""
@@ -149,7 +165,7 @@ def _api_url(base_url, path):
     return url
 
 
-def _call(base_url, token, path, data=None):
+def _call(base_url, token, path, data=None, method=None):
     """One API call. A body means POST, no body means GET. Returns the decoded
     JSON object, raising FlypathSyncError on anything else."""
     if not (token or '').strip():
@@ -163,7 +179,7 @@ def _call(base_url, token, path, data=None):
         body = json.dumps(data).encode('utf-8')
         headers['Content-Type'] = 'application/json'
     request = urllib.request.Request(url, data=body, headers=headers,
-                                     method='POST' if body else 'GET')
+                                     method=method or ('POST' if body else 'GET'))
     try:
         # _api_url has already rejected anything but an http(s) address.
         with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:  # nosec B310

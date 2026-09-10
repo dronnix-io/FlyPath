@@ -245,6 +245,39 @@ def test_continue_mission_has_no_website_equivalent():
     assert 'Continue mission' not in WEBSITE_RC_LOST_ACTIONS
 
 
+def test_update_uses_patch_and_revision_without_mutating_the_payload():
+    payload = {'name': 'Updated'}
+    result, fake = _run({'ok': True, 'id': 3, 'revision': 5},
+                         lambda: flypath_sync.update_mission(BASE, TOKEN, 3, 4, payload))
+    assert fake.request.full_url == f'{BASE}/api/missions/3/'
+    assert fake.request.get_method() == 'PATCH'
+    assert json.loads(fake.request.data)['revision'] == 4
+    assert payload == {'name': 'Updated'}
+    assert result['revision'] == 5
+
+
+def test_update_conflict_is_not_retried_as_a_new_mission():
+    fake = _patch(_http_error(409, {'error': 'Changed elsewhere'}))
+    try:
+        try:
+            flypath_sync.update_mission(BASE, TOKEN, 3, 4, {'name': 'Updated'})
+        except FlypathSyncError as exc:
+            assert exc.status == 409
+        else:
+            raise AssertionError('A stale save must fail')
+        assert fake.request.get_method() == 'PATCH'
+    finally:
+        urllib.request.urlopen = _REAL_URLOPEN
+
+
+def test_updates_without_valid_revision_never_reach_the_network():
+    for revision in (None, 0, -1, True, 1.5, '1'):
+        result, fake = _run({'ok': True},
+            lambda: flypath_sync.update_mission(BASE, TOKEN, 3, revision, {}))
+        assert isinstance(result, FlypathSyncError)
+        assert fake.request is None
+
+
 if __name__ == '__main__':
     fns = [v for k, v in sorted(globals().items())
            if k.startswith('test_') and callable(v)]

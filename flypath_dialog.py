@@ -371,7 +371,6 @@ QGroupBox#organizerGroup { border-color: #6E52A6; color: #B98CFF; }
 QGroupBox#safetyGroup    { border-color: #A65454; color: #F08A8A; }
 QGroupBox#takeoffGroup   { border-color: #37847A; color: #5FD0C0; }
 QGroupBox#exportGroup    { border-color: #9C5C86; color: #E79AD0; }
-QGroupBox#webGroup       { border-color: #3F7FA8; color: #7FC8E8; }
 QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox {
     background-color: #2A2D35;
     border: 1px solid #3A3D45;
@@ -454,15 +453,7 @@ QPushButton#exportBtn {
 }
 QPushButton#exportBtn:hover   { background-color: #FFB520; }
 QPushButton#exportBtn:pressed { background-color: #D09000; }
-QPushButton#webSendBtn {
-    background-color: #2A6B8C; color: #DFF3FF;
-}
-QPushButton#webSendBtn:hover    { background-color: #35809F; }
-QPushButton#webSendBtn:disabled { background-color: #33363E; color: #6A6D75; }
-QPushButton#webLoadBtn {
-    background-color: #3A3D45; color: #D0D0D0; font-weight: normal;
-}
-QPushButton#webLoadBtn:hover { background-color: #4A4D55; }
+
 QPushButton#clearPreviewBtn {
     background-color: #3A3D45; color: #D0D0D0; font-weight: normal;
 }
@@ -757,6 +748,7 @@ class FlyPathDialog(QWidget):
         self.iface = iface
 
         # State
+        self._website_link = None  # session-only: id, revision and account scope
         self._hud                = None   # flight-stats card overlaid on the map
         self._info_hud           = None   # info/hint card overlaid under the stats
         self._terrain            = _TerrainSampler()  # in-memory DEM, no disk cache
@@ -799,6 +791,7 @@ class FlyPathDialog(QWidget):
         self._build_ui()
         self._setup_combos()
         self._connect_signals()
+        QgsProject.instance().cleared.connect(self._forget_website_mission)
         self._update_camera_info()
         self._apply_speed_range()
         self._apply_drone_capabilities()
@@ -1784,7 +1777,6 @@ class FlyPathDialog(QWidget):
         export_layout.addWidget(self.exportBtn)
 
         layout.addWidget(export_group)
-        layout.addWidget(self._build_web_group())
 
         # Restore last-used destination mode
         mode = settings.value('dest_mode', 'local')
@@ -1795,41 +1787,6 @@ class FlyPathDialog(QWidget):
         self._update_export_button()
 
         return bar
-
-    def _build_web_group(self):
-        """FlyPath Account card: push the previewed mission into the pilot's
-        flypath.io dashboard, or pull one back down to keep planning it here.
-
-        Deliberately its own card, below Export Mission: 'Send to DJI RC' puts a
-        mission on the controller you fly with, this puts it in your account on
-        the website, and the two must not read as the same action."""
-        group = QGroupBox('FlyPath Account')
-        group.setObjectName('webGroup')
-        layout = QHBoxLayout(group)
-        layout.setSpacing(4)
-        layout.setContentsMargins(8, 8, 8, 8)
-
-        self.webSendBtn = QPushButton('Send to FlyPath')
-        self.webSendBtn.setObjectName('webSendBtn')
-        self.webSendBtn.setMinimumHeight(30)
-        self._tip(self.webSendBtn,
-            'Send the previewed mission to your flypath.io account as a new '
-            'draft, so you can open, rename or share it from the dashboard. '
-            'Preview the mission first; it never overwrites a mission that is '
-            'already on the website.')
-
-        self.webLoadBtn = QPushButton('Load from FlyPath')
-        self.webLoadBtn.setObjectName('webLoadBtn')
-        self.webLoadBtn.setMinimumHeight(30)
-        self._tip(self.webLoadBtn,
-            'List the missions in your flypath.io account and load one into '
-            'QGIS as an independent local copy: its survey area, drone and '
-            'settings, ready to keep planning here.')
-
-        layout.addWidget(self.webSendBtn, 1)
-        layout.addWidget(self.webLoadBtn, 1)
-        self._update_web_buttons()
-        return group
 
     def _build_local_dest_panel(self, settings):
         panel = QWidget()
@@ -2053,8 +2010,6 @@ class FlyPathDialog(QWidget):
         self.previewBtn.clicked.connect(self._on_preview)
         self.clearPreviewBtn.clicked.connect(self._on_clear_preview)
         self.exportBtn.clicked.connect(self._on_export)
-        self.webSendBtn.clicked.connect(self._on_send_to_website)
-        self.webLoadBtn.clicked.connect(self._on_load_from_website)
 
     def _on_param_changed(self):
         self._update_gsd()
@@ -4331,6 +4286,7 @@ class FlyPathDialog(QWidget):
         self._on_clear_contours()
 
         if reset_area:
+            self._website_link = None
             # Full reset — also stop any active draw and remove the boundary
             self._leave_draw_tool()
             if getattr(self, 'setBreaksBtn', None) and self.setBreaksBtn.isChecked():
@@ -4359,12 +4315,30 @@ class FlyPathDialog(QWidget):
 
     # ── FlyPath website sync ────────────────────────────────
 
+    def _forget_website_mission(self):
+        self._website_link = None
+        self._update_web_buttons()
+
+    def _current_website_link(self):
+        link = getattr(self, '_website_link', None)
+        scope = flypath_sync.account_key(flypath_sync.load_base_url(), flypath_sync.load_token())
+        if link and link['account'] != scope:
+            self._website_link = None
+            return None
+        return link
+
+    def _remember_website_mission(self, mission):
+        self._website_link = {
+            'id': mission.get('id'), 'revision': mission.get('revision'),
+            'name': mission.get('name') or 'Mission',
+            'account': flypath_sync.account_key(flypath_sync.load_base_url(), flypath_sync.load_token()),
+        }
+        self._update_web_buttons()
+
     def _update_web_buttons(self):
-        """Sending is gated on a previewed mission: nothing incomplete or
-        unreviewed can be pushed into the pilot's account."""
-        if not hasattr(self, 'webSendBtn'):
-            return                       # called while the action bar is built
-        self.webSendBtn.setEnabled(bool(self._preview_layer_ids and self._missions))
+        library = getattr(self, '_mission_library', None)
+        if library is not None:
+            library.update_buttons()
 
     def _web_token(self):
         """The token stored on this machine, asking for it once if there is
@@ -4372,16 +4346,20 @@ class FlyPathDialog(QWidget):
         token = flypath_sync.load_token()
         if token:
             return token
+        try:
+            password = QLineEdit.EchoMode.Password
+        except AttributeError:
+            password = getattr(QLineEdit, 'Password')
         token, ok = QInputDialog.getText(
-            self, 'FlyPath Token',
-            flypath_sync.NO_TOKEN_MESSAGE + '\n\nToken:')
+            getattr(self, '_mission_library', None) or self, 'FlyPath Token',
+            flypath_sync.NO_TOKEN_MESSAGE + '\n\nToken:', password)
         token = (token or '').strip()
         if not (ok and token):
             return None
         flypath_sync.save_token(token)
         return token
 
-    def _run_web(self, title, work):
+    def _run_web(self, title, work, *, raise_conflict=False):
         """Run one website call with the token, a wait cursor and the sync
         buttons disabled (a slow connection should look busy, not crashed).
         Returns work()'s value, or None when it failed or was cancelled — the
@@ -4389,9 +4367,11 @@ class FlyPathDialog(QWidget):
         token = self._web_token()
         if token is None:
             return None
-        self.webSendBtn.setEnabled(False)
-        self.webLoadBtn.setEnabled(False)
+        library = getattr(self, '_mission_library', None)
+        if library is not None:
+            library.setEnabled(False)
         QApplication.setOverrideCursor(_WaitCursor)
+        # ponytail: retain synchronous HTTP; use a QGIS task if request latency disrupts planning.
         QApplication.processEvents()     # paint the busy state before blocking
         try:
             return work(token)
@@ -4400,52 +4380,83 @@ class FlyPathDialog(QWidget):
                 # The token is gone or was regenerated: forget it so the next
                 # attempt asks for the new one instead of failing again.
                 flypath_sync.save_token('')
+                self._website_link = None
+            if exc.status == 409 and raise_conflict:
+                raise
             QMessageBox.warning(self, title, str(exc))
             return None
         finally:
             QApplication.restoreOverrideCursor()
-            self.webLoadBtn.setEnabled(True)
+            if library is not None:
+                library.setEnabled(True)
             self._update_web_buttons()
 
     # ── Push ─────────────────────────────────────────────
 
-    def _on_send_to_website(self):
-        """Push the previewed mission into the pilot's account as a new draft."""
+    def _on_send_to_website(self, save_as_new=False):
+        """Save the linked mission, or explicitly create and link a new one."""
         if not (self._preview_layer_ids and self._missions):
-            QMessageBox.information(
-                self, 'Preview First',
-                'Preview the mission on the map first, then send the plan you '
-                'can see to your FlyPath account.')
+            QMessageBox.information(self, 'Preview First', 'Preview the mission on the map before saving it to FlyPath.')
             return
-        name = 'QGIS ' + datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
-        # Build the payload first: a mission the website cannot take (an
-        # unsupported drone, say) should fail before the pilot is asked to paste
-        # a token for it.
+        link = self._current_website_link()
+        updating = bool(link and not save_as_new)
+        name = link['name'] if link else 'QGIS ' + datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+        parent = getattr(self, '_mission_library', None) or self
+        if not updating:
+            name, ok = QInputDialog.getText(
+                parent, 'Save as new on FlyPath', 'Mission name:',
+                text=name + ' copy' if link else name)
+            if not ok or not name.strip():
+                return
+            name = name.strip()
         try:
             payload = self._website_payload(name)
         except FlypathSyncError as exc:
-            QMessageBox.warning(self, 'Send to FlyPath', str(exc))
+            QMessageBox.warning(parent, 'Cannot Save Mission', str(exc))
             return
         base_url = flypath_sync.load_base_url()
-        result = self._run_web(
-            'Send to FlyPath',
-            lambda token: flypath_sync.push_mission(base_url, token, payload))
+        try:
+            result = self._run_web(
+                'Save to FlyPath',
+                lambda token: flypath_sync.update_mission(base_url, token, link['id'], link['revision'], payload)
+                if updating else flypath_sync.push_mission(base_url, token, payload),
+                raise_conflict=updating)
+        except FlypathSyncError as exc:
+            if exc.status != 409:
+                raise
+            return self._resolve_website_conflict(link)
         if not result:
             return
+        self._remember_website_mission(result)
         url = flypath_sync.mission_url(result.get('id'), base_url)
         reply = QMessageBox.question(
-            self, 'Sent to FlyPath',
-            'Saved to your FlyPath account as a new draft:\n\n'
-            '%s\n%s\n\nOpen it in your browser?'
-            % (result.get('name') or name, url),
+            parent, 'Saved to FlyPath',
+            ('Changes saved to "%s".' if updating else 'New mission "%s" saved.')
+            % self._website_link['name'] + '\n\nOpen it in your browser?',
             _MB_YES | _MB_NO, _MB_YES)
         if reply == _MB_YES:
             QDesktopServices.openUrl(QUrl(url))
+        return True
+
+    def _resolve_website_conflict(self, link):
+        from .flypath_library import conflict_choice
+        parent = getattr(self, '_mission_library', None) or self
+        choice = conflict_choice(parent)
+        if choice == 'copy':
+            return self._on_send_to_website(save_as_new=True)
+        if choice == 'reload':
+            answer = QMessageBox.question(
+                parent, 'Load Latest Mission',
+                'Discard your local edits and load the latest saved mission?',
+                _MB_YES | _MB_NO, _MB_NO)
+            if answer == _MB_YES:
+                return self._on_load_from_website(link['id'])
+        return False
 
     def _website_payload(self, name):
         """The mission as the website's API expects it. Points travel as
         [lat, lon] pairs (the website's own order), the drone as the website's
-        own code, and never an id — a push always creates a new draft."""
+        own code. Linked saves address the mission by its API URL."""
         corridor = self._mission_kind() == 'corridor'
         drone = registry.get(self.droneModelCombo.currentText())
         if not drone.website_code:
@@ -4510,6 +4521,9 @@ class FlyPathDialog(QWidget):
             'side_overlap':   self.sideOverlapSpin.value(),
             'terrain_follow': bool(self.terrainFollowCheck.isChecked()),
             'split_count':    self.splitSpin.value(),
+            'split_enabled':  self.splitSpin.value() > 1,
+            'auto_direction': False,
+            'reverse_route':  False,
             'split_max_wp':   self.maxWaypointsSpin.value(),
         }
         if corridor:
@@ -4546,34 +4560,13 @@ class FlyPathDialog(QWidget):
 
     # ── Pull ─────────────────────────────────────────────
 
-    def _on_load_from_website(self):
-        """List the account's missions and load the chosen one into QGIS as an
-        independent local copy."""
+    def _on_load_from_website(self, mission_id):
+        """Load a library selection as an independent local copy."""
         base_url = flypath_sync.load_base_url()
-        missions = self._run_web(
-            'Load from FlyPath',
-            lambda token: flypath_sync.list_missions(base_url, token))
-        if missions is None:
-            return
-        if not missions:
-            QMessageBox.information(
-                self, 'No Missions Yet',
-                'Your FlyPath account has no missions yet.\n\nPlan one here '
-                'and use Send to FlyPath, or start one on the website.')
-            return
-        labels = ['%s  ·  %s' % (m.get('name') or 'Untitled mission',
-                                  self._web_date(m.get('updated_at')))
-                  for m in missions]
-        label, ok = QInputDialog.getItem(
-            self, 'Load from FlyPath', 'Mission to load into QGIS:',
-            labels, 0, False)
-        if not ok:
-            return
-        chosen = missions[labels.index(label)]
         mission = self._run_web(
             'Load from FlyPath',
             lambda token: flypath_sync.get_mission(base_url, token,
-                                                   chosen.get('id')))
+                                                   mission_id))
         if mission is None:
             return
         try:
@@ -4581,6 +4574,7 @@ class FlyPathDialog(QWidget):
         except FlypathSyncError as exc:
             QMessageBox.warning(self, 'Cannot Load Mission', str(exc))
             return
+        self._remember_website_mission(mission)
         note = ''
         if adjusted:
             note = ('\n\nThese settings are outside this plugin\'s own range '
@@ -4589,9 +4583,10 @@ class FlyPathDialog(QWidget):
         QMessageBox.information(
             self, 'Loaded from FlyPath',
             '"%s" is now a local mission in QGIS.\n\nIt is an independent '
-            'copy: editing it here never changes the mission on the website, '
-            'and sending it back creates a new draft there.%s'
+            'working copy linked to FlyPath. Save changes updates this mission; '
+            'Save as new creates a separate mission.%s'
             % (mission.get('name') or 'Mission', note))
+        return True
 
     @staticmethod
     def _web_date(updated_at):
@@ -4607,6 +4602,8 @@ class FlyPathDialog(QWidget):
         settings = mission.get('settings') or {}
         if not isinstance(settings, dict):
             raise FlypathSyncError('This mission\'s settings could not be read.')
+        if settings.get('reverse_route'):
+            raise FlypathSyncError('This mission uses a reversed route, which the plugin cannot edit. Disable Reverse route on the website first.')
         style = settings.get('mapping_style', '2d')
         if style not in ('2d', 'corridor'):
             raise FlypathSyncError(
@@ -4710,7 +4707,18 @@ class FlyPathDialog(QWidget):
             self._show_drawn_polygon(geom, wgs84)
             self._set_survey_polygon(geom, wgs84)
         self._on_param_changed()
+        self._zoom_to_website_geometry(geom, wgs84)
         return adjusted
+
+    def _zoom_to_website_geometry(self, geom, crs):
+        canvas = self.iface.mapCanvas()
+        transform = QgsCoordinateTransform(
+            crs, canvas.mapSettings().destinationCrs(), QgsProject.instance())
+        extent = transform.transformBoundingBox(geom.boundingBox())
+        # Pad both axes, including a straight corridor with zero width/height.
+        extent.grow(max(extent.width(), extent.height(), 1e-6) * 0.1)
+        canvas.setExtent(extent)
+        canvas.refresh()
 
     # ── Export ────────────────────────────────────────────────────────────
 
@@ -5968,6 +5976,10 @@ class FlyPathDialog(QWidget):
     # ── Helpers ───────────────────────────────────────────────────────────
 
     def cleanup(self):
+        try:
+            QgsProject.instance().cleared.disconnect(self._forget_website_mission)
+        except (TypeError, RuntimeError):
+            pass
         """Remove all FlyPath-owned QGIS layers. Called on plugin unload."""
         self._disconnect_layer_signals()
         self._remove_survey_area_layer()
