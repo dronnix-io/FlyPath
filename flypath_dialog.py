@@ -448,6 +448,7 @@ QPushButton {
 }
 QPushButton:hover   { background-color: #3A7EC6; }
 QPushButton:pressed { background-color: #1F5A9E; }
+QPushButton:disabled { background-color: #3A3D45; color: #77797F; }
 QPushButton#exportBtn {
     background-color: #F0A500; color: #1A1A1A; font-size: 12px;
 }
@@ -471,6 +472,7 @@ QPushButton#autoDirectionBtn {
     font-weight: normal; font-size: 10px; padding: 3px 6px;
 }
 QPushButton#autoDirectionBtn:hover { background-color: #4A4D55; }
+QPushButton#autoDirectionBtn:checked { background-color: #2A6A2A; color: #AAFAAA; }
 QPushButton#removePolygonBtn {
     background-color: #5A2020; color: #FF8888;
     border: 1px solid #7A3030; border-radius: 3px;
@@ -1240,10 +1242,11 @@ class FlyPathDialog(QWidget):
 
         self.autoDirectionBtn = QPushButton('Auto')
         self.autoDirectionBtn.setObjectName('autoDirectionBtn')
+        self.autoDirectionBtn.setCheckable(True)
         self.autoDirectionBtn.setFixedWidth(52)
         self._tip(self.autoDirectionBtn,
-            'Automatically find the optimal flight direction '
-            'that minimises the number of flight lines for this polygon.')
+            'Keep flight direction automatic as parameters change. '
+            'Click again or edit the angle to use a manual direction.')
 
         dir_layout.addWidget(self.directionSpin)
         dir_layout.addWidget(self.autoDirectionBtn)
@@ -1979,7 +1982,7 @@ class FlyPathDialog(QWidget):
         self.gsdSpin.valueChanged.connect(self._on_gsd_changed)
         self.sideOverlapSpin.valueChanged.connect(self._on_param_changed)
         self.speedSpin.valueChanged.connect(self._on_param_changed)
-        self.directionSpin.valueChanged.connect(self._on_param_changed)
+        self.directionSpin.valueChanged.connect(self._on_direction_changed)
         self.bufferSpin.valueChanged.connect(self._on_param_changed)
         self.setBreaksBtn.toggled.connect(self._on_set_breaks_toggled)
         self.crossHatchCheck.toggled.connect(self._on_param_changed)
@@ -2006,18 +2009,24 @@ class FlyPathDialog(QWidget):
         self.drawPolygonBtn.clicked.connect(self._on_draw_polygon)
         self.editPolygonBtn.clicked.connect(self._on_edit_polygon)
         self.removePolygonBtn.clicked.connect(self._on_remove_drawn_polygon)
-        self.autoDirectionBtn.clicked.connect(self._on_auto_direction)
+        self.autoDirectionBtn.clicked.connect(self._on_param_changed)
         self.previewBtn.clicked.connect(self._on_preview)
         self.clearPreviewBtn.clicked.connect(self._on_clear_preview)
         self.exportBtn.clicked.connect(self._on_export)
 
     def _on_param_changed(self):
+        if self.autoDirectionBtn.isChecked() and self._mission_kind() == '2d':
+            self._on_auto_direction()
         self._update_gsd()
         self._update_interval()
         self._update_stats()
         # If a preview is already on the map, keep it live-synced to the new
         # parameters instead of clearing it. Does nothing when no preview shown.
         self._sync_preview()
+
+    def _on_direction_changed(self):
+        self.autoDirectionBtn.setChecked(False)
+        self._on_param_changed()
 
     def _on_split_changed(self):
         # Ignore the change we make ourselves when the default tracks the
@@ -3752,10 +3761,6 @@ class FlyPathDialog(QWidget):
 
     def _on_auto_direction(self):
         if not self._has_survey_area(silent=True):
-            QMessageBox.information(
-                self, 'No Survey Area',
-                'Define a survey area first to enable automatic direction optimisation.'
-            )
             return
         fw, _ = self._footprint()
         if fw is None:
@@ -3764,7 +3769,9 @@ class FlyPathDialog(QWidget):
         best = find_optimal_direction(
             self._survey_polygon, self._survey_polygon_crs, line_spacing
         )
+        blocked = self.directionSpin.blockSignals(True)
         self.directionSpin.setValue(best)
+        self.directionSpin.blockSignals(blocked)
 
     # ── Statistics ────────────────────────────────────────────────────────
 
@@ -4286,7 +4293,6 @@ class FlyPathDialog(QWidget):
         self._on_clear_contours()
 
         if reset_area:
-            self._website_link = None
             # Full reset — also stop any active draw and remove the boundary
             self._leave_draw_tool()
             if getattr(self, 'setBreaksBtn', None) and self.setBreaksBtn.isChecked():
@@ -4303,6 +4309,7 @@ class FlyPathDialog(QWidget):
             self._missions           = []
             self._live_missions      = None
             self._split_overridden   = False
+            self.autoDirectionBtn.setChecked(False)
             self.areaLabel.setText('—')
             self.layerCombo.setCurrentIndex(0)
             self.featureCombo.clear()
@@ -4522,7 +4529,7 @@ class FlyPathDialog(QWidget):
             'terrain_follow': bool(self.terrainFollowCheck.isChecked()),
             'split_count':    self.splitSpin.value(),
             'split_enabled':  self.splitSpin.value() > 1,
-            'auto_direction': False,
+            'auto_direction': self.autoDirectionBtn.isChecked(),
             'reverse_route':  False,
             'split_max_wp':   self.maxWaypointsSpin.value(),
         }
@@ -4648,6 +4655,9 @@ class FlyPathDialog(QWidget):
             raise FlypathSyncError('This mission\'s survey area could not be read.')
 
         # ── Nothing above changed any state; from here the load applies. ──
+        # Restore Auto only after loading: intermediate control signals must
+        # not optimise the imported heading against the previous survey area.
+        self.autoDirectionBtn.setChecked(False)
         self.missionTypeCombo.setCurrentText(
             'Corridor Mapping' if corridor else '2D Mapping')
         self.droneModelCombo.setCurrentText(drone_name)
@@ -4674,7 +4684,6 @@ class FlyPathDialog(QWidget):
                   ('direction', self.directionSpin, settings.get('direction')),
                   ('terrain tolerance', self.terrainToleranceSpin,
                    settings.get('terrain_tolerance')),
-                  ('split count', self.splitSpin, settings.get('split_count')),
                   ('max waypoints', self.maxWaypointsSpin, settings.get('split_max_wp'))]
         if isinstance(settings.get('corridor_width'), (int, float)):
             # The website's corridor_width is the full mapped width; the
@@ -4706,7 +4715,18 @@ class FlyPathDialog(QWidget):
             geom = QgsGeometry.fromPolygonXY([vertices])
             self._show_drawn_polygon(geom, wgs84)
             self._set_survey_polygon(geom, wgs84)
+        # Geometry establishes the split range. An explicit saved choice must
+        # override battery defaults even when setValue would emit no signal.
+        self._split_overridden = True
+        split_count = settings.get('split_count', 1)
+        if settings.get('split_enabled') is False:
+            split_count = 1
+        if isinstance(split_count, (int, float)) and not isinstance(split_count, bool):
+            self.splitSpin.setValue(int(split_count))
+            if self.splitSpin.value() != split_count:
+                adjusted.append('split count: %g -> %g' % (split_count, self.splitSpin.value()))
         self._on_param_changed()
+        self.autoDirectionBtn.setChecked(bool(settings.get('auto_direction')))
         self._zoom_to_website_geometry(geom, wgs84)
         return adjusted
 

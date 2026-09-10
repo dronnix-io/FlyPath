@@ -13,11 +13,13 @@ try:
     _PlainText = Qt.TextFormat.PlainText
     _ActionRole = QMessageBox.ButtonRole.ActionRole
     _Cancel = QMessageBox.StandardButton.Cancel
+    _Descending = Qt.SortOrder.DescendingOrder
 except AttributeError:
     _UserRole = getattr(Qt, 'UserRole')
     _PlainText = getattr(Qt, 'PlainText')
     _ActionRole = getattr(QMessageBox, 'ActionRole')
     _Cancel = getattr(QMessageBox, 'Cancel')
+    _Descending = getattr(Qt, 'DescendingOrder')
 
 
 def conflict_choice(parent):
@@ -62,29 +64,26 @@ class MissionLibrary(QWidget):
         self.missions.setHeaderLabels(['Mission', 'Updated'])
         self.missions.setRootIsDecorated(False)
         self.missions.setColumnWidth(0, 210)
+        self.missions.setSortingEnabled(True)
+        self.missions.sortByColumn(1, _Descending)
         self.missions.itemSelectionChanged.connect(self.update_buttons)
+        self.missions.itemDoubleClicked.connect(lambda item, column: self.import_selected())
         layout.addWidget(self.missions, 1)
-        self.link_label = QLabel()
-        self.link_label.setTextFormat(_PlainText)
-        self.link_label.setWordWrap(True)
-        layout.addWidget(self.link_label)
-        note = QLabel('Save changes updates the linked mission. Save as new creates a separate mission. '
-                      'Newer website edits are checked before updating.')
-        note.setWordWrap(True)
-        layout.addWidget(note)
         actions = QHBoxLayout()
         self.import_button = QPushButton('Open mission')
         self.import_button.clicked.connect(self.import_selected)
-        layout.addWidget(self.import_button)
+        actions.addWidget(self.import_button)
         self.send_button = QPushButton('Save to FlyPath…')
-        self.send_button.setToolTip('Preview a mission in the planner before saving a draft.')
         self.send_button.clicked.connect(self.send_current)
         actions.addWidget(self.send_button)
         self.copy_button = QPushButton('Save as new…')
         self.copy_button.clicked.connect(lambda: self.send_current(save_as_new=True))
         actions.addWidget(self.copy_button)
-        actions.addStretch()
         layout.addLayout(actions)
+        self.link_label = QLabel()
+        self.link_label.setTextFormat(_PlainText)
+        self.link_label.setWordWrap(True)
+        layout.addWidget(self.link_label)
         self.update_buttons()
 
     def update_buttons(self):
@@ -97,9 +96,19 @@ class MissionLibrary(QWidget):
         self.disconnect_button.setVisible(connected)
         self.refresh_button.setEnabled(connected)
         self.import_button.setEnabled(connected and self.missions.currentItem() is not None)
-        self.send_button.setEnabled(bool(self.planner._preview_layer_ids and
-                                         self.planner._missions))
-        self.copy_button.setEnabled(self.send_button.isEnabled())
+        # Saving stays clickable without a preview: the planner answers a
+        # click with the reason, which a disabled button cannot do (Qt
+        # shows no tooltip on a disabled widget).
+        self.send_button.setToolTip(
+            'Update this mission on FlyPath with the previewed plan. Newer website '
+            'edits are checked first.' if link else
+            'Save the previewed plan to FlyPath as a new mission.')
+        self.copy_button.setToolTip(
+            'Save the previewed plan as a separate FlyPath mission, leaving '
+            '"%s" untouched.' % link['name'] if link else '')
+        self.import_button.setToolTip('Open the selected mission in the planner.' if
+                                      self.import_button.isEnabled() else
+                                      'Select a mission in the list first.')
         if not connected:
             self.status.setText('Connect your FlyPath account to browse missions.')
 
@@ -114,6 +123,9 @@ class MissionLibrary(QWidget):
         self.update_buttons()
 
     def refresh(self):
+        item = self.missions.currentItem()
+        link = self.planner._current_website_link()
+        keep = item.data(0, _UserRole) if item is not None else (link or {}).get('id')
         self.missions.clear()
         if not flypath_sync.load_token():
             self.update_buttons()
@@ -130,6 +142,8 @@ class MissionLibrary(QWidget):
                 ])
                 item.setData(0, _UserRole, mission.get('id'))
                 self.missions.addTopLevelItem(item)
+                if mission.get('id') == keep:
+                    self.missions.setCurrentItem(item)
             self.status.setText('%s missions · flypath.io' % len(missions)
                                 if missions else 'No missions yet. Save a previewed plan to start.')
         else:
