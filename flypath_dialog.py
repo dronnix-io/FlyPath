@@ -4667,9 +4667,12 @@ class FlyPathDialog(QWidget):
             if drive_path:
                 status, missions = self._list_missions_from_dir(drive_path)
                 wp_path, detail = drive_path, ''
-            else:
+            elif sys.platform == 'win32':
                 # 2) The usual case: an MTP device connected over USB.
                 status, wp_path, missions, detail = self._list_rc_missions()
+            else:
+                # not found by 1) and on a non windows system, just give up
+                status = 'not_connected'
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -4701,7 +4704,6 @@ class FlyPathDialog(QWidget):
                 'folder yourself.'
             )
         else:
-            # ONR: detail below in linux is a powershell not found error
             self.rcStatusLabel.setText('Could not read the RC')
             if detail:
                 QMessageBox.warning(self, 'Could Not Read RC', detail)
@@ -4726,7 +4728,11 @@ class FlyPathDialog(QWidget):
         finally:
             QApplication.restoreOverrideCursor()
 
-        display = '\\'.join(parts) # ONR: not like this on linux!
+        if sys.platform == 'win32':
+            display = '\\'.join(parts) # ONR: not like this on linux!
+        else:
+            # I'm pretty sure linux and osx should have a similar output
+            display = os.path.join(*parts)
         if status == 'ok':
             self._set_rc_target(display)
             self._populate_mission_combo(missions)
