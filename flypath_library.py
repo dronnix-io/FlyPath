@@ -140,7 +140,7 @@ class MissionLibrary(QWidget):
             self.status.setText(error)
             QMessageBox.warning(self, 'Disconnect incomplete', error)
         else:
-            self.status.setText('Access forgotten on this device. The token is still valid on the website: revoke or rotate it in Profile to invalidate other copies and old settings backups.')
+            self.status.setText('Access forgotten on this device. The token is still valid on the website: choose Plugin token in the account menu to revoke or rotate it and invalidate other copies and old settings backups.')
 
     def refresh(self):
         item = self.missions.currentItem()

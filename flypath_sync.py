@@ -11,7 +11,7 @@ unit-testable outside a QGIS runtime like the rest of tests/. The dialog layer
 owns every message box; this module only raises FlypathSyncError with a message
 that is already fit to show to the pilot.
 
-The personal access token is pasted once from the website's profile page. It is
+The personal access token is pasted once from the website's Plugin token dialog. It is
 kept in QGIS's encrypted authentication vault and only ever leaves it as an
 `Authorization: Token <value>` request header — never in a URL, a body, a log
 line, the QGIS project file or an exported mission.
@@ -47,7 +47,7 @@ TIMEOUT_S = 20
 
 NO_TOKEN_MESSAGE = (           # nosec B105
     'No FlyPath token set.\n\n'
-    'Sign in at flypath.io, open Profile, generate a plugin token, and paste '
+    'Sign in at flypath.io, choose Plugin token in your account menu, generate a token, and paste '
     'it here.'
 )
 
@@ -343,7 +343,7 @@ def _server_message(exc):
         return text
     if exc.code == 401:
         return ('FlyPath rejected the token. Generate a new one on the website '
-                'profile page and paste it in again.')
+                'Plugin token dialog and paste it in again.')
     return 'FlyPath returned an error (HTTP %s).' % exc.code
 
 
