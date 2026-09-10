@@ -1,7 +1,7 @@
 """
 Tests for the website sync module (flypath_sync.py).
 
-Pure Python, no QGIS and no real network: urllib.request.urlopen is replaced so
+Pure Python, no QGIS and no real network: the sync opener's open is replaced so
 each test can assert on the request that was built (URL, method, headers, body)
 and on how a canned response becomes a return value or a FlypathSyncError.
 
@@ -32,8 +32,8 @@ class _FakeResponse:
     def __init__(self, payload):
         self._body = json.dumps(payload).encode('utf-8')
 
-    def read(self):
-        return self._body
+    def read(self, limit):
+        return self._body[:limit]
 
     def __enter__(self):
         return self
@@ -59,19 +59,18 @@ class _Urlopen:
         return _FakeResponse(self._result)
 
 
-# flypath_sync.urllib.request is the one global module, so patching it patches
-# it everywhere: keep the real function to put back afterwards.
-_REAL_URLOPEN = urllib.request.urlopen
+# Keep the production opener method to put back after each test.
+_REAL_URLOPEN = flypath_sync._opener.open
 
 
 def _patch(result):
     fake = _Urlopen(result)
-    urllib.request.urlopen = fake
+    flypath_sync._opener.open = fake
     return fake
 
 
 def _restore():
-    urllib.request.urlopen = _REAL_URLOPEN
+    flypath_sync._opener.open = _REAL_URLOPEN
 
 
 def _http_error(code, payload):
@@ -236,7 +235,7 @@ def test_action_maps_round_trip():
 
 def test_the_fake_urlopen_is_removed_after_a_call():
     _run({'ok': True, 'missions': []}, lambda: list_missions(BASE, TOKEN))
-    assert urllib.request.urlopen is _REAL_URLOPEN
+    assert flypath_sync._opener.open is _REAL_URLOPEN
 
 
 def test_continue_mission_has_no_website_equivalent():
@@ -267,7 +266,7 @@ def test_update_conflict_is_not_retried_as_a_new_mission():
             raise AssertionError('A stale save must fail')
         assert fake.request.get_method() == 'PATCH'
     finally:
-        urllib.request.urlopen = _REAL_URLOPEN
+        flypath_sync._opener.open = _REAL_URLOPEN
 
 
 def test_updates_without_valid_revision_never_reach_the_network():
