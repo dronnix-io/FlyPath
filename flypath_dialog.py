@@ -105,7 +105,6 @@ from qgis.core import (
     QgsCoordinateTransform,
     QgsDistanceArea,
     QgsNetworkAccessManager,
-    QgsMessageLog,
 )
 from .map_tools import PolygonDrawTool, LineDrawTool, VertexPickTool
 from .grid_planner import (
@@ -4622,22 +4621,31 @@ class FlyPathDialog(QWidget):
         """
         rel = os.path.join(*_RC_REL_PARTS)
         roots = []
-        try:
-            import ctypes
-            k32 = ctypes.windll.kernel32
-            bitmask = k32.GetLogicalDrives()
-            for i in range(26):
-                if not (bitmask >> i) & 1:
-                    continue
-                root = chr(ord('A') + i) + ':\\'
-                # 2 = removable, 3 = fixed; skip optical/network/etc. to avoid
-                # slow probes or "insert disk" prompts.
-                if k32.GetDriveTypeW(ctypes.c_wchar_p(root)) in (2, 3):
-                    roots.append(root)
-        except Exception:
-            import string
-            roots = [c + ':\\' for c in string.ascii_uppercase
-                     if os.path.isdir(c + ':\\')]
+        if sys.platform == 'win32':
+            try:
+                import ctypes
+                k32 = ctypes.windll.kernel32
+                bitmask = k32.GetLogicalDrives()
+                for i in range(26):
+                    if not (bitmask >> i) & 1:
+                        continue
+                    root = chr(ord('A') + i) + ':\\'
+                    # 2 = removable, 3 = fixed; skip optical/network/etc. to avoid
+                    # slow probes or "insert disk" prompts.
+                    if k32.GetDriveTypeW(ctypes.c_wchar_p(root)) in (2, 3):
+                        roots.append(root)
+            except Exception:
+                import string
+                roots = [c + ':\\' for c in string.ascii_uppercase
+                        if os.path.isdir(c + ':\\')]
+        elif sys.platform == 'linux':
+            # This will only work when your distro uses GVFS, and even then I only tested on
+            # a couple of debian based distributions
+            gvfspath = os.path.join(os.getenv('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}'), 'gvfs')
+            # because MTP devices will present individual "drives", the paths found are parents to the
+            # ones we need
+            for base in [os.path.join(gvfspath, x) for x in os.listdir(gvfspath) if x.startswith('mtp:')]:
+                roots.extend([os.path.join(base, x) for x in os.listdir(base)])
         for root in roots:
             candidate = os.path.join(root, rel)
             try:
@@ -4664,8 +4672,6 @@ class FlyPathDialog(QWidget):
                 status, wp_path, missions, detail = self._list_rc_missions()
         finally:
             QApplication.restoreOverrideCursor()
-
-        QgsMessageLog.logMessage(f'status: {status}, missions: {missions}, wp_path: {wp_path}, detail: {detail}')
 
         if status == 'ok':
             self._set_rc_target(wp_path)
@@ -4695,6 +4701,7 @@ class FlyPathDialog(QWidget):
                 'folder yourself.'
             )
         else:
+            # ONR: detail below in linux is a powershell not found error
             self.rcStatusLabel.setText('Could not read the RC')
             if detail:
                 QMessageBox.warning(self, 'Could Not Read RC', detail)
@@ -4713,11 +4720,13 @@ class FlyPathDialog(QWidget):
 
         QApplication.setOverrideCursor(_WaitCursor)
         try:
-            status, missions = self._list_missions_at_path(parts)
+            # ONR: will try this on windows, seems redundant to separate for linux
+            # status, missions = self._list_missions_at_path(parts)
+            status, missions = self._list_missions_from_dir(os.path.join(*parts))
         finally:
             QApplication.restoreOverrideCursor()
 
-        display = '\\'.join(parts)
+        display = '\\'.join(parts) # ONR: not like this on linux!
         if status == 'ok':
             self._set_rc_target(display)
             self._populate_mission_combo(missions)
@@ -4766,7 +4775,7 @@ class FlyPathDialog(QWidget):
             if len(parts) == 0:
                 # We are filling in root, lets leave a few shortcuts
                 rv = ['/\0System Root', QDir.homePath() + '\0Home']
-                gvfspath = f'/run/user/{os.getuid()}/gvfs'
+                gvfspath = os.path.join(os.getenv('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}'), 'gvfs')
                 if os.path.isdir(gvfspath):
                     rv.extend([f'{os.path.join(gvfspath, x)}\0{x}' for x in os.listdir(gvfspath)])
                 return rv
