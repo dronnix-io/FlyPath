@@ -1,0 +1,8 @@
+# Code owners for FlyPath.
+#
+# Every change to the repository requires review from the owner listed here.
+# Combined with branch protection on main (require a pull request, require
+# review from Code Owners), this means nothing merges to main without Salar's
+# approval, and only Salar performs the merge and cuts releases.
+
+* @salarghaffarian
