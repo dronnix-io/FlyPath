@@ -1,7 +1,9 @@
 """Isolated real-QGIS vault and credential UI checks; no network or user profile.
 
-Run with the QGIS Python launcher. On Windows this file adds the bundled DLL
-directories explicitly; no QGIS installation or user settings are changed.
+Run with the QGIS Python launcher (python-qgis.bat, the OSGeo4W shell, or the
+equivalent), which provides the QGIS libraries for the installed version. When
+QGIS cannot be imported the suite skips, so it is portable across QGIS versions
+and machines. No QGIS installation or user settings are changed.
 """
 
 import importlib
@@ -29,18 +31,20 @@ class CredentialStorageTest(unittest.TestCase):
             'QGIS_AUTH_DB_URI': '',
         })
         cls.environment.start()
-        cls.dlls = []
-        if sys.platform == 'win32':
-            root = Path(os.environ.get('OSGEO4W_ROOT', 'C:/Program Files/QGIS 3.44.14'))
-            cls.dlls = [os.add_dll_directory(str(root / part)) for part in
-                        ('bin', 'apps/Qt5/bin', 'apps/qgis-ltr/bin')]
+        # Run this suite with the QGIS Python launcher (python-qgis.bat, the
+        # OSGeo4W shell, or the equivalent), which sets up the QGIS libraries
+        # for whatever version is installed. When QGIS cannot be imported, skip
+        # rather than error, so the suite is portable across QGIS versions and
+        # machines and stays green where QGIS is absent.
         try:
             from qgis.core import QgsApplication, QgsAuthMethodConfig
             from qgis.PyQt.QtCore import QSettings
         except ImportError as exc:
             cls.environment.stop()
             cls.temp.cleanup()
-            raise unittest.SkipTest('Requires QGIS Python') from exc
+            raise unittest.SkipTest(
+                'Requires the QGIS Python environment (run via the QGIS Python '
+                'launcher / OSGeo4W shell)') from exc
         if QgsApplication.instance() is not None:
             cls.environment.stop()
             cls.temp.cleanup()
