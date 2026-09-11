@@ -1,10 +1,11 @@
 import os
 
-from qgis.PyQt.QtWidgets import QAction, QDockWidget
+from qgis.PyQt.QtWidgets import QAction, QDockWidget, QTabWidget
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtCore import Qt
 
 from .flypath_dialog import FlyPathDialog
+from .flypath_library import MissionLibrary
 
 try:
     _DockLeft  = Qt.DockWidgetArea.LeftDockWidgetArea
@@ -20,6 +21,7 @@ class FlyPath:
     def __init__(self, iface):
         self.iface = iface
         self.plugin_dir = os.path.dirname(__file__)
+        self.tabs = None
         self.action = None
         self.dock_widget = None
         self.panel = None
@@ -40,13 +42,23 @@ class FlyPath:
             _DockLeft | _DockRight
         )
 
-        self.panel = FlyPathDialog(self.iface, self.dock_widget)
-        self.dock_widget.setWidget(self.panel)
+        self.tabs = QTabWidget(self.dock_widget)
+        self.panel = FlyPathDialog(self.iface, self.tabs)
+        self.tabs.setStyleSheet(self.panel.styleSheet())
+        self.tabs.addTab(self.panel, 'Planner')
+        library = MissionLibrary(self.panel, parent=self.tabs)
+        self.panel._mission_library = library
+        self.tabs.addTab(library, 'My missions')
+        library.missionOpened.connect(lambda: self.tabs.setCurrentWidget(self.panel))
+        self.tabs.currentChanged.connect(
+            lambda index: library.refresh() if self.tabs.widget(index) is library else None)
+        self.dock_widget.setWidget(self.tabs)
 
         # Lock the dock to the panel's natural width so it can't be dragged
         # wider or narrower. The two-column layout is designed for one width,
         # and stretching it only adds empty space.
-        self.dock_widget.setFixedWidth(self.panel.minimumWidth())
+        self.dock_widget.setFixedWidth(max(self.panel.minimumWidth() + 8,
+                                           self.tabs.minimumSizeHint().width()))
 
         self.iface.mainWindow().addDockWidget(
             _DockRight, self.dock_widget

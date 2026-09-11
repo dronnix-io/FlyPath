@@ -1,6 +1,7 @@
 {
   "DJI Mini 3 Pro": {
     "category": "consumer",
+    "website_code": "mini3pro",
     "app": "DJI Fly",
     "aircraft": {
       "drone_enum": 97,
@@ -23,6 +24,7 @@
   },
   "DJI Mini 4 Pro": {
     "category": "consumer",
+    "website_code": "mini4pro",
     "app": "DJI Fly",
     "aircraft": {
       "drone_enum": 68,
@@ -45,6 +47,7 @@
   },
   "DJI Mini 5 Pro": {
     "category": "consumer",
+    "website_code": "mini5pro",
     "app": "DJI Fly",
     "aircraft": {
       "drone_enum": 68,
@@ -68,6 +71,7 @@
   },
   "DJI Air 3": {
     "category": "consumer",
+    "website_code": "air3",
     "app": "DJI Fly",
     "aircraft": {
       "drone_enum": 68,
@@ -91,6 +95,7 @@
   },
   "DJI Air 3S": {
     "category": "consumer",
+    "website_code": "air3s",
     "app": "DJI Fly",
     "aircraft": {
       "drone_enum": 68,
@@ -114,6 +119,7 @@
   },
   "DJI Mavic 4 Pro": {
     "category": "consumer",
+    "website_code": "mavic4pro",
     "app": "DJI Fly",
     "aircraft": {
       "drone_enum": 68,
@@ -137,6 +143,7 @@
   },
   "DJI Mavic 3 Classic": {
     "category": "consumer",
+    "website_code": "mavic3classic",
     "app": "DJI Fly",
     "aircraft": {
       "drone_enum": 68,

@@ -109,6 +109,28 @@ def test_new_consumer_drones_use_the_shared_mini_enum():
             f'test if a field report forces a model-specific value')
 
 
+def test_every_consumer_drone_maps_to_a_website_drone_code():
+    # The website sync (flypath_sync.py) pushes/pulls missions by the website's
+    # own drone code, and reads it from here. A consumer drone without one could
+    # not be sent at all; the enterprise Matrice 4E is not offered on the
+    # website, so it has none on purpose.
+    for d in registry.all_drones():
+        if d.category == 'consumer':
+            assert d.website_code, f'{d.name}: missing website_code'
+            assert registry.name_for_website_code(d.website_code) == d.name
+        else:
+            assert d.website_code is None, f'{d.name}: unexpected website_code'
+
+
+def test_website_codes_are_unique_and_match_the_live_site():
+    codes = [d.website_code for d in registry.all_drones() if d.website_code]
+    assert len(codes) == len(set(codes)), 'website codes must be unique'
+    # The slugs seeded on flypath.io; a rename there needs a matching edit here.
+    assert registry.get('DJI Mini 4 Pro').website_code == 'mini4pro'
+    assert registry.get('DJI Mavic 3 Classic').website_code == 'mavic3classic'
+    assert registry.name_for_website_code('not-a-real-drone') is None
+
+
 def test_has_and_missing():
     assert registry.has('DJI Mini 4 Pro')
     assert not registry.has('Nonexistent Drone')

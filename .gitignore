@@ -5,6 +5,7 @@ __pycache__/
 *.pyd
 *.egg-info/
 *.egg
+.pytest_cache/
 dist/
 build/
 .eggs/
@@ -40,3 +41,6 @@ desktop.ini
 
 # Logs
 *.log
+
+# Local implementation notes and private cross-repository artifacts
+.scratch/
