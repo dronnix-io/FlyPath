@@ -350,6 +350,12 @@ QWidget {
     font-size: 11px;
     font-family: "Segoe UI", Arial, sans-serif;
 }
+/* Plain labels paint no background of their own, so the field captions
+   ("Mission Type", "Capture", "Drone", ...) blend into whatever is behind
+   them (the section card, or the panel) instead of showing a mismatched box.
+   Labels that need a background set it via their own objectName rule, which is
+   more specific and still wins. */
+QLabel { background-color: transparent; }
 QGroupBox {
     background-color: #202430;
     border: 1px solid #454A57;
