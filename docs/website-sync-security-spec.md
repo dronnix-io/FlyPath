@@ -10,6 +10,8 @@ Public source code lets anyone reproduce or modify plugin requests. Website secu
 
 Harden the existing personal-token workflow while preserving My missions, Open mission, Save changes, and Save as new. Protect stored credentials, send them only to the intended HTTPS origin, enforce account ownership and bounded data at the API, and give pilots an effective way to revoke access. Keep the plugin public and retain the existing revision conflict behavior.
 
+The website remains closed source. Keep its implementation in its separate private repository; never copy website source or patches into the public plugin repository. Changes are limited to their authentication and mission-sync communication, including the token-management UI and shared helpers needed by that interface.
+
 ## User Stories
 
 1. As a pilot, I want my plugin token stored in protected credential storage, so that ordinary settings do not expose account access.
