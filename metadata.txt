@@ -3,8 +3,13 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
-version=2.2.1
-changelog=2.2.1 - 2D mapping route improvements. The flight route now starts at a corner of
+version=2.2.2
+changelog=2.2.2 - A links bar at the bottom of the panel now connects the plugin to the
+    project. From it you can open the GitHub repository, report a bug, request a feature, read
+    the contributing guide and the docs, or visit the flypath.io website, each in your browser.
+    A new contributing guide and issue forms make it easier to report problems and suggest
+    features. Mission planning is unchanged.
+    2.2.1 - 2D mapping route improvements. The flight route now starts at a corner of
     the survey area and sweeps across it, instead of starting mid-area and drawing a long line
     back across the middle. Automatic flight direction is fixed and improved: it used to fall
     back to 0 degrees on any concave (L-shaped, notched or tailed) area because of an internal
