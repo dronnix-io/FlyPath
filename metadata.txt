@@ -4,12 +4,12 @@ qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
 version=2.3.0
-changelog=2.3.0 - Sync missions with your flypath.io account. Generate a plugin token on the
-    website profile page, paste it into FlyPath once, and Send to FlyPath pushes the mission you
-    have just previewed into your dashboard as a new draft, with a link to open it. Load from
-    FlyPath lists the missions in your account and loads the one you pick into QGIS as an
-    independent local copy: survey area, drone and settings, ready to keep planning here. Sending
-    always creates a new draft, so the plugin and the website can never overwrite each other, and a
+changelog=2.3.0 - Sync missions with your flypath.io account. Generate a plugin token from Plugin
+    token in the website account menu, paste it into FlyPath once, and save the mission you have
+    just previewed into your dashboard, with a link to open it. My missions lists the missions in
+    your account and loads the one you pick into QGIS as a linked working copy: survey area, drone
+    and settings, ready to keep planning here. Save changes updates the linked website mission;
+    Save as new creates a separate draft. Revision checks prevent accidental overwrites, and a
     mission that uses a drone or mapping style the plugin does not support is refused with a clear
     reason instead of loading a broken plan. The token is stored on your own machine and only ever
     travels as a request header, never in a URL or the project file.

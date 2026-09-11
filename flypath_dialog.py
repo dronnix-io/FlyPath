@@ -4387,6 +4387,7 @@ class FlyPathDialog(QWidget):
         self._on_clear_contours()
 
         if reset_area:
+            self._website_link = None
             # Full reset — also stop any active draw and remove the boundary
             self._leave_draw_tool()
             if getattr(self, 'setBreaksBtn', None) and self.setBreaksBtn.isChecked():

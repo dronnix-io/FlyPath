@@ -55,6 +55,9 @@ def test_import_preserves_planner():
         assert adjusted
         assert planner.maxWaypointsSpin.value() == planner.maxWaypointsSpin.maximum()
         assert planner.sideOverlapSpin.value() == planner.sideOverlapSpin.minimum()
+        planner._website_link = {'id': 17, 'revision': 2}
+        planner._on_clear_preview()
+        assert planner._website_link is None, 'A full reset must unlink the website mission'
     finally:
         planner.close()
         canvas.close()
