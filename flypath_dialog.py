@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess  # nosec B404
+import sys
 import tempfile
 import zipfile
 
@@ -20,6 +21,7 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.PyQt.QtCore import (
     Qt, QObject, QEvent, QSettings, QVariant, QSize, QPointF, QUrl, pyqtSignal,
+    QDir,
 )
 from qgis.PyQt.QtGui import (
     QColor, QFont, QPixmap, QPainter, QPen, QPolygonF, QImage, QDesktopServices,
@@ -712,8 +714,11 @@ class _RcFolderBrowser(QDialog):
         finally:
             QApplication.restoreOverrideCursor()
         for name in names:
-            item = QTreeWidgetItem([name])
-            item.setData(0, _ROLE_PARTS, parts + [name])
+            name = name.split('\0')
+            if len(name) == 1:
+                name.append(name[0])
+            item = QTreeWidgetItem([name[1]])
+            item.setData(0, _ROLE_PARTS, parts + [name[0]])
             item.setData(0, _ROLE_LOADED, False)
             item.addChild(QTreeWidgetItem(['…']))   # dummy → shows arrow
             if parent_item is None:
@@ -5171,22 +5176,31 @@ class FlyPathDialog(QWidget):
         """
         rel = os.path.join(*_RC_REL_PARTS)
         roots = []
-        try:
-            import ctypes
-            k32 = ctypes.windll.kernel32
-            bitmask = k32.GetLogicalDrives()
-            for i in range(26):
-                if not (bitmask >> i) & 1:
-                    continue
-                root = chr(ord('A') + i) + ':\\'
-                # 2 = removable, 3 = fixed; skip optical/network/etc. to avoid
-                # slow probes or "insert disk" prompts.
-                if k32.GetDriveTypeW(ctypes.c_wchar_p(root)) in (2, 3):
-                    roots.append(root)
-        except Exception:
-            import string
-            roots = [c + ':\\' for c in string.ascii_uppercase
-                     if os.path.isdir(c + ':\\')]
+        if sys.platform == 'win32':
+            try:
+                import ctypes
+                k32 = ctypes.windll.kernel32
+                bitmask = k32.GetLogicalDrives()
+                for i in range(26):
+                    if not (bitmask >> i) & 1:
+                        continue
+                    root = chr(ord('A') + i) + ':\\'
+                    # 2 = removable, 3 = fixed; skip optical/network/etc. to avoid
+                    # slow probes or "insert disk" prompts.
+                    if k32.GetDriveTypeW(ctypes.c_wchar_p(root)) in (2, 3):
+                        roots.append(root)
+            except Exception:
+                import string
+                roots = [c + ':\\' for c in string.ascii_uppercase
+                        if os.path.isdir(c + ':\\')]
+        elif sys.platform == 'linux':
+            # This will only work when your distro uses GVFS, and even then I only tested on
+            # a couple of debian based distributions
+            gvfspath = os.path.join(os.getenv('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}'), 'gvfs')
+            # because MTP devices will present individual "drives", the paths found are parents to the
+            # ones we need
+            for base in [os.path.join(gvfspath, x) for x in os.listdir(gvfspath) if x.startswith('mtp:')]:
+                roots.extend([os.path.join(base, x) for x in os.listdir(base)])
         for root in roots:
             candidate = os.path.join(root, rel)
             try:
@@ -5208,9 +5222,12 @@ class FlyPathDialog(QWidget):
             if drive_path:
                 status, missions = self._list_missions_from_dir(drive_path)
                 wp_path, detail = drive_path, ''
-            else:
+            elif sys.platform == 'win32':
                 # 2) The usual case: an MTP device connected over USB.
                 status, wp_path, missions, detail = self._list_rc_missions()
+            else:
+                # not found by 1) and on a non windows system, just give up
+                status = 'not_connected'
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -5260,11 +5277,17 @@ class FlyPathDialog(QWidget):
 
         QApplication.setOverrideCursor(_WaitCursor)
         try:
-            status, missions = self._list_missions_at_path(parts)
+            # ONR: will try this on windows, seems redundant to separate for linux
+            # status, missions = self._list_missions_at_path(parts)
+            status, missions = self._list_missions_from_dir(os.path.join(*parts))
         finally:
             QApplication.restoreOverrideCursor()
 
-        display = '\\'.join(parts)
+        if sys.platform == 'win32':
+            display = '\\'.join(parts) # ONR: not like this on linux!
+        else:
+            # I'm pretty sure linux and osx should have a similar output
+            display = os.path.join(*parts)
         if status == 'ok':
             self._set_rc_target(display)
             self._populate_mission_combo(missions)
@@ -5287,27 +5310,39 @@ class FlyPathDialog(QWidget):
 
     def _list_shell_children(self, parts):
         """Return the child folder names of a shell path (parts from This PC)."""
-        ps_exe = os.path.join(
-            os.environ.get('SystemRoot', r'C:\Windows'),
-            r'System32\WindowsPowerShell\v1.0\powershell.exe'
-        )
-        tmp_dir = tempfile.mkdtemp(prefix='flypath_')
-        try:
-            sp = os.path.join(tmp_dir, 'children.ps1')
-            with open(sp, 'w', encoding='utf-8') as fh:
-                fh.write(self._shell_children_script(parts))
+        if sys.platform == 'win32':
+            ps_exe = os.path.join(
+                os.environ.get('SystemRoot', r'C:\Windows'),
+                r'System32\WindowsPowerShell\v1.0\powershell.exe'
+            )
+            tmp_dir = tempfile.mkdtemp(prefix='flypath_')
             try:
-                r = subprocess.run(  # nosec B603
-                    [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
-                     '-ExecutionPolicy', 'Bypass', '-File', sp],
-                    capture_output=True, text=True, timeout=40,
-                    creationflags=_NO_WINDOW, startupinfo=_STARTUPINFO
-                )
-            except Exception:
-                return []
-            return [ln[2:] for ln in r.stdout.splitlines() if ln.startswith('D|')]
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+                sp = os.path.join(tmp_dir, 'children.ps1')
+                with open(sp, 'w', encoding='utf-8') as fh:
+                    fh.write(self._shell_children_script(parts))
+                try:
+                    r = subprocess.run(  # nosec B603
+                        [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
+                        '-ExecutionPolicy', 'Bypass', '-File', sp],
+                        capture_output=True, text=True, timeout=40,
+                        creationflags=_NO_WINDOW, startupinfo=_STARTUPINFO
+                    )
+                except Exception:
+                    return []
+                return [ln[2:] for ln in r.stdout.splitlines() if ln.startswith('D|')]
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+        elif sys.platform == 'linux':
+            if len(parts) == 0:
+                # We are filling in root, lets leave a few shortcuts
+                rv = ['/\0System Root', QDir.homePath() + '\0Home']
+                gvfspath = os.path.join(os.getenv('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}'), 'gvfs')
+                if os.path.isdir(gvfspath):
+                    rv.extend([f'{os.path.join(gvfspath, x)}\0{x}' for x in os.listdir(gvfspath)])
+                return rv
+
+            parts = os.path.join('/', *parts)
+            return [d for d in sorted(os.listdir(parts)) if os.path.isdir(os.path.join(parts, d))]
 
     @staticmethod
     def _shell_children_script(parts):
