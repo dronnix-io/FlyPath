@@ -2101,6 +2101,7 @@ class FlyPathDialog(QWidget):
         self.setBreaksBtn.toggled.connect(self._on_set_breaks_toggled)
         self.crossHatchCheck.toggled.connect(self._on_param_changed)
         self.sameTakeoffCheck.toggled.connect(self._on_param_changed)
+        self.sameTakeoffCheck.toggled.connect(self._refresh_takeoff_zone_if_shown)
         self.terrainFollowCheck.toggled.connect(self._on_terrain_toggled)
         self.terrainToleranceSpin.valueChanged.connect(self._on_param_changed)
         self.splitSpin.valueChanged.connect(self._on_split_changed)
@@ -2761,7 +2762,11 @@ class FlyPathDialog(QWidget):
         return [wps for wps, _, _ in missions_h]
 
     def _compute_takeoff_zones(self, tolerance_m):
-        """Sample the DEM and return one takeoff zone per split sub-mission.
+        """Sample the DEM and return the takeoff zone(s).
+
+        With "same takeoff for all splits" on, there is a single zone around the
+        original mission's first waypoint (everyone launches from one point).
+        Otherwise there is one zone per split sub-mission.
 
         Each sub-mission is a separate flight launched from its own takeoff, so
         each is anchored on its own first waypoint: the zone is the ground within
@@ -2780,6 +2785,12 @@ class FlyPathDialog(QWidget):
         parts = [p for p in parts if p]
         if not parts:
             return None
+
+        # "Same takeoff for all splits": every split is flown from one point at
+        # the original mission's first waypoint, so show a single zone around it
+        # rather than one per split. Off, each split gets its own zone.
+        if self.sameTakeoffCheck.isChecked():
+            parts = parts[:1]
 
         radius_m = self._TAKEOFF_RADIUS_M
         spacing = max(10.0, (2.0 * radius_m) / self._TAKEOFF_STEPS)
@@ -2997,6 +3008,13 @@ class FlyPathDialog(QWidget):
         """Remove the takeoff-zone overlay and put the toggle button back to off."""
         self._remove_takeoff_layer()
         self._sync_toggle(self.showTakeoffZoneBtn, False, 'Show Takeoff Zone')
+
+    def _refresh_takeoff_zone_if_shown(self):
+        """Redraw the takeoff zone when it is currently shown, so toggling "same
+        takeoff for all splits" immediately switches between one shared zone and
+        one zone per split."""
+        if self._takeoff_layer_id and not self._show_takeoff_zone():
+            self._on_clear_takeoff_zone()
 
     @staticmethod
     def _sync_toggle(button, checked, text):
