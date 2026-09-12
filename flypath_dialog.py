@@ -1464,14 +1464,7 @@ class FlyPathDialog(QWidget):
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(5)
 
-        # ── Contours on top: extent selector and the show/hide toggle, one line ──
-        self.contourExtentCombo = QComboBox()
-        self.contourExtentCombo.addItem('Survey area', 'survey')
-        self.contourExtentCombo.addItem('Takeoff circles', 'circles')
-        self._tip(self.contourExtentCombo,
-            'Where to draw the DEM contours: across the whole survey area for '
-            'terrain context, or only inside the takeoff circles. The contour '
-            'interval matches the elevation tolerance below.')
+        # ── Contours: show/hide toggle on the left, extent selector on the right ──
         self.showContoursBtn = QPushButton('Show Contours')
         self.showContoursBtn.setObjectName('showContoursBtn')
         self.showContoursBtn.setCheckable(True)
@@ -1479,17 +1472,21 @@ class FlyPathDialog(QWidget):
             'Toggle DEM elevation contours over the chosen extent, one line per '
             'elevation-tolerance step, so you can see how the terrain shapes the '
             'takeoff zone. Click again to hide them.')
+        self.contourExtentCombo = QComboBox()
+        self.contourExtentCombo.addItem('Survey area', 'survey')
+        self.contourExtentCombo.addItem('Takeoff circles', 'circles')
+        self._tip(self.contourExtentCombo,
+            'Where to draw the DEM contours: across the whole survey area for '
+            'terrain context, or only inside the takeoff circles. The contour '
+            'interval matches the elevation tolerance below.')
         contour_row = QHBoxLayout()
         contour_row.setContentsMargins(0, 0, 0, 0)
         contour_row.setSpacing(6)
-        contour_cap = QLabel('Contours')
-        contour_cap.setObjectName('inlineFormLabel')
-        contour_row.addWidget(contour_cap)
-        contour_row.addWidget(self.contourExtentCombo, 1)
         contour_row.addWidget(self.showContoursBtn)
+        contour_row.addWidget(self.contourExtentCombo, 1)
         outer.addLayout(contour_row)
 
-        # ── Show Takeoff Zone toggle ──
+        # ── Show Takeoff Zone on the left, Elevation Tolerance + GSD Variance right ──
         self.showTakeoffZoneBtn = QPushButton('Show Takeoff Zone')
         self.showTakeoffZoneBtn.setObjectName('showTakeoffZoneBtn')
         self.showTakeoffZoneBtn.setCheckable(True)
@@ -1497,9 +1494,6 @@ class FlyPathDialog(QWidget):
             'Toggle the takeoff-zone overlay: sample the DEM around the first '
             'waypoint and highlight the ground that keeps the mission at the same '
             'altitude within the tolerance. Click again to hide it.')
-        outer.addWidget(self.showTakeoffZoneBtn)
-
-        # ── Elevation Tolerance and its GSD Variance read-out, one line ──
         self.takeoffToleranceSpin = QDoubleSpinBox()
         self.takeoffToleranceSpin.setRange(0.1, 50.0)
         self.takeoffToleranceSpin.setValue(2.0)
@@ -1516,20 +1510,22 @@ class FlyPathDialog(QWidget):
         self._tip(self.takeoffGsdVarLabel,
             'The GSD change this tolerance allows at the current altitude. '
             'Smaller is better when comparing maps between flights.')
-        tol_row = QHBoxLayout()
-        tol_row.setContentsMargins(0, 0, 0, 0)
-        tol_row.setSpacing(6)
+        tz_row = QHBoxLayout()
+        tz_row.setContentsMargins(0, 0, 0, 0)
+        tz_row.setSpacing(6)
+        tz_row.addWidget(self.showTakeoffZoneBtn)
+        tz_row.addSpacing(8)
         tol_cap = QLabel('Elevation Tolerance')
         tol_cap.setObjectName('inlineFormLabel')
-        tol_row.addWidget(tol_cap)
-        tol_row.addWidget(self.takeoffToleranceSpin)
-        tol_row.addSpacing(10)
+        tz_row.addWidget(tol_cap)
+        tz_row.addWidget(self.takeoffToleranceSpin)
+        tz_row.addSpacing(8)
         gsd_cap = QLabel('GSD Variance')
         gsd_cap.setObjectName('inlineFormLabel')
-        tol_row.addWidget(gsd_cap)
-        tol_row.addWidget(self.takeoffGsdVarLabel)
-        tol_row.addStretch()
-        outer.addLayout(tol_row)
+        tz_row.addWidget(gsd_cap)
+        tz_row.addWidget(self.takeoffGsdVarLabel)
+        tz_row.addStretch()
+        outer.addLayout(tz_row)
 
         # ── Same takeoff for all splits, then Launch Offset ──
         self.sameTakeoffCheck = QCheckBox('Same takeoff for all splits')
