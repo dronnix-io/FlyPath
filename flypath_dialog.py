@@ -1378,7 +1378,10 @@ class FlyPathDialog(QWidget):
         cover_layout.addWidget(self.crossHatchCheck)
         cover_layout.addWidget(self.terrainFollowCheck)
         cover_layout.addStretch()
-        form.addRow('', cover_row)
+        # Span the whole width so the checkboxes start at the left, aligned with
+        # where the labelled rows (Max Waypoints, etc.) begin, not indented into
+        # the field column.
+        form.addRow(cover_row)
 
         self.terrainToleranceSpin = QDoubleSpinBox()
         self.terrainToleranceSpin.setRange(1.0, 100.0)
@@ -1402,7 +1405,8 @@ class FlyPathDialog(QWidget):
             'above ground and keep a consistent GSD. Turn it off when you launch '
             'each split from its own starting point, so each split is referenced '
             'to its own first waypoint instead.')
-        form.addRow('', self.sameTakeoffCheck)
+        # Span the whole width so it starts at the left like the labelled rows.
+        form.addRow(self.sameTakeoffCheck)
 
         # Launch Offset lives here with the other takeoff-related controls.
         self.launchOffsetSpin = QDoubleSpinBox()
