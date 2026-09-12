@@ -1545,7 +1545,6 @@ class FlyPathDialog(QWidget):
             'above ground and keep a consistent GSD. Turn it off when you launch '
             'each split from its own starting point, so each split is referenced '
             'to its own first waypoint instead.')
-        outer.addWidget(self.sameTakeoffCheck)
 
         self.launchOffsetSpin = QDoubleSpinBox()
         self.launchOffsetSpin.setRange(-50.0, 50.0)
@@ -1562,15 +1561,18 @@ class FlyPathDialog(QWidget):
             'matches the plan, without changing the GSD, overlap or flight lines. '
             'Positive when your takeoff is higher than the reference, negative '
             'when lower. Leave at 0 for a ground launch at the first waypoint.')
-        lo_row = QHBoxLayout()
-        lo_row.setContentsMargins(0, 0, 0, 0)
-        lo_row.setSpacing(6)
+
+        # Same takeoff for all splits on the left, Launch Offset on the right.
+        same_lo_row = QHBoxLayout()
+        same_lo_row.setContentsMargins(0, 0, 0, 0)
+        same_lo_row.setSpacing(6)
+        same_lo_row.addWidget(self.sameTakeoffCheck)
+        same_lo_row.addStretch()
         lo_cap = QLabel('Launch Offset')
         lo_cap.setObjectName('inlineFormLabel')
-        lo_row.addWidget(lo_cap)
-        lo_row.addWidget(self.launchOffsetSpin)
-        lo_row.addStretch()
-        outer.addLayout(lo_row)
+        same_lo_row.addWidget(lo_cap)
+        same_lo_row.addWidget(self.launchOffsetSpin)
+        outer.addLayout(same_lo_row)
 
         return group
 
