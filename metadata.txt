@@ -3,8 +3,14 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
-version=2.3.0
-changelog=2.3.0 - Sync missions with your flypath.io account. Generate a plugin token from Plugin
+version=2.4.0
+changelog=2.4.0 - New Same takeoff for all splits option for flying every split mission from one
+    launch point. With terrain follow on, it references all split missions to the original mission's
+    first waypoint, so launching each split from a single fixed takeoff point keeps a consistent
+    height above ground and GSD across the whole area, and the map shows a single takeoff zone.
+    Leave it off to launch each split from its own start, as before. The takeoff controls, including
+    Launch Offset, are now grouped in the Takeoff Zone section.
+    2.3.0 - Sync missions with your flypath.io account. Generate a plugin token from Plugin
     token in the website account menu, paste it into FlyPath once, and save the mission you have
     just previewed into your dashboard, with a link to open it. My missions lists the missions in
     your account and loads the one you pick into QGIS as a linked working copy: survey area, drone
