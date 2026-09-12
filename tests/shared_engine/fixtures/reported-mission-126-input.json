@@ -1,0 +1,33 @@
+{
+  "contract_version": 1,
+  "operation": "plan_2d",
+  "source_mission_id": 126,
+  "survey_area": {
+    "exterior": [
+      { "latitude_deg": 51.01308037568775, "longitude_deg": -114.02718544006349 },
+      { "latitude_deg": 51.01216262088876, "longitude_deg": -114.02197122573854 },
+      { "latitude_deg": 51.00903132077138, "longitude_deg": -114.02353763580324 },
+      { "latitude_deg": 51.01069147604272, "longitude_deg": -114.02772188186646 }
+    ],
+    "holes": []
+  },
+  "drone_profile_id": "mini3pro",
+  "profile_version": 1,
+  "altitude_m": 80.0,
+  "speed_m_s": 8.0,
+  "side_overlap_ratio": 0.7,
+  "margin_m": 0.0,
+  "direction": {
+    "mode": "manual",
+    "convention": "plugin_grid_ccw_from_north",
+    "value_deg": 70.0
+  },
+  "capture": { "mode": "semi_auto", "interval_s": 2.0 },
+  "turn_style": "curved",
+  "finish_action": "return_to_home",
+  "split": {
+    "enabled": false,
+    "requested_flights": 1,
+    "max_waypoints_per_flight": 70
+  }
+}

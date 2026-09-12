@@ -1,438 +1,103 @@
-"""
-grid_planner.py
----------------
-Lawnmower flight-grid generator for 2D orthomosaic mapping.
-
-Public API
-----------
-generate_flight_grid(...)  -> (waypoints, shot_spacing_m)
-    waypoints      : list of (lon, lat) — turn points only (line endpoints)
-    shot_spacing_m : float — camera trigger interval in metres for multipleDistance
-
-find_optimal_direction(...) -> float degrees
-"""
-
-import math
+"""QGIS adapter for the shared 2D planning engine."""
 
 from qgis.core import (
-    QgsGeometry,
-    QgsPointXY,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
+    QgsGeometry,
     QgsProject,
-    QgsWkbTypes,
 )
 
-from .grid_route import boustrophedon_route as _boustrophedon_route
+from .flypath_engine.grid import (
+    find_optimal_direction as _find_optimal_direction,
+    generate_grid as _generate_grid,
+)
+from .flypath_engine.measurements import (
+    route_distance_m as _route_distance_m,
+    survey_area_m2 as _survey_area_m2,
+)
+from .grid_route import split_waypoints
 
-try:
-    _LineGeometry = QgsWkbTypes.GeometryType.LineGeometry
-except AttributeError:
-    _LineGeometry = getattr(QgsWkbTypes, 'LineGeometry')
-
-
-# ── Public functions ──────────────────────────────────────────────────────────
 
 def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
-                          shot_spacing_m, side_overlap, direction_deg,
-                          margin_m, drone_specs, densify_spacing=None):
-    """
-    Generate a lawnmower (boustrophedon) flight grid for 2D mapping.
-
-    Returns only the turn points (start and end of each flight line),
-    not every photo-trigger position. The camera is fired by a
-    multipleDistance trigger in the WPML file at shot_spacing_m intervals.
-
-    Parameters
-    ----------
-    polygon_geom   : QgsGeometry  — survey area polygon (any CRS)
-    polygon_crs    : QgsCoordinateReferenceSystem
-    altitude_m     : float        — AGL flight altitude in metres
-    shot_spacing_m : float        — along-track distance between photos (speed × interval)
-    side_overlap   : float        — 0.0–1.0
-    direction_deg : float        — flight-line direction, degrees CW from North
-    margin_m      : float        — buffer to add around polygon (metres)
-    drone_specs   : dict         — camera optics {focal_length_mm, sensor_width_mm};
-                                    see Drone.grid_specs() in the hardware package
-
-    Returns
-    -------
-    (waypoints, shot_spacing_m)
-    waypoints      : list of (longitude, latitude) tuples in WGS84 — turn points only
-    shot_spacing_m : float — along-track photo interval in metres
-    Raises
-    ------
-    ValueError  if inputs are invalid or the polygon produces no waypoints
-    """
-    if altitude_m <= 0:
-        raise ValueError('Altitude must be greater than 0.')
-    if not (0.0 <= side_overlap < 1.0):
-        raise ValueError('Side overlap must be between 0% and 99%.')
-    if not drone_specs:
-        raise ValueError('No drone specifications provided.')
-
-    wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
-
-    # 1 ── Reproject polygon to WGS84 to locate the UTM zone
-    to_wgs84 = QgsCoordinateTransform(polygon_crs, wgs84, QgsProject.instance())
-    poly_wgs84 = QgsGeometry(polygon_geom)
-    poly_wgs84.transform(to_wgs84)
-    centroid_wgs84 = poly_wgs84.centroid().asPoint()
-
-    # 2 ── Pick a metric UTM CRS centred on the polygon
-    utm_crs = _utm_crs_for(centroid_wgs84.x(), centroid_wgs84.y())
-
-    # 3 ── Reproject polygon to UTM (metres)
-    to_utm = QgsCoordinateTransform(polygon_crs, utm_crs, QgsProject.instance())
-    poly_utm = QgsGeometry(polygon_geom)
-    poly_utm.transform(to_utm)
-
-    # 4 ── Apply survey margin
-    if margin_m > 0:
-        poly_utm = poly_utm.buffer(margin_m, 8)
-
-    if poly_utm.isEmpty() or poly_utm.isNull():
-        raise ValueError(
-            'Survey polygon became empty after applying the margin.\n'
-            'Reduce the margin value or use a larger survey area.'
-        )
-
-    # 5 ── Camera footprint and spacing (all in metres)
-    fl = drone_specs['focal_length_mm']
-    sw = drone_specs['sensor_width_mm']
-
-    footprint_across = altitude_m * sw / fl          # perpendicular to flight
-
-    line_spacing = max(footprint_across * (1.0 - side_overlap), 0.5)
-    shot_spacing = max(shot_spacing_m, 0.5)
-
-    # 6 ── Rotate polygon so the flight direction aligns with +Y. Rotating the
-    #      whole geometry (every part and every hole) keeps multi-part survey
-    #      areas and interior holes intact, so the scan-line clip below covers
-    #      all parts and skips holes. Handles Polygon and MultiPolygon the same
-    #      way on QGIS 3 (Qt5) and QGIS 4 (Qt6).
-    centroid_utm = poly_utm.centroid().asPoint()
-    cx, cy = centroid_utm.x(), centroid_utm.y()
-    angle_rad = math.radians(direction_deg)
-
-    rotated_poly = _rotate_polygon(poly_utm, cx, cy, -angle_rad)
-    if rotated_poly is None or rotated_poly.isEmpty():
-        raise ValueError('Survey polygon has no exterior ring — check the polygon geometry.')
-
-    # 7 ── Sweep scan lines into in-polygon pieces and snake them into a route.
-    #      A concave area splits a line into several pieces; boustrophedon_route
-    #      groups the pieces into contiguous strips and snakes each, so the drone
-    #      never flies a pass across a gap.
-    columns = _scan_columns(rotated_poly, line_spacing, shot_spacing)
-    turn_pts_rot = _boustrophedon_route(columns, densify_spacing)
-
-    if not turn_pts_rot:
-        raise ValueError(
-            'Flight grid produced no waypoints.\n'
-            'Try a larger survey area, lower side overlap, or a smaller margin.'
-        )
-
-    # 8 ── Rotate turn points back to UTM orientation
-    waypoints_utm = [_rotate(px, py, cx, cy, angle_rad) for px, py in turn_pts_rot]
-
-    # 9 ── Transform UTM → WGS84
-    from_utm = QgsCoordinateTransform(utm_crs, wgs84, QgsProject.instance())
-    result = []
-    for px, py in waypoints_utm:
-        pt = from_utm.transform(QgsPointXY(px, py))
-        result.append((pt.x(), pt.y()))        # (lon, lat)
-
-    return result, shot_spacing
+                         shot_spacing_m, side_overlap, direction_deg,
+                         margin_m, drone_specs, densify_spacing=None):
+    """Generate WGS84 ``(longitude, latitude)`` flight waypoints."""
+    survey_area = _survey_area_wgs84(polygon_geom, polygon_crs)
+    result = _generate_grid(
+        survey_area,
+        altitude_m=altitude_m,
+        shot_spacing_m=shot_spacing_m,
+        side_overlap=side_overlap,
+        direction_deg=direction_deg,
+        margin_m=margin_m,
+        camera=drone_specs,
+        densify_spacing=densify_spacing,
+    )
+    return ([(point["longitude_deg"], point["latitude_deg"])
+             for point in result["waypoints"]],
+            result["shot_spacing_m"])
 
 
 def find_optimal_direction(polygon_geom, polygon_crs, line_spacing_m):
-    """
-    Return the flight direction (degrees CW from North) that minimises the
-    estimated mission flight time for the actual polygon shape.
-
-    It evaluates every whole degree from 0 to 179 (an exhaustive 1 deg sweep) and
-    picks the direction whose actual flight route is the shortest to fly. Because
-    scoring the real route for all 180 angles would be slow on big areas, it does
-    it in two stages: a fast pass counts the in-polygon flight-line segments per
-    angle (fewest turns, the dominant term) with the scan-line count capped
-    (~200), and then the actual route length is measured only for the handful of
-    fewest-segment candidates, choosing the one that flies the least distance.
-    Counting real segments handles concave, L-shaped or irregular areas, where a
-    pass is split across a notch. Uses only QgsGeometry APIs common to QGIS 3/4.
-
-    Parameters
-    ----------
-    polygon_geom   : QgsGeometry (any CRS)
-    polygon_crs    : QgsCoordinateReferenceSystem
-    line_spacing_m : float, perpendicular spacing between flight lines in metres
-
-    Returns
-    -------
-    float : best direction in degrees (0 to 179)
-    """
+    """Return the shared engine's optimal whole-degree grid direction."""
     try:
-        spacing = line_spacing_m if (line_spacing_m and line_spacing_m > 0) else 1.0
-
-        wgs84    = QgsCoordinateReferenceSystem('EPSG:4326')
-        to_wgs84 = QgsCoordinateTransform(polygon_crs, wgs84, QgsProject.instance())
-        poly_wgs84 = QgsGeometry(polygon_geom)
-        poly_wgs84.transform(to_wgs84)
-        centroid = poly_wgs84.centroid().asPoint()
-
-        utm_crs  = _utm_crs_for(centroid.x(), centroid.y())
-        to_utm   = QgsCoordinateTransform(polygon_crs, utm_crs, QgsProject.instance())
-        poly_utm = QgsGeometry(polygon_geom)
-        poly_utm.transform(to_utm)
-
-        pts = [(v.x(), v.y()) for v in poly_utm.vertices()]
-        if len(pts) < 3:
-            return 0.0
-
-        # One scan step for the whole search so segment counts stay comparable
-        # across angles; cap total scan lines (~200) to stay fast on big areas.
-        bb   = poly_utm.boundingBox()
-        diag = math.hypot(bb.width(), bb.height())
-        step = spacing if (diag <= 0 or diag / spacing <= 200) else diag / 200.0
-
-        # Stage 1: fewest-turns score for every 1 degree (fast, capped).
-        costs = {deg: _flight_cost(poly_utm, pts, step, float(deg))
-                 for deg in range(0, 180)}
-        min_seg = min(c[0] for c in costs.values())
-        # Stage 2: among the angles within a couple of segments of the fewest,
-        # measure the real route length and take the genuinely shortest one.
-        cands = sorted((d for d, (s, _sp) in costs.items() if s <= min_seg + 2),
-                       key=lambda d: costs[d])[:30]
-        cen = poly_utm.centroid().asPoint()
-        cx, cy = cen.x(), cen.y()
-        best = min(cands,
-                   key=lambda d: _route_length(poly_utm, cx, cy, d, spacing))
-        return float(best % 180)
+        return _find_optimal_direction(
+            _survey_area_wgs84(polygon_geom, polygon_crs), line_spacing_m
+        )
     except Exception:
         return 0.0
 
 
-def split_waypoints(waypoints, n_missions):
-    """
-    Split a lawnmower waypoint list into n_missions contiguous sub-missions.
-
-    `waypoints` is the (lon, lat) turn-point list from generate_flight_grid,
-    with two points per flight line. The lines are divided into n_missions
-    groups of roughly equal line count, so each sub-mission is a clean, self
-    contained lawnmower over a contiguous strip of the area (no partial lines,
-    no coverage gap at the seams). Used for multi-battery survey planning on
-    consumer drones.
-
-    Consecutive missions share a seam waypoint: each mission after the first
-    begins at the last waypoint of the previous mission, so the drone picks up
-    exactly where the last mission ended and the coloured paths join up with no
-    gap on the map.
-
-    Returns a list of waypoint sub-lists (one per mission). n_missions is
-    clamped to the range 1..n_lines.
-    """
-    pts = list(waypoints)
-    n_lines = len(pts) // 2
-    try:
-        n = int(n_missions)
-    except (TypeError, ValueError):
-        n = 1
-    n = max(1, min(n, max(1, n_lines)))
-    if n <= 1 or n_lines <= 1:
-        return [pts]
-
-    base, rem = divmod(n_lines, n)
-    missions = []
-    start_line = 0
-    prev_last = None
-    for g in range(n):
-        count = base + (1 if g < rem else 0)
-        chunk = pts[start_line * 2:(start_line + count) * 2]
-        if prev_last is not None:
-            chunk = [prev_last] + chunk
-        missions.append(chunk)
-        prev_last = chunk[-1]
-        start_line += count
-    return missions
+def measure_survey_area(polygon_geom, polygon_crs):
+    """Return WGS84 ellipsoidal survey area in square metres."""
+    return _survey_area_m2(_survey_area_wgs84(polygon_geom, polygon_crs))
 
 
-def _best_angle(poly_utm, pts, step, angles):
-    """Return the angle (deg) in `angles` with the lowest (segments, span) cost."""
-    best_angle = 0.0
-    best_cost  = None
-    for deg in angles:
-        cost = _flight_cost(poly_utm, pts, step, float(deg))
-        if best_cost is None or cost < best_cost:
-            best_cost  = cost
-            best_angle = float(deg)
-    return best_angle
+def measure_route(waypoints):
+    """Return WGS84 ellipsoidal length for ``(longitude, latitude)`` points."""
+    return _route_distance_m([
+        {"longitude_deg": longitude, "latitude_deg": latitude}
+        for longitude, latitude in waypoints
+    ])
 
 
-def _flight_cost(poly_utm, pts, step, deg):
-    """
-    Relative flight cost for flight lines oriented at `deg`.
-
-    Returns (segment_count, perpendicular_span): fewer segments means fewer
-    turns and shorter flight time; span breaks ties. Scan lines are cast along
-    the flight direction at `step` spacing and intersected with the real
-    polygon, so a concavity that splits a pass into pieces is counted.
-    """
-    rad = math.radians(deg)
-    # Match generate_flight_grid's convention: at `deg` the line-spacing
-    # (perpendicular) axis is u and the flight passes run along v.
-    ux, uy = math.cos(rad), math.sin(rad)     # across / line-spacing axis
-    vx, vy = -math.sin(rad), math.cos(rad)    # along-track (pass) axis
-
-    t_vals = [x * ux + y * uy for x, y in pts]   # perpendicular offsets
-    s_vals = [x * vx + y * vy for x, y in pts]   # along-track positions
-    t_min, t_max = min(t_vals), max(t_vals)
-    s_min, s_max = min(s_vals), max(s_vals)
-    span = t_max - t_min
-
-    pad = step
-    a0, a1 = s_min - pad, s_max + pad
-    seg_count = 0
-    t = t_min + step / 2.0
-    while t <= t_max:
-        p0 = QgsPointXY(a0 * vx + t * ux, a0 * vy + t * uy)
-        p1 = QgsPointXY(a1 * vx + t * ux, a1 * vy + t * uy)
-        inter = poly_utm.intersection(QgsGeometry.fromPolylineXY([p0, p1]))
-        if inter and not inter.isEmpty():
-            seg_count += len(_polylines(inter))
-        t += step
-
-    return (seg_count, span)
+def _survey_area_wgs84(polygon_geom, polygon_crs):
+    if polygon_geom is None or polygon_geom.isEmpty():
+        raise ValueError("Survey polygon is empty.")
+    wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
+    geometry = QgsGeometry(polygon_geom)
+    geometry.transform(QgsCoordinateTransform(
+        polygon_crs, wgs84, QgsProject.instance()
+    ))
+    parts = [_part_to_mapping(part) for part in _polygon_parts(geometry)]
+    if not parts:
+        raise ValueError("Survey polygon has no exterior ring.")
+    return parts[0] if len(parts) == 1 else {"parts": parts}
 
 
-def _polylines(geom):
-    """Return the list of polylines in a (possibly multi) line geometry.
-
-    Branch on isMultipart(): PyQGIS raises TypeError when asPolyline() is called
-    on a MultiLineString (and asMultiPolyline() on a LineString), on both QGIS 3
-    and 4. A scan line clipped to a concave area is a MultiLineString, so calling
-    asPolyline() first used to raise here; find_optimal_direction swallowed the
-    error and fell back to 0 degrees, so Auto always returned 0 on concave areas.
-    """
-    if geom is None or geom.isEmpty():
-        return []
-    if QgsWkbTypes.geometryType(geom.wkbType()) != _LineGeometry:
-        return []
-    if geom.isMultipart():
-        return geom.asMultiPolyline()
-    line = geom.asPolyline()
-    return [line] if line else []
+def _part_to_mapping(rings):
+    return {
+        "exterior": [_point_to_mapping(point) for point in rings[0]],
+        "holes": [
+            [_point_to_mapping(point) for point in ring]
+            for ring in rings[1:]
+        ],
+    }
 
 
-# ── Private helpers ───────────────────────────────────────────────────────────
-
-def _scan_columns(rotated_poly, line_spacing, pad):
-    """Sweep vertical scan lines across a polygon already rotated so the flight
-    direction is +Y. Returns [(x, [(y_low, y_high), ...]), ...] left to right: the
-    in-polygon pieces of each scan line, as consumed by boustrophedon_route. A
-    concave area yields several pieces on a line; `pad` extends the sweep past the
-    polygon's ends so the endpoints are captured."""
-    bbox = rotated_poly.boundingBox()
-    x, x_end = bbox.xMinimum(), bbox.xMaximum()
-    y_lo, y_hi = bbox.yMinimum() - pad, bbox.yMaximum() + pad
-    columns = []
-    while x <= x_end + line_spacing * 0.5:
-        scan = QgsGeometry.fromPolylineXY([QgsPointXY(x, y_lo), QgsPointXY(x, y_hi)])
-        clipped = scan.intersection(rotated_poly)
-        segs = []
-        if not clipped.isEmpty() and not clipped.isNull():
-            for (x1, y1), (x2, y2) in _line_segments(clipped):
-                segs.append((y1, y2) if y1 <= y2 else (y2, y1))
-            segs.sort()
-        columns.append((x, segs))
-        x += line_spacing
-    return columns
+def _point_to_mapping(point):
+    return {"latitude_deg": point.y(), "longitude_deg": point.x()}
 
 
-def _route_length(poly_utm, cx, cy, deg, line_spacing):
-    """Total flown length (m) of the endpoint route at flight direction `deg`,
-    used to pick the shortest-path direction. inf if the angle yields no route."""
-    rotated = _rotate_polygon(poly_utm, cx, cy, -math.radians(deg))
-    if rotated is None or rotated.isEmpty():
-        return float('inf')
-    route = _boustrophedon_route(_scan_columns(rotated, line_spacing, line_spacing))
-    if len(route) < 2:
-        return float('inf')
-    return sum(math.hypot(route[i + 1][0] - route[i][0],
-                          route[i + 1][1] - route[i][1])
-               for i in range(len(route) - 1))
+def _polygon_parts(geometry):
+    if geometry.isMultipart():
+        return [part for part in geometry.asMultiPolygon() if part]
+    polygon = geometry.asPolygon()
+    return [polygon] if polygon else []
 
 
-def _utm_crs_for(lon, lat):
-    """Return the WGS84 UTM CRS appropriate for the given lon/lat."""
-    zone = int((lon + 180.0) / 6.0) + 1
-    epsg = 32600 + zone if lat >= 0 else 32700 + zone
-    return QgsCoordinateReferenceSystem(f'EPSG:{epsg}')
-
-
-def _rotate(x, y, cx, cy, angle_rad):
-    """Rotate point (x, y) around centre (cx, cy) by angle_rad."""
-    cos_a = math.cos(angle_rad)
-    sin_a = math.sin(angle_rad)
-    dx, dy = x - cx, y - cy
-    return (cx + dx * cos_a - dy * sin_a,
-            cy + dx * sin_a + dy * cos_a)
-
-
-def _polygon_parts(geom):
-    """Return a geometry's polygon parts as [[ring, hole, ...], ...] where every
-    ring is a list of QgsPointXY. Works for both Polygon and MultiPolygon,
-    identically on QGIS 3 (Qt5) and QGIS 4 (Qt6).
-
-    PyQGIS raises TypeError when asPolygon() is called on a MultiPolygon (and
-    asMultiPolygon() on a Polygon), on both QGIS 3 and 4, so branch on
-    isMultipart() rather than probing a return value."""
-    if geom is None or geom.isEmpty():
-        return []
-    if geom.isMultipart():
-        return [part for part in geom.asMultiPolygon() if part]
-    poly = geom.asPolygon()
-    return [poly] if poly else []
-
-
-def _rotate_polygon(geom, cx, cy, angle_rad):
-    """Rotate every ring of every polygon part of geom around (cx, cy). Returns a
-    QgsGeometry (Polygon when there is one part, MultiPolygon when there are
-    several), preserving parts and holes, or None when geom has no polygon
-    rings."""
-    rot_parts = []
-    for part in _polygon_parts(geom):
-        rot_rings = [
-            [QgsPointXY(*_rotate(pt.x(), pt.y(), cx, cy, angle_rad)) for pt in ring]
-            for ring in part
-        ]
-        if rot_rings and rot_rings[0]:
-            rot_parts.append(rot_rings)
-    if not rot_parts:
-        return None
-    if len(rot_parts) == 1:
-        return QgsGeometry.fromPolygonXY(rot_parts[0])
-    return QgsGeometry.fromMultiPolygonXY(rot_parts)
-
-
-def _line_segments(geom):
-    """
-    Extract a list of ((x1, y1), (x2, y2)) endpoint pairs from a line geometry.
-    Handles both LineString and MultiLineString.
-    """
-    result = []
-    if geom.isEmpty():
-        return result
-    if QgsWkbTypes.geometryType(geom.wkbType()) != _LineGeometry:
-        return result
-
-    if geom.isMultipart():
-        parts = geom.asMultiPolyline()
-    else:
-        parts = [geom.asPolyline()]
-
-    for part in parts:
-        if len(part) >= 2:
-            result.append(
-                ((part[0].x(),  part[0].y()),
-                 (part[-1].x(), part[-1].y()))
-            )
-    return result
+def _utm_crs_for(longitude, latitude):
+    """Return the WGS84 UTM CRS used by corridor and takeoff-zone adapters."""
+    zone = min(60, max(1, int((longitude + 180.0) / 6.0) + 1))
+    epsg = (32600 if latitude >= 0 else 32700) + zone
+    return QgsCoordinateReferenceSystem(f"EPSG:{epsg}")

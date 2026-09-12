@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from grid_route import (  # noqa: E402
     boustrophedon_route, decompose_cells, split_by_waypoint_count,
+    split_waypoints,
 )
 
 
@@ -210,6 +211,12 @@ def test_split_never_exceeds_cap_various_sizes():
 def test_split_single_mission_when_small():
     assert split_by_waypoint_count(_wps(1), 5, 70) == [_wps(1)]
     assert len(split_by_waypoint_count(_wps(40), 1, 70)) == 1
+
+
+def test_endpoint_split_preserves_lines_and_shared_seam():
+    points = _wps(8)
+    missions = split_waypoints(points, 2)
+    assert missions == [points[:4], [points[3]] + points[4:]]
 
 
 if __name__ == '__main__':

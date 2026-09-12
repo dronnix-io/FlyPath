@@ -107,7 +107,8 @@ from qgis.core import (
 )
 from .map_tools import PolygonDrawTool, LineDrawTool, VertexPickTool
 from .grid_planner import (
-    generate_flight_grid, find_optimal_direction, split_waypoints, _utm_crs_for
+    generate_flight_grid, find_optimal_direction, measure_route,
+    measure_survey_area, split_waypoints, _utm_crs_for,
 )
 from .grid_route import split_by_waypoint_count
 from .corridor_planner import generate_corridor_route
@@ -3840,16 +3841,12 @@ class FlyPathDialog(QWidget):
         self.drawPolygonBtn.setText(self._draw_btn_default_text())
 
     def _area_ha(self):
-        """Return survey polygon area in hectares (metric, via EPSG:3857)."""
+        """Return WGS84 ellipsoidal survey area in hectares."""
         if self._survey_polygon is None:
             return 0.0
-        utm = QgsCoordinateReferenceSystem('EPSG:3857')
-        xf  = QgsCoordinateTransform(
-            self._survey_polygon_crs, utm, QgsProject.instance()
-        )
-        g = QgsGeometry(self._survey_polygon)
-        g.transform(xf)
-        return g.area() / 10_000
+        return measure_survey_area(
+            self._survey_polygon, self._survey_polygon_crs
+        ) / 10_000
 
     # ── Auto direction ────────────────────────────────────────────────────
 
@@ -3930,13 +3927,10 @@ class FlyPathDialog(QWidget):
         speed = self.speedSpin.value()
 
         # Coverage area
-        webmerc = QgsCoordinateReferenceSystem('EPSG:3857')
-        xf = QgsCoordinateTransform(
-            self._survey_polygon_crs, webmerc, QgsProject.instance()
-        )
-        g = QgsGeometry(self._survey_polygon)
-        g.transform(xf)
-        self.coverageLabel.setText(f'{g.area() / 10_000:.2f} ha')
+        area_ha = measure_survey_area(
+            self._survey_polygon, self._survey_polygon_crs
+        ) / 10_000
+        self.coverageLabel.setText(f'{area_ha:.2f} ha')
 
         # Flight-path stats are taken from the ACTUAL generated waypoints (the
         # same path the preview draws), so distance, lines, photos and time
@@ -4148,11 +4142,7 @@ class FlyPathDialog(QWidget):
 
     def _path_length_m(self, waypoints):
         """Ellipsoidal length of the (lon, lat) flight path in metres."""
-        da = QgsDistanceArea()
-        da.setSourceCrs(QgsCoordinateReferenceSystem('EPSG:4326'),
-                        QgsProject.instance().transformContext())
-        da.setEllipsoid('WGS84')
-        return da.measureLine([QgsPointXY(lon, lat) for lon, lat in waypoints])
+        return measure_route(waypoints)
 
     def _clear_stats(self):
         for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
