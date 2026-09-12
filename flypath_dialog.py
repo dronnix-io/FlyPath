@@ -1495,6 +1495,13 @@ class FlyPathDialog(QWidget):
             'Toggle the takeoff-zone overlay: sample the DEM around the first '
             'waypoint and highlight the ground that keeps the mission at the same '
             'altitude within the tolerance. Click again to hide it.')
+        # Give both overlay toggle buttons the same width (the wider one's), so
+        # Show Contours lines up with Show Takeoff Zone.
+        btn_w = max(self.showTakeoffZoneBtn.sizeHint().width(),
+                    self.showContoursBtn.sizeHint().width())
+        self.showTakeoffZoneBtn.setFixedWidth(btn_w)
+        self.showContoursBtn.setFixedWidth(btn_w)
+
         self.takeoffToleranceSpin = QDoubleSpinBox()
         self.takeoffToleranceSpin.setRange(0.1, 50.0)
         self.takeoffToleranceSpin.setValue(2.0)
