@@ -108,9 +108,9 @@ from qgis.core import (
 from .map_tools import PolygonDrawTool, LineDrawTool, VertexPickTool
 from .grid_planner import (
     generate_flight_grid, find_optimal_direction, measure_route,
-    measure_survey_area, split_waypoints, _utm_crs_for,
+    measure_survey_area, _utm_crs_for,
 )
-from .grid_route import split_by_waypoint_count
+from .grid_route import split_by_waypoint_count, split_waypoints
 from .corridor_planner import generate_corridor_route
 from .corridor_geometry import compute_pass_offsets
 from .takeoff_zone import (
