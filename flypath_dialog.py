@@ -111,6 +111,7 @@ from .grid_planner import (
     measure_survey_area, _utm_crs_for,
 )
 from .grid_route import split_by_waypoint_count, split_waypoints
+from .flypath_engine.statistics import mission_statistics
 from .corridor_planner import generate_corridor_route
 from .corridor_geometry import compute_pass_offsets
 from .takeoff_zone import (
@@ -3912,6 +3913,7 @@ class FlyPathDialog(QWidget):
     def _update_stats(self):
         self._live_waypoints = None
         self._live_missions  = None
+        self._live_statistics = None
         if not self._has_survey_area(silent=True):
             self._clear_stats()
             return
@@ -3982,17 +3984,19 @@ class FlyPathDialog(QWidget):
 
         dist_m     = self._path_length_m(turn_pts)
         n_lines    = len(turn_pts) // 2
-        usable_min = d.battery_time_min * (1.0 - _BATTERY_RESERVE)
-        if full:
-            # Stop-and-shoot: transit plus a stop per photo (the halt, or the
-            # camera's shutter/write time if longer).
-            n_photos   = len(waypoints)
-            per_photo  = max(_HALT_S, d.camera.min_shoot_interval_s)
-            flight_min = (dist_m / speed + n_photos * per_photo) / 60.0 if speed > 0 else 0.0
-        else:
-            n_photos   = max(0, int(dist_m / actual_spacing))
-            flight_min = dist_m / (speed * 60.0) if speed > 0 else 0.0
-        batteries  = math.ceil(flight_min / usable_min) if flight_min > 0 else 0
+        stats = mission_statistics(
+            route_distance_m=dist_m,
+            speed_m_s=speed,
+            capture_mode="full" if full else "semi",
+            photo_interval_s=d.camera.min_shoot_interval_s,
+            battery_minutes=round(d.battery_time_min * (1.0 - _BATTERY_RESERVE)),
+            waypoint_count=len(waypoints),
+            stop_seconds=_HALT_S,
+        )
+        n_photos = stats["photo_count"]
+        flight_min = stats["flight_seconds"] / 60.0
+        batteries = stats["battery_count"]
+        self._live_statistics = stats
 
         self.flightTimeLabel.setText(f'{flight_min:.1f} min')
         self.distanceLabel.setText(f'{dist_m / 1000:.2f} km')
@@ -4696,6 +4700,9 @@ class FlyPathDialog(QWidget):
             'waypoints':  self.waypointsLabel.text(),
             'batteries':  self.batteriesLabel.text(),
             'area':       self.coverageLabel.text(),
+            'area_m2':    (measure_survey_area(self._survey_polygon, self._survey_polygon_crs)
+                           if self._mission_kind() == '2d' else None),
+            'statistics': self._live_statistics,
             'flight_count': len(self._missions or []),
         }
 
