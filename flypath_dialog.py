@@ -423,6 +423,7 @@ QDoubleSpinBox::down-arrow, QSpinBox::down-arrow {
 QCheckBox {
     color: #D0D0D0;
     spacing: 6px;
+    background-color: transparent;
 }
 QCheckBox::indicator {
     width: 14px; height: 14px;
@@ -1371,17 +1372,17 @@ class FlyPathDialog(QWidget):
             'ground rises or falls by more than the tolerance. It follows the '
             'bare-earth terrain, not trees or buildings, so keep a safe margin.')
         # Cross-hatch and Terrain follow share one row to keep the panel compact.
-        cover_row = QWidget()
-        cover_layout = QHBoxLayout(cover_row)
+        # Add the layout directly (not wrapped in a QWidget) so no background is
+        # painted behind the checkboxes; they then blend into the section card
+        # like the other controls. Spanning both columns also left-aligns them
+        # with the labelled rows (Max Waypoints, etc.).
+        cover_layout = QHBoxLayout()
         cover_layout.setContentsMargins(0, 0, 0, 0)
         cover_layout.setSpacing(12)
         cover_layout.addWidget(self.crossHatchCheck)
         cover_layout.addWidget(self.terrainFollowCheck)
         cover_layout.addStretch()
-        # Span the whole width so the checkboxes start at the left, aligned with
-        # where the labelled rows (Max Waypoints, etc.) begin, not indented into
-        # the field column.
-        form.addRow(cover_row)
+        form.addRow(cover_layout)
 
         self.terrainToleranceSpin = QDoubleSpinBox()
         self.terrainToleranceSpin.setRange(1.0, 100.0)
