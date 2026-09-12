@@ -3989,7 +3989,7 @@ class FlyPathDialog(QWidget):
             speed_m_s=speed,
             capture_mode="full" if full else "semi",
             photo_interval_s=d.camera.min_shoot_interval_s,
-            battery_minutes=round(d.battery_time_min * (1.0 - _BATTERY_RESERVE)),
+            battery_minutes=d.battery_safe_min,
             waypoint_count=len(waypoints),
             stop_seconds=_HALT_S,
         )
