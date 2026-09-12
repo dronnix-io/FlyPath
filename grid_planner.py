@@ -15,7 +15,7 @@ from .flypath_engine.measurements import (
     route_distance_m as _route_distance_m,
     survey_area_m2 as _survey_area_m2,
 )
-from .grid_route import split_waypoints
+from .grid_route import split_waypoints as split_waypoints
 
 
 def generate_flight_grid(polygon_geom, polygon_crs, altitude_m,
