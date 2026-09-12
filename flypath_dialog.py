@@ -876,8 +876,8 @@ class FlyPathDialog(QWidget):
 
         content = QWidget()
         scroll_layout = QVBoxLayout(content)
-        scroll_layout.setSpacing(11)   # clearer gaps between the section cards
-        scroll_layout.setContentsMargins(8, 8, 8, 8)
+        scroll_layout.setSpacing(8)    # gaps between the section cards
+        scroll_layout.setContentsMargins(6, 6, 6, 6)
 
         # Info label must exist before group builders call self._tip(). It no
         # longer lives in the panel: it is placed in a HUD card on the map canvas
@@ -892,7 +892,7 @@ class FlyPathDialog(QWidget):
         # Flight Parameters (left) beside Adv. Mission Organizers + Safety
         # Actions (right).
         params_row = QHBoxLayout()
-        params_row.setSpacing(8)
+        params_row.setSpacing(6)
 
         # Gimbal angle and photo interval are fixed for 2D mapping and do not
         # affect the waypoints, so they are kept internally rather than shown.
@@ -934,8 +934,8 @@ class FlyPathDialog(QWidget):
         content.layout().activate()
         # + vertical scrollbar allowance so the content is not clipped at min;
         # small floor guards against a degenerate hint before the first show.
-        min_w = content.minimumSizeHint().width() + 20
-        self.setMinimumWidth(max(min_w, 280))
+        min_w = content.minimumSizeHint().width() + 16
+        self.setMinimumWidth(max(min_w, 260))
 
     def _build_mission_group(self):
         group = QGroupBox('Mission Setup')
@@ -1335,7 +1335,6 @@ class FlyPathDialog(QWidget):
         self.maxWaypointsSpin = QSpinBox()
         self.maxWaypointsSpin.setRange(2, 400)
         self.maxWaypointsSpin.setValue(_DEFAULT_MAX_WAYPOINTS)
-        self.maxWaypointsSpin.setMaximumWidth(110)
         self._tip(self.maxWaypointsSpin,
             'Maximum waypoints per mission. DJI caps a mission at about 200 '
             'waypoints, so the survey is split so no mission exceeds this. '
@@ -1390,7 +1389,6 @@ class FlyPathDialog(QWidget):
         self.terrainToleranceSpin.setSingleStep(1.0)
         self.terrainToleranceSpin.setDecimals(0)
         self.terrainToleranceSpin.setSuffix(' m')
-        self.terrainToleranceSpin.setMaximumWidth(110)
         self._tip(self.terrainToleranceSpin,
             'Semi-automatic terrain follow adds a waypoint whenever the ground '
             'has risen or fallen by more than this since the last waypoint. '
@@ -1418,13 +1416,11 @@ class FlyPathDialog(QWidget):
     def _build_advanced_group(self):
         group = QGroupBox('Safety Actions')
         group.setObjectName('safetyGroup')
-        group.setMaximumWidth(210)
         form  = QFormLayout(group)
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
 
         self.finishActionCombo = QComboBox()
-        self.finishActionCombo.setMaximumWidth(110)
         self._tip(self.finishActionCombo,
             'What the drone does after the last waypoint. '
             'Return to Home: flies back and lands at takeoff. '
@@ -1433,7 +1429,6 @@ class FlyPathDialog(QWidget):
         form.addRow('Finish Action', self.finishActionCombo)
 
         self.rcLostActionCombo = QComboBox()
-        self.rcLostActionCombo.setMaximumWidth(110)
         self._tip(self.rcLostActionCombo,
             'What the drone does if the RC signal is lost during the mission. '
             'Return to Home: flies back to takeoff point. '
