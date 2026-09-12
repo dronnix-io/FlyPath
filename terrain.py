@@ -123,12 +123,19 @@ def densify_by_terrain(waypoints, sample, tolerance_m,
     return out_pts, out_elevs
 
 
-def heights_above_takeoff(elevations, altitude_m):
-    """Per-waypoint executeHeight (relative to the first waypoint, i.e. the launch
-    point) that holds a constant `altitude_m` above ground. Because only the
-    difference from the first elevation is used, the DEM's vertical datum cancels
-    out. Rebase per exported flight by passing that flight's own elevations."""
+def heights_above_takeoff(elevations, altitude_m, base=None):
+    """Per-waypoint executeHeight (relative to the takeoff point) that holds a
+    constant `altitude_m` above ground. Because only the difference from `base`
+    is used, the DEM's vertical datum cancels out.
+
+    `base` is the ground elevation of the takeoff point. It defaults to the first
+    elevation, so passing one flight's own elevations rebases that flight to its
+    own first waypoint. Pass a shared `base` (for example the first waypoint of
+    the whole, unsplit mission) to reference several split flights to one common
+    takeoff point, so they all hold the same height above ground when launched
+    from that point."""
     if not elevations:
         return []
-    base = elevations[0]
+    if base is None:
+        base = elevations[0]
     return [round(altitude_m + (elev - base), 1) for elev in elevations]

@@ -1199,21 +1199,6 @@ class FlyPathDialog(QWidget):
             'updates the other (and the flight path when you preview).')
         form.addRow('GSD', self.gsdSpin)
 
-        self.launchOffsetSpin = QDoubleSpinBox()
-        self.launchOffsetSpin.setRange(-50.0, 50.0)
-        self.launchOffsetSpin.setValue(0.0)
-        self.launchOffsetSpin.setSingleStep(0.5)
-        self.launchOffsetSpin.setDecimals(1)
-        self.launchOffsetSpin.setSuffix(' m')
-        self._tip(self.launchOffsetSpin,
-            'Height of your actual takeoff spot above the ground at the first '
-            'waypoint (for example about 2 m when launching from a car roof). '
-            'It shifts every waypoint height so the real height above ground '
-            'matches the plan, without changing the GSD, overlap or flight lines. '
-            'Leave at 0 when you take off from the ground. Applies per mission, '
-            'so each split mission uses it too.')
-        form.addRow('Launch Offset', self.launchOffsetSpin)
-
         self.sideOverlapSpin = QSpinBox()
         self.sideOverlapSpin.setRange(50, 95)
         self.sideOverlapSpin.setValue(70)
@@ -1377,8 +1362,6 @@ class FlyPathDialog(QWidget):
             'direction. The double coverage improves 3D reconstruction and, for '
             'LiDAR, point-cloud stability. It roughly doubles flight time, photos '
             'and battery use.')
-        form.addRow('', self.crossHatchCheck)
-
         self.terrainFollowCheck = QCheckBox('Terrain follow')
         self._tip(self.terrainFollowCheck,
             'Vary each waypoint height to hold a constant height above ground, '
@@ -1387,7 +1370,15 @@ class FlyPathDialog(QWidget):
             'semi-automatic adds waypoints along the flight lines where the '
             'ground rises or falls by more than the tolerance. It follows the '
             'bare-earth terrain, not trees or buildings, so keep a safe margin.')
-        form.addRow('', self.terrainFollowCheck)
+        # Cross-hatch and Terrain follow share one row to keep the panel compact.
+        cover_row = QWidget()
+        cover_layout = QHBoxLayout(cover_row)
+        cover_layout.setContentsMargins(0, 0, 0, 0)
+        cover_layout.setSpacing(12)
+        cover_layout.addWidget(self.crossHatchCheck)
+        cover_layout.addWidget(self.terrainFollowCheck)
+        cover_layout.addStretch()
+        form.addRow('', cover_row)
 
         self.terrainToleranceSpin = QDoubleSpinBox()
         self.terrainToleranceSpin.setRange(1.0, 100.0)
@@ -1401,6 +1392,35 @@ class FlyPathDialog(QWidget):
             'has risen or fallen by more than this since the last waypoint. '
             'Smaller means tighter terrain following and more waypoints.')
         form.addRow('Terrain Tolerance', self.terrainToleranceSpin)
+
+        self.sameTakeoffCheck = QCheckBox('Same takeoff for all splits')
+        self.sameTakeoffCheck.setChecked(True)
+        self._tip(self.sameTakeoffCheck,
+            'For split missions with terrain follow on. When on, every split is '
+            'referenced to the original mission first waypoint, so if you launch '
+            'all splits from one fixed takeoff point they hold the same height '
+            'above ground and keep a consistent GSD. Turn it off when you launch '
+            'each split from its own starting point, so each split is referenced '
+            'to its own first waypoint instead.')
+        form.addRow('', self.sameTakeoffCheck)
+
+        # Launch Offset lives here with the other takeoff-related controls.
+        self.launchOffsetSpin = QDoubleSpinBox()
+        self.launchOffsetSpin.setRange(-50.0, 50.0)
+        self.launchOffsetSpin.setValue(0.0)
+        self.launchOffsetSpin.setSingleStep(0.5)
+        self.launchOffsetSpin.setDecimals(1)
+        self.launchOffsetSpin.setSuffix(' m')
+        self.launchOffsetSpin.setMaximumWidth(110)
+        self._tip(self.launchOffsetSpin,
+            'Height of your actual takeoff spot relative to the ground at the '
+            'reference first waypoint (for example about 2 m from a car roof, or '
+            'the elevation difference when you launch from a single fixed point). '
+            'It shifts every waypoint height so the real height above ground '
+            'matches the plan, without changing the GSD, overlap or flight lines. '
+            'Positive when your takeoff is higher than the reference, negative '
+            'when lower. Leave at 0 for a ground launch at the first waypoint.')
+        form.addRow('Launch Offset', self.launchOffsetSpin)
 
         return group
 
@@ -2080,6 +2100,7 @@ class FlyPathDialog(QWidget):
         self.bufferSpin.valueChanged.connect(self._on_param_changed)
         self.setBreaksBtn.toggled.connect(self._on_set_breaks_toggled)
         self.crossHatchCheck.toggled.connect(self._on_param_changed)
+        self.sameTakeoffCheck.toggled.connect(self._on_param_changed)
         self.terrainFollowCheck.toggled.connect(self._on_terrain_toggled)
         self.terrainToleranceSpin.valueChanged.connect(self._on_param_changed)
         self.splitSpin.valueChanged.connect(self._on_split_changed)
@@ -2216,8 +2237,9 @@ class FlyPathDialog(QWidget):
         # Adv. Mission Organizers: cross-hatch is meaningless for a corridor; the
         # Mission Breaks tool only applies to corridors. Split Missions is a
         # minimum-flight count in both modes; corridor labels it 'Min Flights'.
-        self._set_row_visible(self._organizer_form, self.crossHatchCheck,
-                              not corridor)
+        # Cross-hatch shares a row with Terrain follow, so hide just the
+        # checkbox for corridors (terrain follow works with corridors and stays).
+        self.crossHatchCheck.setVisible(not corridor)
         self._set_row_visible(self._organizer_form, self.setBreaksBtn, corridor)
         split_lbl = self._organizer_form.labelForField(self.splitSpin)
         if split_lbl is not None:
@@ -5645,13 +5667,20 @@ class FlyPathDialog(QWidget):
         if not elevations or len(elevations) != len(waypoints):
             return [(part, None, None) for part in self._split_missions(waypoints)]
         altitude = self.altitudeSpin.value()
+        # With "one takeoff for all splits" on, every split is referenced to the
+        # original (unsplit) mission's first waypoint, so all splits hold the same
+        # height above ground when flown from a single takeoff point. Off, each
+        # split rebases to its own first waypoint (launch each split from its own
+        # start).
+        shared_base = elevations[0] if self.sameTakeoffCheck.isChecked() else None
         triples = [(lon, lat, elev)
                    for (lon, lat), elev in zip(waypoints, elevations)]
         out = []
         for part in self._split_missions(triples):
             part_wps = [(lon, lat) for lon, lat, _ in part]
             part_elevs = [elev for _, _, elev in part]
-            out.append((part_wps, heights_above_takeoff(part_elevs, altitude),
+            out.append((part_wps,
+                        heights_above_takeoff(part_elevs, altitude, base=shared_base),
                         part_elevs))
         return out
 
@@ -6372,6 +6401,11 @@ class FlyPathDialog(QWidget):
         side = self.sideOverlapSpin.value() / 100.0
         buf = self.bufferSpin.value()
         maxwp = self.maxWaypointsSpin.value()
+        # "One takeoff for all splits": reference every stretch to the corridor's
+        # first waypoint elevation, so all flights hold the same height above
+        # ground from a single takeoff. Off, each mission rebases to its own start.
+        same_takeoff = self.sameTakeoffCheck.isChecked()
+        shared_base = None
         out = []
         for (pi, a, b) in groups:
             sub = QgsGeometry.fromPolylineXY(parts[pi][a:b + 1])
@@ -6383,15 +6417,21 @@ class FlyPathDialog(QWidget):
             except ValueError:
                 continue
             wps, elevs = self._apply_terrain(wps)
+            if same_takeoff and shared_base is None and elevs and len(elevs) == len(wps):
+                shared_base = elevs[0]      # the corridor's first waypoint ground
             # Max Waypoints still applies: split this stretch's route by count so
             # no mission exceeds the DJI cap (this is the 'by waypoints' split
             # happening alongside the 'by line' split).
-            out.extend(self._split_stretch(wps, elevs, maxwp, altitude))
+            out.extend(self._split_stretch(
+                wps, elevs, maxwp, altitude,
+                base=shared_base if same_takeoff else None))
         return out
 
-    def _split_stretch(self, waypoints, elevations, maxwp, altitude):
+    def _split_stretch(self, waypoints, elevations, maxwp, altitude, base=None):
         """Split one stretch's route into missions of at most `maxwp` waypoints,
-        returning [(waypoints, flight_heights, ground_elevs), ...] rebased each."""
+        returning [(waypoints, flight_heights, ground_elevs), ...]. `base` is the
+        shared takeoff ground elevation; None rebases each mission to its own
+        first waypoint."""
         if elevations and len(elevations) == len(waypoints):
             triples = [(lon, lat, e)
                        for (lon, lat), e in zip(waypoints, elevations)]
@@ -6399,7 +6439,7 @@ class FlyPathDialog(QWidget):
             for part in split_by_waypoint_count(triples, 1, maxwp):
                 pw = [(lon, lat) for lon, lat, _ in part]
                 pe = [e for _, _, e in part]
-                out.append((pw, heights_above_takeoff(pe, altitude), pe))
+                out.append((pw, heights_above_takeoff(pe, altitude, base=base), pe))
             return out
         return [(p, None, None)
                 for p in split_by_waypoint_count(waypoints, 1, maxwp)]
