@@ -10,8 +10,11 @@ flypath-engine/
   schemas/             request and result contracts
 ```
 
-Django installs a pinned release. The QGIS build copies that same release into
-the plugin ZIP. The geometry implementation uses Shapely and pyproj; Django
+Django installs a pinned release. `python tools/vendor_engine.py` fetches the
+tag and commit pinned in `flypath-engine.json`, validates them, and refreshes
+the copy included in the QGIS plugin ZIP. CI rejects a stale or manually edited
+copy. `python tools/build_plugin.py` runs the refresh before creating the QGIS
+ZIP. The geometry implementation uses Shapely and pyproj; Django
 installs them normally, while each supported QGIS build must prove that its
 bundled versions satisfy the engine's tested range.
 

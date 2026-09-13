@@ -275,8 +275,10 @@ FlyPath/
 ├── map_tools.py          # Interactive polygon drawing tool
 ├── grid_planner.py       # Flight grid generation (QGIS geometry)
 ├── grid_route.py         # Concave-safe route ordering, densify, split (pure Python)
+├── flypath_engine/       # Automatically vendored shared-engine release
 ├── wpml/                 # DJI WPML KMZ writers (consumer / enterprise) via a factory
 ├── hardware/             # Drone registry (drones.json + models)
+├── tools/                # Engine refresh, plugin packaging, and repository checks
 ├── tests/                # Pure-Python unit tests
 ├── metadata.txt          # QGIS plugin metadata
 ├── icon.png              # Plugin icon

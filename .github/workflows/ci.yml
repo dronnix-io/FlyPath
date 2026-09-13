@@ -40,6 +40,9 @@ jobs:
       - name: Qt6 scoped-enum check
         run: python tools/check_qt6_enums.py
 
+      - name: Vendored engine check
+        run: python tools/vendor_engine.py --check
+
       - name: Unit tests (no QGIS required)
         run: python -m pytest -q tests --ignore=tests/test_grid_adapter.py
 
