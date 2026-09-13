@@ -1,7 +1,9 @@
 # Calculation rules
 
-These rules define intended behavior. Exact library selection and numeric
-tolerances remain reviewable until the packaging decision is resolved.
+These rules define intended behavior. WGS84 measurements, route-only
+statistics, and shared profiles are implemented through `v0.3.0`. Recovery,
+per-flight totals, generated actions, and named operational allowances remain
+to be implemented.
 
 ## Area and distance
 
@@ -26,6 +28,11 @@ only after flight-log validation and must not duplicate explicit delays.
 - Full-auto photo count equals generated photo actions.
 - Photo estimates never increase merely because a travel-time safety allowance
   increased.
+
+The current shared statistics function is deliberately narrower: it calculates
+route travel time, full-auto waypoint stop time, route-based photo count, and a
+battery estimate. It does not yet model recovery or per-flight startup/restart
+allowances. Clients must not treat that partial result as the final contract.
 
 ## Initial acceptance tolerances
 

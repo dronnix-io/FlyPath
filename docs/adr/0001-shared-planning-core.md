@@ -19,6 +19,11 @@ direction, route generation, splitting, photo actions, and statistics. Existing
 website and plugin engines remain only while a feature has not migrated. Saved
 routes remain unchanged until explicit regeneration.
 
+Implementation status: releases through `v0.3.0` share 2D geometry, automatic
+direction, route ordering, WGS84 measurements, route-level statistics, split
+helpers, and drone profiles. Complete split policy, recovery/per-flight totals,
+photo actions, and the full versioned `plan_2d` result remain to be migrated.
+
 The shared core owns coordinate normalization, route geometry and ordering,
 flight splits, photo actions, stopping times, measurements, and estimates.
 Website and plugin adapters own UI, map drawing, persistence, sync, and KMZ XML

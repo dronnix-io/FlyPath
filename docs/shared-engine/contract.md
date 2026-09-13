@@ -4,6 +4,12 @@ This contract defines the boundary used by the FlyPath website and QGIS plugin.
 It describes values and behavior independently of Python, JavaScript,
 QGIS, map rendering, persistence, or KMZ serialization.
 
+This is the target first-phase contract. Releases through `v0.3.0` provide
+shared geometry, route ordering, measurements, route-level statistics, split
+helpers, and drone profiles. They do not yet provide this complete `plan_2d`
+result. Until that entry point ships, client split/action/recovery behavior is
+not authoritative engine behavior.
+
 ## Versioning
 
 Every request contains `contract_version`. Every result contains
@@ -29,7 +35,7 @@ Every request contains `contract_version`. Every result contains
 
 ## First-phase request
 
-The `plan_2d` request contains:
+The target `plan_2d` request contains:
 
 - contract and drone-profile versions
 - survey exterior ring and optional interior rings
@@ -43,7 +49,7 @@ Corridor planning and terrain following are outside the first phase.
 
 ## First-phase result
 
-The result contains:
+The target result contains:
 
 - resolved direction and ordered survey strips
 - ordered route waypoints with explicit roles
