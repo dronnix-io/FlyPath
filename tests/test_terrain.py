@@ -120,6 +120,27 @@ def test_heights_empty():
     assert heights_above_takeoff([], 100.0) == []
 
 
+def test_shared_base_references_all_splits_to_one_takeoff():
+    # Two splits of one mission, launched from a single takeoff at the original
+    # first waypoint (elevation 1000). With a shared base, the second split's
+    # heights are referenced to 1000, not to its own first point (1030), so a
+    # drone flown from that one takeoff holds a consistent height above ground.
+    whole = [1000.0, 1010.0, 1030.0, 1040.0]
+    base = whole[0]
+    split_a = heights_above_takeoff(whole[:2], 100.0, base=base)
+    split_b = heights_above_takeoff(whole[2:], 100.0, base=base)
+    # Concatenated, they match rebasing the whole mission to its first waypoint.
+    assert split_a + split_b == heights_above_takeoff(whole, 100.0)
+    assert split_b == [130.0, 140.0]           # referenced to 1000, not 1030
+
+
+def test_default_base_rebases_each_split_to_its_own_start():
+    # Without a shared base, each split is referenced to its own first waypoint
+    # (the pre-existing behaviour): the second split starts at its plan altitude.
+    second = heights_above_takeoff([1030.0, 1040.0], 100.0)
+    assert second == [100.0, 110.0]
+
+
 if __name__ == '__main__':
     fns = [v for k, v in sorted(globals().items())
            if k.startswith('test_') and callable(v)]

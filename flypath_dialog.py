@@ -425,6 +425,7 @@ QDoubleSpinBox::down-arrow, QSpinBox::down-arrow {
 QCheckBox {
     color: #D0D0D0;
     spacing: 6px;
+    background-color: transparent;
 }
 QCheckBox::indicator {
     width: 14px; height: 14px;
@@ -877,8 +878,8 @@ class FlyPathDialog(QWidget):
 
         content = QWidget()
         scroll_layout = QVBoxLayout(content)
-        scroll_layout.setSpacing(11)   # clearer gaps between the section cards
-        scroll_layout.setContentsMargins(8, 8, 8, 8)
+        scroll_layout.setSpacing(8)    # gaps between the section cards
+        scroll_layout.setContentsMargins(6, 6, 6, 6)
 
         # Info label must exist before group builders call self._tip(). It no
         # longer lives in the panel: it is placed in a HUD card on the map canvas
@@ -893,7 +894,7 @@ class FlyPathDialog(QWidget):
         # Flight Parameters (left) beside Adv. Mission Organizers + Safety
         # Actions (right).
         params_row = QHBoxLayout()
-        params_row.setSpacing(8)
+        params_row.setSpacing(6)
 
         # Gimbal angle and photo interval are fixed for 2D mapping and do not
         # affect the waypoints, so they are kept internally rather than shown.
@@ -935,8 +936,8 @@ class FlyPathDialog(QWidget):
         content.layout().activate()
         # + vertical scrollbar allowance so the content is not clipped at min;
         # small floor guards against a degenerate hint before the first show.
-        min_w = content.minimumSizeHint().width() + 20
-        self.setMinimumWidth(max(min_w, 280))
+        min_w = content.minimumSizeHint().width() + 16
+        self.setMinimumWidth(max(min_w, 260))
 
     def _build_mission_group(self):
         group = QGroupBox('Mission Setup')
@@ -1201,21 +1202,6 @@ class FlyPathDialog(QWidget):
             'updates the other (and the flight path when you preview).')
         form.addRow('GSD', self.gsdSpin)
 
-        self.launchOffsetSpin = QDoubleSpinBox()
-        self.launchOffsetSpin.setRange(-50.0, 50.0)
-        self.launchOffsetSpin.setValue(0.0)
-        self.launchOffsetSpin.setSingleStep(0.5)
-        self.launchOffsetSpin.setDecimals(1)
-        self.launchOffsetSpin.setSuffix(' m')
-        self._tip(self.launchOffsetSpin,
-            'Height of your actual takeoff spot above the ground at the first '
-            'waypoint (for example about 2 m when launching from a car roof). '
-            'It shifts every waypoint height so the real height above ground '
-            'matches the plan, without changing the GSD, overlap or flight lines. '
-            'Leave at 0 when you take off from the ground. Applies per mission, '
-            'so each split mission uses it too.')
-        form.addRow('Launch Offset', self.launchOffsetSpin)
-
         self.sideOverlapSpin = QSpinBox()
         self.sideOverlapSpin.setRange(50, 95)
         self.sideOverlapSpin.setValue(70)
@@ -1351,7 +1337,6 @@ class FlyPathDialog(QWidget):
         self.maxWaypointsSpin = QSpinBox()
         self.maxWaypointsSpin.setRange(2, 400)
         self.maxWaypointsSpin.setValue(_DEFAULT_MAX_WAYPOINTS)
-        self.maxWaypointsSpin.setMaximumWidth(110)
         self._tip(self.maxWaypointsSpin,
             'Maximum waypoints per mission. DJI caps a mission at about 200 '
             'waypoints, so the survey is split so no mission exceeds this. '
@@ -1379,8 +1364,6 @@ class FlyPathDialog(QWidget):
             'direction. The double coverage improves 3D reconstruction and, for '
             'LiDAR, point-cloud stability. It roughly doubles flight time, photos '
             'and battery use.')
-        form.addRow('', self.crossHatchCheck)
-
         self.terrainFollowCheck = QCheckBox('Terrain follow')
         self._tip(self.terrainFollowCheck,
             'Vary each waypoint height to hold a constant height above ground, '
@@ -1389,7 +1372,18 @@ class FlyPathDialog(QWidget):
             'semi-automatic adds waypoints along the flight lines where the '
             'ground rises or falls by more than the tolerance. It follows the '
             'bare-earth terrain, not trees or buildings, so keep a safe margin.')
-        form.addRow('', self.terrainFollowCheck)
+        # Cross-hatch and Terrain follow share one row to keep the panel compact.
+        # Add the layout directly (not wrapped in a QWidget) so no background is
+        # painted behind the checkboxes; they then blend into the section card
+        # like the other controls. Spanning both columns also left-aligns them
+        # with the labelled rows (Max Waypoints, etc.).
+        cover_layout = QHBoxLayout()
+        cover_layout.setContentsMargins(0, 0, 0, 0)
+        cover_layout.setSpacing(12)
+        cover_layout.addWidget(self.crossHatchCheck)
+        cover_layout.addWidget(self.terrainFollowCheck)
+        cover_layout.addStretch()
+        form.addRow(cover_layout)
 
         self.terrainToleranceSpin = QDoubleSpinBox()
         self.terrainToleranceSpin.setRange(1.0, 100.0)
@@ -1397,7 +1391,6 @@ class FlyPathDialog(QWidget):
         self.terrainToleranceSpin.setSingleStep(1.0)
         self.terrainToleranceSpin.setDecimals(0)
         self.terrainToleranceSpin.setSuffix(' m')
-        self.terrainToleranceSpin.setMaximumWidth(110)
         self._tip(self.terrainToleranceSpin,
             'Semi-automatic terrain follow adds a waypoint whenever the ground '
             'has risen or fallen by more than this since the last waypoint. '
@@ -1425,13 +1418,11 @@ class FlyPathDialog(QWidget):
     def _build_advanced_group(self):
         group = QGroupBox('Safety Actions')
         group.setObjectName('safetyGroup')
-        group.setMaximumWidth(210)
         form  = QFormLayout(group)
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
 
         self.finishActionCombo = QComboBox()
-        self.finishActionCombo.setMaximumWidth(110)
         self._tip(self.finishActionCombo,
             'What the drone does after the last waypoint. '
             'Return to Home: flies back and lands at takeoff. '
@@ -1440,7 +1431,6 @@ class FlyPathDialog(QWidget):
         form.addRow('Finish Action', self.finishActionCombo)
 
         self.rcLostActionCombo = QComboBox()
-        self.rcLostActionCombo.setMaximumWidth(110)
         self._tip(self.rcLostActionCombo,
             'What the drone does if the RC signal is lost during the mission. '
             'Return to Home: flies back to takeoff point. '
@@ -1469,20 +1459,53 @@ class FlyPathDialog(QWidget):
             'flat ground; the matching-elevation part where the terrain changes. '
             'Preview a mission and pick a DEM first.' % int(self._TAKEOFF_RADIUS_M))
         outer = QVBoxLayout(group)
-        outer.setSpacing(6)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(5)
 
-        form = QFormLayout()
-        form.setLabelAlignment(_AlignLeft | _AlignVCenter)
-        form.setSpacing(6)
+        # ── Contours: show/hide toggle on the left, extent selector on the right ──
+        self.showContoursBtn = QPushButton('Show Contours')
+        self.showContoursBtn.setObjectName('showContoursBtn')
+        self.showContoursBtn.setCheckable(True)
+        self._tip(self.showContoursBtn,
+            'Toggle DEM elevation contours over the chosen extent, one line per '
+            'elevation-tolerance step, so you can see how the terrain shapes the '
+            'takeoff zone. Click again to hide them.')
+        self.contourExtentCombo = QComboBox()
+        self.contourExtentCombo.addItem('Survey area', 'survey')
+        self.contourExtentCombo.addItem('Takeoff circles', 'circles')
+        self._tip(self.contourExtentCombo,
+            'Where to draw the DEM contours: across the whole survey area for '
+            'terrain context, or only inside the takeoff circles. The contour '
+            'interval matches the elevation tolerance below.')
+        contour_row = QHBoxLayout()
+        contour_row.setContentsMargins(0, 0, 0, 0)
+        contour_row.setSpacing(6)
+        contour_row.addWidget(self.showContoursBtn)
+        contour_row.addWidget(self.contourExtentCombo, 1)
+        outer.addLayout(contour_row)
 
-        # Elevation Tolerance and its GSD Variance read-out share one row.
+        # ── Show Takeoff Zone on the left, Elevation Tolerance + GSD Variance right ──
+        self.showTakeoffZoneBtn = QPushButton('Show Takeoff Zone')
+        self.showTakeoffZoneBtn.setObjectName('showTakeoffZoneBtn')
+        self.showTakeoffZoneBtn.setCheckable(True)
+        self._tip(self.showTakeoffZoneBtn,
+            'Toggle the takeoff-zone overlay: sample the DEM around the first '
+            'waypoint and highlight the ground that keeps the mission at the same '
+            'altitude within the tolerance. Click again to hide it.')
+        # Give both overlay toggle buttons the same width (the wider one's), so
+        # Show Contours lines up with Show Takeoff Zone.
+        btn_w = max(self.showTakeoffZoneBtn.sizeHint().width(),
+                    self.showContoursBtn.sizeHint().width())
+        self.showTakeoffZoneBtn.setFixedWidth(btn_w)
+        self.showContoursBtn.setFixedWidth(btn_w)
+
         self.takeoffToleranceSpin = QDoubleSpinBox()
         self.takeoffToleranceSpin.setRange(0.1, 50.0)
         self.takeoffToleranceSpin.setValue(2.0)
         self.takeoffToleranceSpin.setSingleStep(0.5)
         self.takeoffToleranceSpin.setDecimals(1)
         self.takeoffToleranceSpin.setSuffix(' m')
-        self.takeoffToleranceSpin.setMaximumWidth(90)
+        self.takeoffToleranceSpin.setMaximumWidth(80)
         self._tip(self.takeoffToleranceSpin,
             'How far the takeoff ground elevation may differ from the mission '
             'start. A tighter tolerance keeps the GSD more consistent between '
@@ -1492,51 +1515,61 @@ class FlyPathDialog(QWidget):
         self._tip(self.takeoffGsdVarLabel,
             'The GSD change this tolerance allows at the current altitude. '
             'Smaller is better when comparing maps between flights.')
-        tol_row = QWidget()
-        tol_layout = QHBoxLayout(tol_row)
-        tol_layout.setContentsMargins(0, 0, 0, 0)
-        tol_layout.setSpacing(8)
-        tol_layout.addWidget(self.takeoffToleranceSpin)
-        tol_layout.addSpacing(12)
-        gsd_caption = QLabel('GSD Variance')
-        gsd_caption.setObjectName('inlineFormLabel')
-        tol_layout.addWidget(gsd_caption)
-        tol_layout.addWidget(self.takeoffGsdVarLabel)
-        tol_layout.addStretch()
-        form.addRow('Elevation Tolerance', tol_row)
+        tz_row = QHBoxLayout()
+        tz_row.setContentsMargins(0, 0, 0, 0)
+        tz_row.setSpacing(6)
+        tz_row.addWidget(self.showTakeoffZoneBtn)
+        tz_row.addSpacing(8)
+        tol_cap = QLabel('Elevation Tolerance')
+        tol_cap.setObjectName('inlineFormLabel')
+        tz_row.addWidget(tol_cap)
+        tz_row.addWidget(self.takeoffToleranceSpin)
+        tz_row.addSpacing(8)
+        gsd_cap = QLabel('GSD Variance')
+        gsd_cap.setObjectName('inlineFormLabel')
+        tz_row.addWidget(gsd_cap)
+        tz_row.addWidget(self.takeoffGsdVarLabel)
+        tz_row.addStretch()
+        outer.addLayout(tz_row)
 
-        self.contourExtentCombo = QComboBox()
-        self.contourExtentCombo.addItem('Survey area', 'survey')
-        self.contourExtentCombo.addItem('Takeoff circles', 'circles')
-        self._tip(self.contourExtentCombo,
-            'Where to draw the DEM contours: across the whole survey area for '
-            'terrain context, or only inside the takeoff circles. The contour '
-            'interval matches the elevation tolerance above.')
-        form.addRow('Contours', self.contourExtentCombo)
+        # ── Same takeoff for all splits, then Launch Offset ──
+        self.sameTakeoffCheck = QCheckBox('Same takeoff for all splits')
+        self.sameTakeoffCheck.setChecked(True)
+        self._tip(self.sameTakeoffCheck,
+            'For split missions with terrain follow on. When on, every split is '
+            'referenced to the original mission first waypoint, so if you launch '
+            'all splits from one fixed takeoff point they hold the same height '
+            'above ground and keep a consistent GSD. Turn it off when you launch '
+            'each split from its own starting point, so each split is referenced '
+            'to its own first waypoint instead.')
 
-        outer.addLayout(form)
+        self.launchOffsetSpin = QDoubleSpinBox()
+        self.launchOffsetSpin.setRange(-50.0, 50.0)
+        self.launchOffsetSpin.setValue(0.0)
+        self.launchOffsetSpin.setSingleStep(0.5)
+        self.launchOffsetSpin.setDecimals(1)
+        self.launchOffsetSpin.setSuffix(' m')
+        self.launchOffsetSpin.setMaximumWidth(90)
+        self._tip(self.launchOffsetSpin,
+            'Height of your actual takeoff spot relative to the ground at the '
+            'reference first waypoint (for example about 2 m from a car roof, or '
+            'the elevation difference when you launch from a single fixed point). '
+            'It shifts every waypoint height so the real height above ground '
+            'matches the plan, without changing the GSD, overlap or flight lines. '
+            'Positive when your takeoff is higher than the reference, negative '
+            'when lower. Leave at 0 for a ground launch at the first waypoint.')
 
-        # One toggle button per overlay: click to show, click again to hide.
-        btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 0, 0, 0)
-        btn_row.setSpacing(4)
-        self.showTakeoffZoneBtn = QPushButton('Show Takeoff Zone')
-        self.showTakeoffZoneBtn.setObjectName('showTakeoffZoneBtn')
-        self.showTakeoffZoneBtn.setCheckable(True)
-        self._tip(self.showTakeoffZoneBtn,
-            'Toggle the takeoff-zone overlay: sample the DEM around the first '
-            'waypoint and highlight the ground that keeps the mission at the same '
-            'altitude within the tolerance. Click again to hide it.')
-        self.showContoursBtn = QPushButton('Show Contours')
-        self.showContoursBtn.setObjectName('showContoursBtn')
-        self.showContoursBtn.setCheckable(True)
-        self._tip(self.showContoursBtn,
-            'Toggle DEM elevation contours over the chosen extent, one line per '
-            'elevation-tolerance step, so you can see how the terrain shapes the '
-            'takeoff zone. Click again to hide them.')
-        btn_row.addWidget(self.showTakeoffZoneBtn)
-        btn_row.addWidget(self.showContoursBtn)
-        outer.addLayout(btn_row)
+        # Same takeoff for all splits on the left, Launch Offset on the right.
+        same_lo_row = QHBoxLayout()
+        same_lo_row.setContentsMargins(0, 0, 0, 0)
+        same_lo_row.setSpacing(6)
+        same_lo_row.addWidget(self.sameTakeoffCheck)
+        same_lo_row.addStretch()
+        lo_cap = QLabel('Launch Offset')
+        lo_cap.setObjectName('inlineFormLabel')
+        same_lo_row.addWidget(lo_cap)
+        same_lo_row.addWidget(self.launchOffsetSpin)
+        outer.addLayout(same_lo_row)
 
         return group
 
@@ -2082,6 +2115,8 @@ class FlyPathDialog(QWidget):
         self.bufferSpin.valueChanged.connect(self._on_param_changed)
         self.setBreaksBtn.toggled.connect(self._on_set_breaks_toggled)
         self.crossHatchCheck.toggled.connect(self._on_param_changed)
+        self.sameTakeoffCheck.toggled.connect(self._on_param_changed)
+        self.sameTakeoffCheck.toggled.connect(self._refresh_takeoff_zone_if_shown)
         self.terrainFollowCheck.toggled.connect(self._on_terrain_toggled)
         self.terrainToleranceSpin.valueChanged.connect(self._on_param_changed)
         self.splitSpin.valueChanged.connect(self._on_split_changed)
@@ -2218,8 +2253,9 @@ class FlyPathDialog(QWidget):
         # Adv. Mission Organizers: cross-hatch is meaningless for a corridor; the
         # Mission Breaks tool only applies to corridors. Split Missions is a
         # minimum-flight count in both modes; corridor labels it 'Min Flights'.
-        self._set_row_visible(self._organizer_form, self.crossHatchCheck,
-                              not corridor)
+        # Cross-hatch shares a row with Terrain follow, so hide just the
+        # checkbox for corridors (terrain follow works with corridors and stays).
+        self.crossHatchCheck.setVisible(not corridor)
         self._set_row_visible(self._organizer_form, self.setBreaksBtn, corridor)
         split_lbl = self._organizer_form.labelForField(self.splitSpin)
         if split_lbl is not None:
@@ -2741,7 +2777,11 @@ class FlyPathDialog(QWidget):
         return [wps for wps, _, _ in missions_h]
 
     def _compute_takeoff_zones(self, tolerance_m):
-        """Sample the DEM and return one takeoff zone per split sub-mission.
+        """Sample the DEM and return the takeoff zone(s).
+
+        With "same takeoff for all splits" on, there is a single zone around the
+        original mission's first waypoint (everyone launches from one point).
+        Otherwise there is one zone per split sub-mission.
 
         Each sub-mission is a separate flight launched from its own takeoff, so
         each is anchored on its own first waypoint: the zone is the ground within
@@ -2760,6 +2800,12 @@ class FlyPathDialog(QWidget):
         parts = [p for p in parts if p]
         if not parts:
             return None
+
+        # "Same takeoff for all splits": every split is flown from one point at
+        # the original mission's first waypoint, so show a single zone around it
+        # rather than one per split. Off, each split gets its own zone.
+        if self.sameTakeoffCheck.isChecked():
+            parts = parts[:1]
 
         radius_m = self._TAKEOFF_RADIUS_M
         spacing = max(10.0, (2.0 * radius_m) / self._TAKEOFF_STEPS)
@@ -2977,6 +3023,13 @@ class FlyPathDialog(QWidget):
         """Remove the takeoff-zone overlay and put the toggle button back to off."""
         self._remove_takeoff_layer()
         self._sync_toggle(self.showTakeoffZoneBtn, False, 'Show Takeoff Zone')
+
+    def _refresh_takeoff_zone_if_shown(self):
+        """Redraw the takeoff zone when it is currently shown, so toggling "same
+        takeoff for all splits" immediately switches between one shared zone and
+        one zone per split."""
+        if self._takeoff_layer_id and not self._show_takeoff_zone():
+            self._on_clear_takeoff_zone()
 
     @staticmethod
     def _sync_toggle(button, checked, text):
@@ -5642,13 +5695,20 @@ class FlyPathDialog(QWidget):
         if not elevations or len(elevations) != len(waypoints):
             return [(part, None, None) for part in self._split_missions(waypoints)]
         altitude = self.altitudeSpin.value()
+        # With "one takeoff for all splits" on, every split is referenced to the
+        # original (unsplit) mission's first waypoint, so all splits hold the same
+        # height above ground when flown from a single takeoff point. Off, each
+        # split rebases to its own first waypoint (launch each split from its own
+        # start).
+        shared_base = elevations[0] if self.sameTakeoffCheck.isChecked() else None
         triples = [(lon, lat, elev)
                    for (lon, lat), elev in zip(waypoints, elevations)]
         out = []
         for part in self._split_missions(triples):
             part_wps = [(lon, lat) for lon, lat, _ in part]
             part_elevs = [elev for _, _, elev in part]
-            out.append((part_wps, heights_above_takeoff(part_elevs, altitude),
+            out.append((part_wps,
+                        heights_above_takeoff(part_elevs, altitude, base=shared_base),
                         part_elevs))
         return out
 
@@ -6369,6 +6429,11 @@ class FlyPathDialog(QWidget):
         side = self.sideOverlapSpin.value() / 100.0
         buf = self.bufferSpin.value()
         maxwp = self.maxWaypointsSpin.value()
+        # "One takeoff for all splits": reference every stretch to the corridor's
+        # first waypoint elevation, so all flights hold the same height above
+        # ground from a single takeoff. Off, each mission rebases to its own start.
+        same_takeoff = self.sameTakeoffCheck.isChecked()
+        shared_base = None
         out = []
         for (pi, a, b) in groups:
             sub = QgsGeometry.fromPolylineXY(parts[pi][a:b + 1])
@@ -6380,15 +6445,21 @@ class FlyPathDialog(QWidget):
             except ValueError:
                 continue
             wps, elevs = self._apply_terrain(wps)
+            if same_takeoff and shared_base is None and elevs and len(elevs) == len(wps):
+                shared_base = elevs[0]      # the corridor's first waypoint ground
             # Max Waypoints still applies: split this stretch's route by count so
             # no mission exceeds the DJI cap (this is the 'by waypoints' split
             # happening alongside the 'by line' split).
-            out.extend(self._split_stretch(wps, elevs, maxwp, altitude))
+            out.extend(self._split_stretch(
+                wps, elevs, maxwp, altitude,
+                base=shared_base if same_takeoff else None))
         return out
 
-    def _split_stretch(self, waypoints, elevations, maxwp, altitude):
+    def _split_stretch(self, waypoints, elevations, maxwp, altitude, base=None):
         """Split one stretch's route into missions of at most `maxwp` waypoints,
-        returning [(waypoints, flight_heights, ground_elevs), ...] rebased each."""
+        returning [(waypoints, flight_heights, ground_elevs), ...]. `base` is the
+        shared takeoff ground elevation; None rebases each mission to its own
+        first waypoint."""
         if elevations and len(elevations) == len(waypoints):
             triples = [(lon, lat, e)
                        for (lon, lat), e in zip(waypoints, elevations)]
@@ -6396,7 +6467,7 @@ class FlyPathDialog(QWidget):
             for part in split_by_waypoint_count(triples, 1, maxwp):
                 pw = [(lon, lat) for lon, lat, _ in part]
                 pe = [e for _, _, e in part]
-                out.append((pw, heights_above_takeoff(pe, altitude), pe))
+                out.append((pw, heights_above_takeoff(pe, altitude, base=base), pe))
             return out
         return [(p, None, None)
                 for p in split_by_waypoint_count(waypoints, 1, maxwp)]
