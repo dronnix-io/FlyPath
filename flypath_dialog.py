@@ -4525,9 +4525,9 @@ class FlyPathDialog(QWidget):
         token, ok = QInputDialog.getText(
             getattr(self, '_mission_library', None) or self, 'FlyPath Token',
             'Connect to %s.\n\nChoose Plugin token in this website\'s account menu, generate a '
-            'token, and paste it here. QGIS will store it in its encrypted '
-            'authentication vault. If a token expires or is revoked, reconnect '
-            'with a new token; your local plan is kept.\n\nToken:' % origin,
+            'token,\nand paste it here. QGIS will store it in its encrypted '
+            'authentication vault.\nIf a token expires or is revoked, reconnect '
+            'with a new token;\nyour local plan is kept.\n\nToken:' % origin,
             password)
         token = (token or '').strip()
         if not (ok and token):

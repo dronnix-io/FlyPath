@@ -60,7 +60,7 @@ def _manager(unlocked=True):
             if not storages or any(not storage.isEncrypted() for storage in storages):
                 raise FlypathSyncError('FlyPath requires encrypted QGIS authentication storage. Configure the QGIS vault before reconnecting.')
         if not manager.masterPasswordIsSet():
-            raise FlypathSyncError('QGIS authentication storage is locked. Use Connect account to unlock it, or Disconnect to forget local access. If legacy migration failed, the old settings token remains until Disconnect succeeds.')
+            raise FlypathSyncError('A saved FlyPath account was found, but QGIS authentication storage is locked. Choose Unlock account to load missions, or Forget saved access to remove it.')
     return manager
 
 

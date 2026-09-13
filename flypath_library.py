@@ -94,11 +94,14 @@ class MissionLibrary(QWidget):
         except flypath_sync.FlypathSyncError as exc:
             connected = False
             storage_error = str(exc)
+        storage_locked = bool(storage_error and 'storage is locked' in storage_error)
         link = self.planner._current_website_link()
         self.link_label.setText('Editing: %s' % link['name'] if link else 'Current mission is not linked to FlyPath.')
         self.send_button.setText('Save changes' if link else 'Save to FlyPath…')
         self.copy_button.setVisible(bool(link))
+        self.connect_button.setText('Unlock account…' if storage_locked else 'Connect account…')
         self.connect_button.setVisible(not connected)
+        self.disconnect_button.setText('Forget saved access…' if storage_error else 'Disconnect')
         self.disconnect_button.setVisible(connected or storage_error is not None)
         self.disconnect_button.setToolTip(
             'Forget access on this device and unlink the mission. This does not '
