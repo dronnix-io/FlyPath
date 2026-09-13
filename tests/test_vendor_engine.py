@@ -25,6 +25,11 @@ def test_replace_and_verify_package():
         _replace_package(source, destination, config)
         _check_package(destination, config)
 
+        cache = destination / "__pycache__"
+        cache.mkdir()
+        (cache / "module.cpython-312.pyc").write_bytes(b"generated")
+        _check_package(destination, config)
+
         assert not (destination / "stale.py").exists()
         assert json.loads((destination / "SOURCE.json").read_text())["tag"] == "v1.2.3"
     assert _include(Path("flypath_engine/grid.py"))

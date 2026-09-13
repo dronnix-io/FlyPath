@@ -36,7 +36,11 @@ def _version(package):
 
 def _digest(package):
     digest = hashlib.sha256()
-    for path in sorted(p for p in package.rglob("*") if p.is_file() and p.name != SOURCE_RECORD):
+    for path in sorted(
+        p for p in package.rglob("*")
+        if (p.is_file() and p.name != SOURCE_RECORD
+            and "__pycache__" not in p.parts and p.suffix != ".pyc")
+    ):
         digest.update(path.relative_to(package).as_posix().encode())
         digest.update(b"\0")
         digest.update(path.read_bytes().replace(b"\r\n", b"\n"))

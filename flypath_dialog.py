@@ -4035,7 +4035,7 @@ class FlyPathDialog(QWidget):
         waypoints, self._live_elevations = self._apply_terrain(waypoints)
         self._live_waypoints = waypoints
 
-        dist_m     = self._path_length_m(turn_pts)
+        dist_m     = measure_route(turn_pts)
         n_lines    = len(turn_pts) // 2
         stats = mission_statistics(
             route_distance_m=dist_m,
@@ -4148,7 +4148,7 @@ class FlyPathDialog(QWidget):
             return
         waypoints = [wp for wps, _, _ in missions_h for wp in wps]
         self._live_waypoints = waypoints
-        dist_m = sum(self._path_length_m(w) for w, _, _ in missions_h if len(w) >= 2)
+        dist_m = sum(measure_route(w) for w, _, _ in missions_h if len(w) >= 2)
 
         if full:
             n_photos   = len(waypoints)
@@ -4196,10 +4196,6 @@ class FlyPathDialog(QWidget):
             max_lines = max(1, (maxwp - 1) // 2)
             n = max(n, -(-n_lines // max_lines))       # ceil(n_lines / max_lines)
         return split_waypoints(waypoints, n)
-
-    def _path_length_m(self, waypoints):
-        """Ellipsoidal length of the (lon, lat) flight path in metres."""
-        return measure_route(waypoints)
 
     def _clear_stats(self):
         for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
@@ -4746,7 +4742,7 @@ class FlyPathDialog(QWidget):
         """The figures the website's mission card shows, taken from the same
         stats card the pilot just reviewed, so both tools report one number."""
         return {
-            'distance_m': int(round(self._path_length_m(self._waypoints or []))),
+            'distance_m': int(round(measure_route(self._waypoints or []))),
             'time':       self.flightTimeLabel.text(),
             'distance':   self.distanceLabel.text(),
             'photos':     self.photosLabel.text(),
