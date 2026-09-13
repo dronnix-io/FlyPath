@@ -152,7 +152,9 @@ class MissionLibrary(QWidget):
         self.missions.clear()
         try:
             connected = bool(flypath_sync.load_token())
-        except flypath_sync.FlypathSyncError:
+        except flypath_sync.FlypathSyncError as exc:
+            if 'storage is locked' in str(exc) and self.planner._web_token():
+                return self.refresh()
             connected = False
         if not connected:
             self.update_buttons()
