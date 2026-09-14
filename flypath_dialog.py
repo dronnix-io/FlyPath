@@ -4798,8 +4798,24 @@ class FlyPathDialog(QWidget):
 
     @staticmethod
     def _web_date(updated_at):
-        """'2026-01-02T03:04:05.678+00:00' -> '2026-01-02 03:04'."""
-        return (updated_at or '')[:16].replace('T', ' ') or 'never saved'
+        """The website's UTC update time shown in the computer's local time, e.g.
+        '2026-01-02T03:04:05.678+00:00' (UTC) -> '2026-01-02 04:04' at UTC+1.
+
+        The server stores timestamps in UTC; here they are converted to the local
+        timezone so the My missions list matches the pilot's clock. Falls back to
+        the raw value (trimmed) if it cannot be parsed, so display never fails."""
+        raw = (updated_at or '').strip()
+        if not raw:
+            return 'never saved'
+        try:
+            # fromisoformat rejects a trailing 'Z' before Python 3.11 (QGIS 3), so
+            # normalise it; a timestamp with no zone is treated as UTC.
+            dt = datetime.datetime.fromisoformat(raw.replace('Z', '+00:00'))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            return dt.astimezone().strftime('%Y-%m-%d %H:%M')
+        except (ValueError, TypeError):
+            return raw[:16].replace('T', ' ')
 
     def _apply_website_mission(self, mission):
         """Rebuild a website mission as a local one. Everything the plugin
