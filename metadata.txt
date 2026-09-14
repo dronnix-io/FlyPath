@@ -3,8 +3,11 @@ name=FlyPath
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
-version=2.4.0
-changelog=2.4.0 - New Same takeoff for all splits option for flying every split mission from one
+version=2.4.1
+changelog=2.4.1 - Fixed the My missions list showing the mission update time in UTC instead of
+    your computer's local time (reported by Jcomelles). The Updated column now converts the time
+    to your local timezone.
+    2.4.0 - New Same takeoff for all splits option for flying every split mission from one
     launch point. With terrain follow on, it references all split missions to the original mission's
     first waypoint, so launching each split from a single fixed takeoff point keeps a consistent
     height above ground and GSD across the whole area, and the map shows a single takeoff zone.
