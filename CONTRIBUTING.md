@@ -87,9 +87,10 @@ Set the engine tag and commit in `flypath-engine.json`, then run:
 python tools/vendor_engine.py
 ```
 
-The command fetches that exact release and replaces the plugin's
-`flypath_engine/` directory. Do not copy engine files manually. Access to the
-private engine repository is required.
+The command fetches that exact release from the public
+[FlyPath engine repository](https://github.com/alireza7575/flypath_engine)
+and replaces the plugin's `flypath_engine/` directory. Do not copy engine files
+manually.
 
 Building the plugin ZIP performs that refresh automatically:
 
