@@ -1,5 +1,5 @@
 """
-Tests for the concave-safe flight-route ordering (grid_route.py).
+Tests for the concave-safe shared flight-route ordering.
 
 Pure Python, no QGIS. Run with pytest, or directly:
     python tests/test_grid_route.py
@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from grid_route import (  # noqa: E402
+from flypath_engine.route import (  # noqa: E402
     boustrophedon_route, decompose_cells, split_by_waypoint_count,
     split_waypoints,
 )

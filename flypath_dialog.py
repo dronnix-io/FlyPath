@@ -110,7 +110,7 @@ from .grid_planner import (
     generate_flight_grid, find_optimal_direction, measure_route,
     measure_survey_area, _utm_crs_for,
 )
-from .grid_route import split_by_waypoint_count, split_waypoints
+from .flypath_engine.route import split_by_waypoint_count, split_waypoints
 from .flypath_engine.statistics import mission_statistics
 from .corridor_planner import generate_corridor_route
 from .corridor_geometry import compute_pass_offsets
@@ -3982,10 +3982,7 @@ class FlyPathDialog(QWidget):
         speed = self.speedSpin.value()
 
         # Coverage area
-        area_ha = measure_survey_area(
-            self._survey_polygon, self._survey_polygon_crs
-        ) / 10_000
-        self.coverageLabel.setText(f'{area_ha:.2f} ha')
+        self.coverageLabel.setText(f'{self._area_ha():.2f} ha')
 
         # Flight-path stats are taken from the ACTUAL generated waypoints (the
         # same path the preview draws), so distance, lines, photos and time

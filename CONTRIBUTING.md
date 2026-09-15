@@ -92,7 +92,7 @@ The command fetches that exact release from the public
 and replaces the plugin's `flypath_engine/` directory. Do not copy engine files
 manually.
 
-Building the plugin ZIP performs that refresh automatically:
+Building the plugin ZIP verifies the committed engine copy before packaging it:
 
 ```bash
 python tools/build_plugin.py

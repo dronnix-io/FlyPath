@@ -1,6 +1,5 @@
-"""Build a QGIS plugin ZIP after refreshing the pinned planning engine."""
+"""Build a QGIS plugin ZIP from the pinned planning engine."""
 
-import argparse
 import configparser
 from pathlib import Path
 import subprocess
@@ -31,7 +30,6 @@ def _tracked_files():
         ["git", "ls-files", "-z"], cwd=ROOT, check=True, capture_output=True,
     ).stdout
     files = {Path(value.decode()) for value in output.split(b"\0") if value}
-    files.update(path.relative_to(ROOT) for path in (ROOT / "flypath_engine").rglob("*") if path.is_file())
     return sorted(path for path in files if _include(path) and (ROOT / path).is_file())
 
 
@@ -42,13 +40,11 @@ def _version():
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--engine-repository", help="use a local engine checkout")
-    args = parser.parse_args()
-    vendor = [sys.executable, str(ROOT / "tools" / "vendor_engine.py")]
-    if args.engine_repository:
-        vendor.extend(("--repository", args.engine_repository))
-    subprocess.run(vendor, cwd=ROOT, check=True)
+    subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "vendor_engine.py"), "--check"],
+        cwd=ROOT,
+        check=True,
+    )
 
     output = ROOT / "dist" / f"FlyPath-{_version()}.zip"
     output.parent.mkdir(exist_ok=True)
