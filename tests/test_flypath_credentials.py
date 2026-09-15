@@ -243,6 +243,7 @@ class CredentialStorageTest(unittest.TestCase):
              patch.object(dialog.QMessageBox, 'warning'):
             self.assertIsNone(dialog.FlyPathDialog._web_token(planner))
             self.assertIn('https://staging.example.test', prompt.call_args.args[2])
+            self.assertLessEqual(max(map(len, prompt.call_args.args[2].splitlines())), 90)
             save.assert_not_called()
         planner.close()
 
@@ -278,7 +279,9 @@ class CredentialStorageTest(unittest.TestCase):
              patch.object(self.sync, 'save_token', self.credentials.save_token), \
              patch.object(self.sync, 'load_base_url', self.credentials.load_base_url):
             library = library_module.MissionLibrary(planner)
-            self.assertIn('locked', library.status.text())
+            self.assertIn('saved FlyPath account', library.status.text())
+            self.assertEqual(library.connect_button.text(), 'Unlock account…')
+            self.assertEqual(library.disconnect_button.text(), 'Forget saved access…')
             self.assertFalse(library.disconnect_button.isHidden())
             self.assertFalse(library.refresh_button.isEnabled())
             self.assertIsNone(planner._website_link)

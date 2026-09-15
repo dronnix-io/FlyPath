@@ -12,15 +12,16 @@ silently at the user's runtime.
 """
 
 import json
-import os
 
 from .models import Camera, Drone
-
-_DATA_FILE = os.path.join(os.path.dirname(__file__), 'drones.json')
+try:
+    from ..flypath_engine.profiles import load_drone_profiles
+except ImportError:  # standalone tests import hardware as a top-level package
+    from flypath_engine.profiles import load_drone_profiles
 
 _VALID_CATEGORIES = ('consumer', 'enterprise')
 _REQUIRED_AIRCRAFT = ('drone_enum', 'drone_sub_enum', 'max_speed_ms',
-                      'battery_time_min')
+                      'battery_time_min', 'battery_safe_min')
 _REQUIRED_CAMERA = ('sensor_width_mm', 'sensor_height_mm', 'focal_length_mm',
                     'image_width_px', 'image_height_px')
 
@@ -75,6 +76,7 @@ def _build(name, entry):
         min_speed_ms=min_speed,
         max_speed_ms=max_speed,
         battery_time_min=int(aircraft['battery_time_min']),
+        battery_safe_min=int(aircraft['battery_safe_min']),
         camera=camera,
         info=entry['info'],
         verified=entry.get('verified', ''),
@@ -85,9 +87,12 @@ def _build(name, entry):
     )
 
 
-def _load(path=_DATA_FILE):
-    with open(path, encoding='utf-8') as fh:
-        raw = json.load(fh)
+def _load(path=None):
+    if path:
+        with open(path, encoding='utf-8') as fh:
+            raw = json.load(fh)
+    else:
+        raw = load_drone_profiles()
     if not isinstance(raw, dict) or not raw:
         raise ValueError(f'{path}: expected a non-empty object of drones.')
     return {name: _build(name, entry) for name, entry in raw.items()}

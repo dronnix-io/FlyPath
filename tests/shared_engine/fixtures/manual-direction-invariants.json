@@ -1,0 +1,34 @@
+{
+  "contract_version": 1,
+  "description": "Established plugin grid-angle convention for bidirectional survey lines",
+  "tolerance_deg": 0.01,
+  "survey_area": {
+    "exterior": [
+      { "latitude_deg": 51.0000, "longitude_deg": -114.0000 },
+      { "latitude_deg": 51.0000, "longitude_deg": -113.9950 },
+      { "latitude_deg": 51.0030, "longitude_deg": -113.9950 },
+      { "latitude_deg": 51.0030, "longitude_deg": -114.0000 }
+    ],
+    "holes": []
+  },
+  "cases": [
+    {
+      "name": "north_south",
+      "input_direction_deg": 0.0,
+      "expected_resolved_direction_deg": 0.0,
+      "expected_strip_bearing_deg": 0.0
+    },
+    {
+      "name": "diagonal",
+      "input_direction_deg": 70.0,
+      "expected_resolved_direction_deg": 70.0,
+      "expected_strip_bearing_deg_near_central_meridian": 110.0
+    },
+    {
+      "name": "east_west",
+      "input_direction_deg": 90.0,
+      "expected_resolved_direction_deg": 90.0,
+      "expected_strip_bearing_deg": 90.0
+    }
+  ]
+}

@@ -5,8 +5,7 @@ Pure-Python geometry helpers for corridor (linear) mapping. No QGIS imports,
 so they are fast and unit-testable on their own (see tests/test_corridor_geometry.py).
 
 The QGIS-dependent orchestration (CRS transforms, parallel offsetting of the
-centre line) lives in corridor_planner.py, which calls into these helpers. This
-mirrors the existing split between grid_route.py (pure) and grid_planner.py (QGIS).
+centre line) lives in corridor_planner.py, which calls into these helpers.
 
 Everything here works in a flat metric coordinate system (metres), i.e. after the
 centre line has already been reprojected to UTM.

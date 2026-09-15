@@ -51,7 +51,10 @@ UNSCOPED_ENUM_PATTERNS = [
 ]
 
 # Directories not scanned (not shipped, or no Qt usage).
-SKIP_DIRS = {'.git', '__pycache__', 'tests', 'tools', '.github'}
+SKIP_DIRS = {
+    '.git', '.github', '.pytest_cache', '.scratch', '.uv-cache', '.venv',
+    '__pycache__', 'build', 'dist', 'tests', 'tools', 'venv',
+}
 
 
 def code_lines(path):

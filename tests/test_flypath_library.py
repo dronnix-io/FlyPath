@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -43,6 +43,16 @@ def test_library():
         assert not library.isWindow(), 'Library must be embedded in the dock'
         dock.setCurrentWidget(library)
         library.refresh()
+        unlock = Mock(return_value='fake')
+        planner._web_token = unlock
+        token.side_effect = [
+            library_module.flypath_sync.FlypathSyncError('storage is locked'),
+            'fake', 'fake',
+        ]
+        library.refresh()
+        unlock.assert_called_once_with()
+        token.side_effect = None
+        token.return_value = 'fake'
         # Save stays reachable so the planner can explain why Preview is needed.
         assert library.send_button.isEnabled()
         assert not library.import_button.isEnabled()

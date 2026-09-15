@@ -107,9 +107,11 @@ from qgis.core import (
 )
 from .map_tools import PolygonDrawTool, LineDrawTool, VertexPickTool
 from .grid_planner import (
-    generate_flight_grid, find_optimal_direction, split_waypoints, _utm_crs_for
+    generate_flight_grid, find_optimal_direction, measure_route,
+    measure_survey_area, _utm_crs_for,
 )
-from .grid_route import split_by_waypoint_count
+from .flypath_engine.route import split_by_waypoint_count, split_waypoints
+from .flypath_engine.statistics import mission_statistics
 from .corridor_planner import generate_corridor_route
 from .corridor_geometry import compute_pass_offsets
 from .takeoff_zone import (
@@ -3893,16 +3895,12 @@ class FlyPathDialog(QWidget):
         self.drawPolygonBtn.setText(self._draw_btn_default_text())
 
     def _area_ha(self):
-        """Return survey polygon area in hectares (metric, via EPSG:3857)."""
+        """Return WGS84 ellipsoidal survey area in hectares."""
         if self._survey_polygon is None:
             return 0.0
-        utm = QgsCoordinateReferenceSystem('EPSG:3857')
-        xf  = QgsCoordinateTransform(
-            self._survey_polygon_crs, utm, QgsProject.instance()
-        )
-        g = QgsGeometry(self._survey_polygon)
-        g.transform(xf)
-        return g.area() / 10_000
+        return measure_survey_area(
+            self._survey_polygon, self._survey_polygon_crs
+        ) / 10_000
 
     # ── Auto direction ────────────────────────────────────────────────────
 
@@ -3968,6 +3966,7 @@ class FlyPathDialog(QWidget):
     def _update_stats(self):
         self._live_waypoints = None
         self._live_missions  = None
+        self._live_statistics = None
         if not self._has_survey_area(silent=True):
             self._clear_stats()
             return
@@ -3983,13 +3982,7 @@ class FlyPathDialog(QWidget):
         speed = self.speedSpin.value()
 
         # Coverage area
-        webmerc = QgsCoordinateReferenceSystem('EPSG:3857')
-        xf = QgsCoordinateTransform(
-            self._survey_polygon_crs, webmerc, QgsProject.instance()
-        )
-        g = QgsGeometry(self._survey_polygon)
-        g.transform(xf)
-        self.coverageLabel.setText(f'{g.area() / 10_000:.2f} ha')
+        self.coverageLabel.setText(f'{self._area_ha():.2f} ha')
 
         # Flight-path stats are taken from the ACTUAL generated waypoints (the
         # same path the preview draws), so distance, lines, photos and time
@@ -4039,19 +4032,21 @@ class FlyPathDialog(QWidget):
         waypoints, self._live_elevations = self._apply_terrain(waypoints)
         self._live_waypoints = waypoints
 
-        dist_m     = self._path_length_m(turn_pts)
+        dist_m     = measure_route(turn_pts)
         n_lines    = len(turn_pts) // 2
-        usable_min = d.battery_time_min * (1.0 - _BATTERY_RESERVE)
-        if full:
-            # Stop-and-shoot: transit plus a stop per photo (the halt, or the
-            # camera's shutter/write time if longer).
-            n_photos   = len(waypoints)
-            per_photo  = max(_HALT_S, d.camera.min_shoot_interval_s)
-            flight_min = (dist_m / speed + n_photos * per_photo) / 60.0 if speed > 0 else 0.0
-        else:
-            n_photos   = max(0, int(dist_m / actual_spacing))
-            flight_min = dist_m / (speed * 60.0) if speed > 0 else 0.0
-        batteries  = math.ceil(flight_min / usable_min) if flight_min > 0 else 0
+        stats = mission_statistics(
+            route_distance_m=dist_m,
+            speed_m_s=speed,
+            capture_mode="full" if full else "semi",
+            photo_interval_s=d.camera.min_shoot_interval_s,
+            battery_minutes=d.battery_safe_min,
+            waypoint_count=len(waypoints),
+            stop_seconds=_HALT_S,
+        )
+        n_photos = stats["photo_count"]
+        flight_min = stats["flight_seconds"] / 60.0
+        batteries = stats["battery_count"]
+        self._live_statistics = stats
 
         self.flightTimeLabel.setText(f'{flight_min:.1f} min')
         self.distanceLabel.setText(f'{dist_m / 1000:.2f} km')
@@ -4150,7 +4145,7 @@ class FlyPathDialog(QWidget):
             return
         waypoints = [wp for wps, _, _ in missions_h for wp in wps]
         self._live_waypoints = waypoints
-        dist_m = sum(self._path_length_m(w) for w, _, _ in missions_h if len(w) >= 2)
+        dist_m = sum(measure_route(w) for w, _, _ in missions_h if len(w) >= 2)
 
         if full:
             n_photos   = len(waypoints)
@@ -4198,14 +4193,6 @@ class FlyPathDialog(QWidget):
             max_lines = max(1, (maxwp - 1) // 2)
             n = max(n, -(-n_lines // max_lines))       # ceil(n_lines / max_lines)
         return split_waypoints(waypoints, n)
-
-    def _path_length_m(self, waypoints):
-        """Ellipsoidal length of the (lon, lat) flight path in metres."""
-        da = QgsDistanceArea()
-        da.setSourceCrs(QgsCoordinateReferenceSystem('EPSG:4326'),
-                        QgsProject.instance().transformContext())
-        da.setEllipsoid('WGS84')
-        return da.measureLine([QgsPointXY(lon, lat) for lon, lat in waypoints])
 
     def _clear_stats(self):
         for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
@@ -4531,9 +4518,9 @@ class FlyPathDialog(QWidget):
         token, ok = QInputDialog.getText(
             getattr(self, '_mission_library', None) or self, 'FlyPath Token',
             'Connect to %s.\n\nChoose Plugin token in this website\'s account menu, generate a '
-            'token, and paste it here. QGIS will store it in its encrypted '
-            'authentication vault. If a token expires or is revoked, reconnect '
-            'with a new token; your local plan is kept.\n\nToken:' % origin,
+            'token,\nand paste it here. QGIS will store it in its encrypted '
+            'authentication vault.\nIf a token expires or is revoked, reconnect '
+            'with a new token;\nyour local plan is kept.\n\nToken:' % origin,
             password)
         token = (token or '').strip()
         if not (ok and token):
@@ -4752,13 +4739,16 @@ class FlyPathDialog(QWidget):
         """The figures the website's mission card shows, taken from the same
         stats card the pilot just reviewed, so both tools report one number."""
         return {
-            'distance_m': int(round(self._path_length_m(self._waypoints or []))),
+            'distance_m': int(round(measure_route(self._waypoints or []))),
             'time':       self.flightTimeLabel.text(),
             'distance':   self.distanceLabel.text(),
             'photos':     self.photosLabel.text(),
             'waypoints':  self.waypointsLabel.text(),
             'batteries':  self.batteriesLabel.text(),
             'area':       self.coverageLabel.text(),
+            'area_m2':    (measure_survey_area(self._survey_polygon, self._survey_polygon_crs)
+                           if self._mission_kind() == '2d' else None),
+            'statistics': self._live_statistics,
             'flight_count': len(self._missions or []),
         }
 

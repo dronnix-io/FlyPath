@@ -1,6 +1,6 @@
 """
-grid_route.py
--------------
+flypath_engine.route
+--------------------
 Concave-safe ordering of lawnmower scan-line segments into a flight route.
 
 Pure Python (no QGIS) so the routing logic can be unit-tested directly.
@@ -172,6 +172,33 @@ def order_cells(cells, adjacency, densify_spacing=None):
         route.extend(chosen)
         cur = route[-1]
     return route
+
+
+def split_waypoints(waypoints, n_missions):
+    """Split endpoint pairs into contiguous flights with shared seams."""
+    pts = list(waypoints)
+    n_lines = len(pts) // 2
+    try:
+        n = int(n_missions)
+    except (TypeError, ValueError):
+        n = 1
+    n = max(1, min(n, max(1, n_lines)))
+    if n <= 1 or n_lines <= 1:
+        return [pts]
+
+    base, rem = divmod(n_lines, n)
+    missions = []
+    start_line = 0
+    prev_last = None
+    for group in range(n):
+        count = base + (1 if group < rem else 0)
+        chunk = pts[start_line * 2:(start_line + count) * 2]
+        if prev_last is not None:
+            chunk = [prev_last] + chunk
+        missions.append(chunk)
+        prev_last = chunk[-1]
+        start_line += count
+    return missions
 
 
 def split_by_waypoint_count(waypoints, n_missions, max_waypoints=None):
