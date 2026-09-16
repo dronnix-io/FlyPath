@@ -2,11 +2,9 @@ import contextlib
 import datetime
 import math
 import os
-import re
 import shutil
 import subprocess  # nosec B404
 import tempfile
-import zipfile
 
 from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
@@ -114,9 +112,7 @@ from .flypath_engine.route import split_by_waypoint_count, split_waypoints
 from .flypath_engine.statistics import mission_statistics
 from .corridor_planner import generate_corridor_route
 from .corridor_geometry import compute_pass_offsets
-from .takeoff_zone import (
-    takeoff_zone, gsd_variance_pct, sample_grid, search_bounds
-)
+from .takeoff_zone import gsd_variance_pct
 from .contours import contour_segments, nice_levels
 from .terrain import (
     TERRARIUM_URL, ZOOM, TILE_SIZE, tile_coords, elevation_from_rgb,
@@ -126,6 +122,9 @@ from .wpml import MissionSpec, write_mission
 from .hardware import registry
 from . import flypath_sync
 from . import planning_adapter
+from . import controller_storage
+from . import survey_geometry
+from . import takeoff_adapter
 from .planning_lifecycle import PlanningLifecycle
 from .flypath_sync import FlypathSyncError
 
@@ -233,14 +232,6 @@ _MTP_EXIT_NAV_FAIL      = 1   # could not navigate path to waypoint folder
 _MTP_EXIT_NO_UUID       = 2   # no UUID mission folder found in waypoint folder
 _MTP_EXIT_UUID_MISSING  = 3   # UUID folder gone between script 1 and script 2
 _MTP_EXIT_UUID_NO_OPEN  = 4   # UUID folder exists but GetFolder returned None
-
-# ── RC auto-detection PowerShell exit codes ───────────────────────────────
-_RC_EXIT_FOUND          = 0   # waypoint folder located (PATH/UUID on stdout)
-_RC_EXIT_NONE           = 10  # no DJI RC / waypoint folder found on any device
-_RC_EXIT_DEVICE_NO_WP   = 11  # a DJI device is connected but has no waypoint folder
-
-# Relative path from an MTP storage volume to the DJI waypoint folder
-_RC_REL_PARTS = ['Android', 'data', 'dji.go.v5', 'files', 'waypoint']
 
 # Run PowerShell silently — no console window flashes on screen (Windows only;
 # 0 elsewhere so the creationflags argument stays valid on every platform).
@@ -2792,7 +2783,6 @@ class FlyPathDialog(QWidget):
     # the user. The zone is a full circle of this radius on flat ground, and the
     # matching-elevation part of it where the terrain changes.
     _TAKEOFF_RADIUS_M = 500.0
-    _TAKEOFF_STEPS = 40           # DEM samples across the circle's diameter
     _CONTOUR_STEPS = 160          # max DEM samples across the contour extent
     _CONTOUR_MAX_LEVELS = 80      # coarsen the interval past this many lines
 
@@ -2814,89 +2804,6 @@ class FlyPathDialog(QWidget):
         else:
             missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
         return [wps for wps, _, _ in missions_h]
-
-    def _compute_takeoff_zones(self, tolerance_m):
-        """Sample the DEM and return the takeoff zone(s).
-
-        With "same takeoff for all splits" on, there is a single zone around the
-        original mission's first waypoint (everyone launches from one point).
-        Otherwise there is one zone per split sub-mission.
-
-        Each sub-mission is a separate flight launched from its own takeoff, so
-        each is anchored on its own first waypoint: the zone is the ground within
-        the fixed takeoff radius of that waypoint whose elevation matches the
-        waypoint's, within the tolerance. Uses the currently selected DEM: a local
-        raster if one is chosen, otherwise the online source, like terrain follow.
-
-        Returns a dict {'zones', 'gsd_var', 'n_sampled', 'to_wgs', 'radius_m'}
-        where each zone is {'index', 'ref_elev', 'center_utm', 'spacing', 'flat',
-        'cells_utm': [(x, y), ...]}. `flat` is True when the whole circle is within
-        tolerance (the zone is the full circle). Raises _TerrainError if a
-        reference elevation cannot be read; returns None if there is no mission."""
-        parts = self._mission_parts()
-        if parts is None:
-            return None
-        parts = [p for p in parts if p]
-        if not parts:
-            return None
-
-        # "Same takeoff for all splits": every split is flown from one point at
-        # the original mission's first waypoint, so show a single zone around it
-        # rather than one per split. Off, each split gets its own zone.
-        if self.sameTakeoffCheck.isChecked():
-            parts = parts[:1]
-
-        radius_m = self._TAKEOFF_RADIUS_M
-        spacing = max(10.0, (2.0 * radius_m) / self._TAKEOFF_STEPS)
-
-        # One metric CRS for the whole plan (split missions sit close together).
-        origin_lon, origin_lat = parts[0][0]
-        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
-        utm = _utm_crs_for(origin_lon, origin_lat)
-        to_utm = QgsCoordinateTransform(wgs84, utm, QgsProject.instance())
-        to_wgs = QgsCoordinateTransform(utm, wgs84, QgsProject.instance())
-
-        zones = []
-        n_sampled = 0
-        for idx, mission in enumerate(parts):
-            first_lon, first_lat = mission[0]
-            ref_elev = self._terrain.sample(first_lon, first_lat)   # may raise
-            p = to_utm.transform(QgsPointXY(first_lon, first_lat))
-            center = (p.x(), p.y())
-
-            # Sample the DEM over the circle around the first waypoint.
-            bounds = search_bounds([center], radius_m)
-            candidates = []
-            in_disk = 0
-            for gx, gy in sample_grid(bounds, spacing):
-                if math.hypot(gx - center[0], gy - center[1]) > radius_m:
-                    continue                       # keep the sample area a disk
-                wp = to_wgs.transform(QgsPointXY(gx, gy))
-                try:
-                    elev = self._terrain.sample(wp.x(), wp.y())
-                except _TerrainError:
-                    continue
-                candidates.append((gx, gy, elev))
-                in_disk += 1
-            n_sampled += len(candidates)
-
-            # mission_points is just the first waypoint, so the proximity test is
-            # a plain distance-from-centre disk.
-            zone_utm = takeoff_zone(candidates, [center], ref_elev,
-                                    tolerance_m, radius_m)
-            cells = [(x, y) for x, y, _ in zone_utm]
-            zones.append({
-                'index': idx,
-                'ref_elev': ref_elev,
-                'center_utm': center,
-                'spacing': spacing,
-                'flat': in_disk > 0 and len(cells) == in_disk,
-                'cells_utm': cells,
-            })
-
-        gsd_var = gsd_variance_pct(tolerance_m, self.altitudeSpin.value())
-        return {'zones': zones, 'gsd_var': gsd_var, 'n_sampled': n_sampled,
-                'to_wgs': to_wgs, 'radius_m': radius_m}
 
     def _build_takeoff_zone_layer(self, result):
         """Build the takeoff-zone overlay: one smooth dark-purple region per split
@@ -3013,7 +2920,12 @@ class FlyPathDialog(QWidget):
         try:
             QApplication.setOverrideCursor(_WaitCursor)
             try:
-                result = self._compute_takeoff_zones(tolerance_m)
+                result = takeoff_adapter.compute_zones(
+                    self._mission_parts(), self._terrain.sample, _TerrainError,
+                    tolerance_m=tolerance_m,
+                    altitude_m=self.altitudeSpin.value(),
+                    same_takeoff=self.sameTakeoffCheck.isChecked(),
+                    radius_m=self._TAKEOFF_RADIUS_M)
             finally:
                 QApplication.restoreOverrideCursor()
         except _TerrainError as exc:
@@ -3963,35 +3875,13 @@ class FlyPathDialog(QWidget):
         return (self._mission_kind() == '2d'
                 and not self.terrainFollowCheck.isChecked())
 
-    def _planning_survey_area(self):
-        if self._survey_polygon is None or self._survey_polygon_crs is None:
-            return None
-        geometry = QgsGeometry(self._survey_polygon)
-        geometry.transform(QgsCoordinateTransform(
-            self._survey_polygon_crs, QgsCoordinateReferenceSystem('EPSG:4326'),
-            QgsProject.instance()))
-        polygons = geometry.asMultiPolygon() if geometry.isMultipart() else [geometry.asPolygon()]
-
-        def ring(points):
-            coords = [{'latitude_deg': point.y(), 'longitude_deg': point.x()}
-                      for point in points]
-            if len(coords) > 1 and coords[0] == coords[-1]:
-                coords.pop()
-            return coords
-
-        parts = [{'exterior': ring(polygon[0]),
-                  'holes': [ring(interior) for interior in polygon[1:]]}
-                 for polygon in polygons if polygon and polygon[0]]
-        if not parts:
-            return None
-        return parts[0] if len(parts) == 1 else {'parts': parts}
-
     def _planning_request_from_ui(self):
         drone = registry.get(self.droneModelCombo.currentText())
         if not drone.website_code:
             raise ValueError('%s has no shared engine profile.' % drone.name)
         return planning_adapter.build_request(
-            survey_area=self._planning_survey_area(),
+            survey_area=survey_geometry.planning_area(
+                self._survey_polygon, self._survey_polygon_crs),
             drone_profile_id=drone.website_code,
             altitude_m=self.altitudeSpin.value(),
             speed_m_s=self.speedSpin.value(),
@@ -4848,8 +4738,15 @@ class FlyPathDialog(QWidget):
                 '%s is not one of the drones flypath.io offers, so this mission '
                 'cannot be sent there. Choose another drone, or export a KMZ '
                 'instead.' % drone.name)
-        area = (self._survey_line_wgs84() if corridor
-                else self._survey_polygon_wgs84())
+        try:
+            area = (survey_geometry.line_vertices(
+                        self._survey_line, self._survey_line_crs) if corridor
+                    else survey_geometry.polygon_vertices(
+                        self._survey_polygon, self._survey_polygon_crs))
+        except survey_geometry.MultipartLineError as exc:
+            raise FlypathSyncError(
+                'FlyPath stores one corridor centre line, but this one has %d '
+                'separate lines. Send them as separate missions.' % exc.args[0]) from None
         if not area:
             raise FlypathSyncError('This mission has no survey area to send.')
         if not corridor and self._planning.request:
@@ -5310,12 +5207,6 @@ class FlyPathDialog(QWidget):
 
     # ── RC mission picker ──────────────────────────────────────────────────
 
-    # DJI mission UUID folder format: 8-4-4-4-12 hex characters
-    _UUID_RE = re.compile(
-        r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}'
-        r'-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-    )
-
     @staticmethod
     def _mission_display(mission):
         """Short label for the Export button: the mission date."""
@@ -5457,43 +5348,6 @@ class FlyPathDialog(QWidget):
             'again.'
         )
 
-    @staticmethod
-    def _find_waypoint_on_drives():
-        """
-        Look for the DJI waypoint folder on a lettered drive (SD card, mapped
-        or removable drive). Returns the waypoint folder path, or None.
-
-        This makes auto-detect work regardless of which letter the drive gets:
-        it checks every present fixed/removable drive for the fixed DJI path
-        rather than assuming a specific letter.
-        """
-        rel = os.path.join(*_RC_REL_PARTS)
-        roots = []
-        try:
-            import ctypes
-            k32 = ctypes.windll.kernel32
-            bitmask = k32.GetLogicalDrives()
-            for i in range(26):
-                if not (bitmask >> i) & 1:
-                    continue
-                root = chr(ord('A') + i) + ':\\'
-                # 2 = removable, 3 = fixed; skip optical/network/etc. to avoid
-                # slow probes or "insert disk" prompts.
-                if k32.GetDriveTypeW(ctypes.c_wchar_p(root)) in (2, 3):
-                    roots.append(root)
-        except Exception:
-            import string
-            roots = [c + ':\\' for c in string.ascii_uppercase
-                     if os.path.isdir(c + ':\\')]
-        for root in roots:
-            candidate = os.path.join(root, rel)
-            try:
-                if os.path.isdir(candidate):
-                    return candidate
-            except (OSError, ValueError):
-                continue
-        return None
-
     def _on_refresh_rc_missions(self):
         """Auto-detect the RC (removable drive or USB/MTP) and list missions."""
         QApplication.setOverrideCursor(_WaitCursor)
@@ -5502,13 +5356,13 @@ class FlyPathDialog(QWidget):
         drive_path = None
         try:
             # 1) Fast: a lettered/removable drive holding the DJI waypoint path.
-            drive_path = self._find_waypoint_on_drives()
+            drive_path = controller_storage.find_waypoint_on_drives()
             if drive_path:
-                status, missions = self._list_missions_from_dir(drive_path)
+                status, missions = controller_storage.list_missions_from_dir(drive_path)
                 wp_path, detail = drive_path, ''
             else:
                 # 2) The usual case: an MTP device connected over USB.
-                status, wp_path, missions, detail = self._list_rc_missions()
+                status, wp_path, missions, detail = controller_storage.list_rc_missions()
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -5549,7 +5403,7 @@ class FlyPathDialog(QWidget):
         Manual fallback: browse the Windows shell namespace (This PC, including
         the MTP RC and any drives) and pick the waypoint folder yourself.
         """
-        dlg = _RcFolderBrowser(self._list_shell_children, self)
+        dlg = _RcFolderBrowser(controller_storage.list_shell_children, self)
         if not dlg.exec():
             return
         parts = dlg.selected_parts()
@@ -5558,7 +5412,7 @@ class FlyPathDialog(QWidget):
 
         QApplication.setOverrideCursor(_WaitCursor)
         try:
-            status, missions = self._list_missions_at_path(parts)
+            status, missions = controller_storage.list_missions_at_path(parts)
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -5582,362 +5436,6 @@ class FlyPathDialog(QWidget):
                 'Pick the "waypoint" folder itself (the one that holds the '
                 'mission UUID folders).'
             )
-
-    def _list_shell_children(self, parts):
-        """Return the child folder names of a shell path (parts from This PC)."""
-        ps_exe = os.path.join(
-            os.environ.get('SystemRoot', r'C:\Windows'),
-            r'System32\WindowsPowerShell\v1.0\powershell.exe'
-        )
-        tmp_dir = tempfile.mkdtemp(prefix='flypath_')
-        try:
-            sp = os.path.join(tmp_dir, 'children.ps1')
-            with open(sp, 'w', encoding='utf-8') as fh:
-                fh.write(self._shell_children_script(parts))
-            try:
-                r = subprocess.run(  # nosec B603
-                    [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
-                     '-ExecutionPolicy', 'Bypass', '-File', sp],
-                    capture_output=True, text=True, timeout=40,
-                    creationflags=_NO_WINDOW, startupinfo=_STARTUPINFO
-                )
-            except Exception:
-                return []
-            return [ln[2:] for ln in r.stdout.splitlines() if ln.startswith('D|')]
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    @staticmethod
-    def _shell_children_script(parts):
-        """PowerShell: list immediate child folders of a shell path (This PC root)."""
-        arr = ', '.join("'" + p.replace("'", "''") + "'" for p in parts)
-        return (
-            "$ErrorActionPreference = 'SilentlyContinue'\n"
-            '$shell = New-Object -ComObject Shell.Application\n'
-            "$folder = $shell.Namespace('::{20D04FE0-3AEA-1069-A2D8-08002B30309D}')\n"
-            '$parts = @(' + arr + ')\n'
-            'foreach ($p in $parts) {\n'
-            '    $hit = $null\n'
-            '    foreach ($i in $folder.Items()) { if ($i.Name -eq $p) { $hit = $i; break } }\n'
-            '    if (-not $hit) { exit 1 }\n'
-            '    $folder = $hit.GetFolder\n'
-            '    if (-not $folder) { exit 1 }\n'
-            '}\n'
-            'foreach ($i in $folder.Items()) {\n'
-            '    if ($i.IsFolder) { Write-Output ("D|" + $i.Name) }\n'
-            '}\n'
-        )
-
-    def _list_missions_at_path(self, parts):
-        """
-        Navigate a chosen shell path and list its waypoint missions.
-        Returns (status, missions) with status 'ok' / 'no_mission' / 'error'.
-        """
-        ps_exe = os.path.join(
-            os.environ.get('SystemRoot', r'C:\Windows'),
-            r'System32\WindowsPowerShell\v1.0\powershell.exe'
-        )
-        tmp_dir = tempfile.mkdtemp(prefix='flypath_')
-        try:
-            sp = os.path.join(tmp_dir, 'list_at.ps1')
-            with open(sp, 'w', encoding='utf-8') as fh:
-                fh.write(self._missions_at_path_script(parts, tmp_dir))
-            try:
-                r = subprocess.run(  # nosec B603
-                    [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
-                     '-ExecutionPolicy', 'Bypass', '-File', sp],
-                    capture_output=True, text=True, timeout=120,
-                    creationflags=_NO_WINDOW, startupinfo=_STARTUPINFO
-                )
-            except Exception:
-                return ('error', [])
-            if r.returncode != 0:
-                return ('error', [])
-            uuids = [ln[len('UUID='):].strip()
-                     for ln in r.stdout.splitlines() if ln.startswith('UUID=')]
-            missions = []
-            for u in uuids:
-                create_ms, n_wp, wpts = self._read_kmz_meta(
-                    os.path.join(tmp_dir, u + '.kmz'))
-                missions.append({
-                    'uuid': u, 'create_ms': create_ms,
-                    'date_str': self._fmt_ms(create_ms), 'n_wp': n_wp,
-                    'waypoints': wpts,
-                })
-            missions.sort(key=lambda m: m['create_ms'] or 0, reverse=True)
-            return ('ok' if missions else 'no_mission', missions)
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    @staticmethod
-    def _missions_at_path_script(parts, tmp_dir):
-        """PowerShell: navigate to a chosen folder, list missions, copy KMZs to tmp_dir."""
-        arr = ', '.join("'" + p.replace("'", "''") + "'" for p in parts)
-        dest = tmp_dir.replace("'", "''")
-        return (
-            "$ErrorActionPreference = 'SilentlyContinue'\n"
-            '$shell = New-Object -ComObject Shell.Application\n'
-            "$folder = $shell.Namespace('::{20D04FE0-3AEA-1069-A2D8-08002B30309D}')\n"
-            '$uuidPattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
-            '[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"\n'
-            "$dest = $shell.Namespace('" + dest + "')\n"
-            '$parts = @(' + arr + ')\n'
-            'foreach ($p in $parts) {\n'
-            '    $hit = $null\n'
-            '    foreach ($i in $folder.Items()) { if ($i.Name -eq $p) { $hit = $i; break } }\n'
-            '    if (-not $hit) { exit 1 }\n'
-            '    $folder = $hit.GetFolder\n'
-            '    if (-not $folder) { exit 1 }\n'
-            '}\n'
-            '$wp = $folder\n'
-            '$preview = @{}; $hasPreview = $false\n'
-            'foreach ($c in $wp.Items()) {\n'
-            "    if ($c.IsFolder -and $c.Name -eq 'map_preview') {\n"
-            '        $mpf = $c.GetFolder\n'
-            '        if ($mpf) { $hasPreview = $true; foreach ($pv in $mpf.Items()) { if ($pv.IsFolder) { $preview[$pv.Name] = $true } } }\n'
-            '    }\n'
-            '}\n'
-            'foreach ($item in $wp.Items()) {\n'
-            '    if ($item.IsFolder -and $item.Name -match $uuidPattern) {\n'
-            '        if ($hasPreview -and -not $preview.ContainsKey($item.Name)) { continue }\n'
-            "        Write-Output ('UUID=' + $item.Name)\n"
-            '        $mf = $item.GetFolder\n'
-            '        foreach ($f in $mf.Items()) {\n'
-            '            if (-not $f.IsFolder) { $dest.CopyHere($f, 0x10); Start-Sleep -Milliseconds 1500 }\n'
-            '        }\n'
-            '    }\n'
-            '}\n'
-            'exit 0\n'
-        )
-
-    def _list_missions_from_dir(self, wp_dir):
-        """
-        Scan a real filesystem waypoint folder (SD card, mapped drive, copy).
-
-        Returns (status, missions) with status 'ok' / 'no_mission' / 'error'.
-        Each mission dict: {uuid, create_ms, date_str, n_wp}
-        """
-        try:
-            if not os.path.isdir(wp_dir):
-                return ('error', [])
-            mp_dir  = os.path.join(wp_dir, 'map_preview')
-            has_mp  = os.path.isdir(mp_dir)
-            preview = set()
-            if has_mp:
-                preview = {d for d in os.listdir(mp_dir)
-                           if os.path.isdir(os.path.join(mp_dir, d))}
-            missions = []
-            for d in os.listdir(wp_dir):
-                full = os.path.join(wp_dir, d)
-                if not (os.path.isdir(full) and self._UUID_RE.match(d)):
-                    continue
-                # Only missions DJI Fly tracks (those with a map_preview entry);
-                # if there is no map_preview folder at all, list everything.
-                if has_mp and d not in preview:
-                    continue
-                kmz = os.path.join(full, d + '.kmz')
-                create_ms, n_wp, wpts = (self._read_kmz_meta(kmz)
-                                         if os.path.exists(kmz) else (0, 0, []))
-                missions.append({
-                    'uuid': d, 'create_ms': create_ms,
-                    'date_str': self._fmt_ms(create_ms), 'n_wp': n_wp,
-                    'waypoints': wpts,
-                })
-            missions.sort(key=lambda m: m['create_ms'] or 0, reverse=True)
-            return ('ok' if missions else 'no_mission', missions)
-        except Exception:
-            return ('error', [])
-
-    def _list_rc_missions(self):
-        """
-        Scan the connected RC and return all waypoint missions.
-
-        Returns (status, waypoint_path, missions, detail):
-          status 'ok'            -> missions is a list of dicts (newest first)
-          status 'no_mission'    -> an RC is connected but has no missions
-          status 'not_connected' -> no DJI RC detected
-          status 'error'         -> scan failed; detail holds the message
-        Each mission dict: {uuid, create_ms, date_str, n_wp}
-        """
-        ps_exe = os.path.join(
-            os.environ.get('SystemRoot', r'C:\Windows'),
-            r'System32\WindowsPowerShell\v1.0\powershell.exe'
-        )
-        tmp_dir = tempfile.mkdtemp(prefix='flypath_')
-        try:
-            list_ps = os.path.join(tmp_dir, 'list_rc.ps1')
-            with open(list_ps, 'w', encoding='utf-8') as fh:
-                fh.write(self._rc_list_script(tmp_dir))
-            try:
-                r = subprocess.run(  # nosec B603
-                    [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
-                     '-ExecutionPolicy', 'Bypass', '-File', list_ps],
-                    capture_output=True, text=True, timeout=120,
-                    creationflags=_NO_WINDOW, startupinfo=_STARTUPINFO
-                )
-            except subprocess.TimeoutExpired:
-                return ('error', None, [], 'Timed out while reading the RC.')
-            except Exception as exc:
-                return ('error', None, [], f'PowerShell error: {exc}')
-
-            if r.returncode == _RC_EXIT_DEVICE_NO_WP:
-                return ('no_mission', None, [], '')
-            if r.returncode == _RC_EXIT_NONE:
-                return ('not_connected', None, [], '')
-            if r.returncode != _RC_EXIT_FOUND:
-                return ('error', None, [],
-                        r.stderr.strip() or f'Scan failed (exit {r.returncode}).')
-
-            wp_path = None
-            uuids = []
-            for line in r.stdout.splitlines():
-                line = line.strip()
-                if line.startswith('PATH='):
-                    wp_path = line[len('PATH='):]
-                elif line.startswith('UUID='):
-                    uuids.append(line[len('UUID='):])
-
-            missions = []
-            for u in uuids:
-                kmz = os.path.join(tmp_dir, u + '.kmz')
-                create_ms, n_wp, wpts = self._read_kmz_meta(kmz)
-                missions.append({
-                    'uuid': u,
-                    'create_ms': create_ms,
-                    'date_str': self._fmt_ms(create_ms),
-                    'n_wp': n_wp,
-                    'waypoints': wpts,
-                })
-            missions.sort(key=lambda m: m['create_ms'] or 0, reverse=True)
-            if not missions:
-                return ('no_mission', wp_path, [], '')
-            return ('ok', wp_path, missions, '')
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    @staticmethod
-    def _rc_list_script(tmp_dir):
-        """PowerShell: list every RC mission UUID and copy each KMZ to tmp_dir."""
-        rel = ', '.join("'" + p + "'" for p in _RC_REL_PARTS)
-        rel_join = '\\'.join(_RC_REL_PARTS)
-        dest = tmp_dir.replace("'", "''")   # single-quoted PS string
-        return (
-            "$ErrorActionPreference = 'SilentlyContinue'\n"
-            '$shell = New-Object -ComObject Shell.Application\n'
-            "$thisPC = $shell.Namespace('::{20D04FE0-3AEA-1069-A2D8-08002B30309D}')\n"
-            '$rel = @(' + rel + ')\n'
-            '$uuidPattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
-            '[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"\n'
-            "$dest = $shell.Namespace('" + dest + "')\n"
-            '$deviceSeen = $false\n'
-            'function Nav($folder, $parts) {\n'
-            '    foreach ($part in $parts) {\n'
-            '        $hit = $null\n'
-            '        foreach ($item in $folder.Items()) {\n'
-            '            if ($item.Name -eq $part) { $hit = $item; break }\n'
-            '        }\n'
-            '        if (-not $hit) { return $null }\n'
-            '        $nf = $hit.GetFolder\n'
-            '        if (-not $nf) { return $null }\n'
-            '        $folder = $nf\n'
-            '    }\n'
-            '    return $folder\n'
-            '}\n'
-            'foreach ($device in $thisPC.Items()) {\n'
-            '    if (-not $device.IsFolder) { continue }\n'
-            "    if ($device.Path -match '^[A-Za-z]:\\\\?$') { continue }\n"
-            '    $devFolder = $device.GetFolder\n'
-            '    if (-not $devFolder) { continue }\n'
-            "    if ($device.Name -match 'DJI|RC') { $deviceSeen = $true }\n"
-            '    $roots = New-Object System.Collections.ArrayList\n'
-            '    [void]$roots.Add(@($device.Name, $devFolder))\n'
-            '    foreach ($vol in $devFolder.Items()) {\n'
-            '        if ($vol.IsFolder) {\n'
-            '            $vf = $vol.GetFolder\n'
-            '            if ($vf) { [void]$roots.Add(@(($device.Name + "\\" + $vol.Name), $vf)) }\n'
-            '        }\n'
-            '    }\n'
-            '    foreach ($root in $roots) {\n'
-            '        $wp = Nav $root[1] $rel\n'
-            '        if ($wp) {\n'
-            '            $deviceSeen = $true\n'
-            "            Write-Output ('PATH=' + $root[0] + '\\" + rel_join + "')\n"
-            # DJI Fly keeps a map_preview/<UUID> thumbnail folder for every
-            # mission it actually tracks. Build that set so we only report
-            # missions DJI Fly knows about, not folders pasted in manually.
-            '            $preview = @{}\n'
-            '            $hasPreviewDir = $false\n'
-            '            $mp = $null\n'
-            "            foreach ($c in $wp.Items()) { if ($c.IsFolder -and $c.Name -eq 'map_preview') { $mp = $c; break } }\n"
-            '            if ($mp) {\n'
-            '                $mpf = $mp.GetFolder\n'
-            '                if ($mpf) {\n'
-            '                    $hasPreviewDir = $true\n'
-            '                    foreach ($pv in $mpf.Items()) { if ($pv.IsFolder) { $preview[$pv.Name] = $true } }\n'
-            '                }\n'
-            '            }\n'
-            '            foreach ($item in $wp.Items()) {\n'
-            '                if ($item.IsFolder -and $item.Name -match $uuidPattern) {\n'
-            # Skip missions with no map_preview entry (not known to DJI Fly).
-            # If map_preview is absent entirely, fall back to listing all.
-            '                    if ($hasPreviewDir -and -not $preview.ContainsKey($item.Name)) { continue }\n'
-            "                    Write-Output ('UUID=' + $item.Name)\n"
-            '                    $mf = $item.GetFolder\n'
-            '                    foreach ($f in $mf.Items()) {\n'
-            '                        if (-not $f.IsFolder) {\n'
-            '                            $dest.CopyHere($f, 0x10)\n'
-            '                            Start-Sleep -Milliseconds 1500\n'
-            '                        }\n'
-            '                    }\n'
-            '                }\n'
-            '            }\n'
-            f'            exit {_RC_EXIT_FOUND}\n'
-            '        }\n'
-            '    }\n'
-            '}\n'
-            f'if ($deviceSeen) {{ exit {_RC_EXIT_DEVICE_NO_WP} }}\n'
-            f'exit {_RC_EXIT_NONE}\n'
-        )
-
-    @staticmethod
-    def _read_kmz_meta(kmz_path):
-        """
-        Read (createTime_ms, waypoint_count, waypoints) from a mission KMZ.
-        waypoints is a list of (lon, lat) parsed from the wayline Placemarks.
-        Returns (0, 0, []) on failure.
-        """
-        try:
-            with zipfile.ZipFile(kmz_path) as z:
-                template = z.read('wpmz/template.kml').decode('utf-8', 'replace')
-                try:
-                    waylines = z.read('wpmz/waylines.wpml').decode('utf-8', 'replace')
-                except KeyError:
-                    waylines = ''
-            m = re.search(r'<wpml:createTime>(\d+)</wpml:createTime>', template)
-            create_ms = int(m.group(1)) if m else 0
-            n_wp = len(re.findall(r'<wpml:index>', waylines))
-            waypoints = []
-            for lon, lat in re.findall(
-                    r'<coordinates>\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)', waylines):
-                try:
-                    waypoints.append((float(lon), float(lat)))
-                except ValueError:
-                    pass
-            return create_ms, n_wp, waypoints
-        except Exception:
-            return 0, 0, []
-
-    @staticmethod
-    def _fmt_ms(create_ms):
-        """Format a DJI createTime (epoch ms) as the date DJI Fly shows."""
-        if not create_ms:
-            return 'unknown date'
-        try:
-            return datetime.datetime.fromtimestamp(
-                create_ms / 1000
-            ).strftime('%Y-%m-%d %H:%M:%S')
-        except Exception:
-            return 'unknown date'
 
     def _open_in_explorer(self, filepath):
         """Open File Explorer with the exported file selected."""
@@ -5976,7 +5474,8 @@ class FlyPathDialog(QWidget):
             gimbal_pitch=self.gimbalAngleSpin.value(),
             mission_name=mission,
             create_time_ms=create_time_ms,
-            polygon=self._survey_polygon_wgs84(),
+            polygon=survey_geometry.polygon_vertices(
+                self._survey_polygon, self._survey_polygon_crs),
             side_overlap=self.sideOverlapSpin.value() / 100.0,
             front_overlap=self._front_overlap_fraction(),
             direction_deg=self.directionSpin.value(),
@@ -6013,49 +5512,6 @@ class FlyPathDialog(QWidget):
                         heights_above_takeoff(part_elevs, altitude, base=shared_base),
                         part_elevs))
         return out
-
-    def _survey_polygon_wgs84(self):
-        """Survey boundary as [(lon, lat), ...] in WGS84, unclosed (DJI drops the
-        repeated first vertex). None if no polygon is defined."""
-        if self._survey_polygon is None or self._survey_polygon_crs is None:
-            return None
-        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
-        xform = QgsCoordinateTransform(self._survey_polygon_crs, wgs84,
-                                       QgsProject.instance())
-        g = QgsGeometry(self._survey_polygon)
-        g.transform(xform)
-        # asPolygon()/asMultiPolygon() raise TypeError on the wrong geometry
-        # type in PyQGIS (both QGIS 3 and 4), so branch on isMultipart(). For a
-        # multi-part area this returns the first part's outer ring, which is all
-        # this boundary hint needs.
-        if g.isMultipart():
-            parts = g.asMultiPolygon()
-            ring = parts[0][0] if parts and parts[0] else None
-        else:
-            poly = g.asPolygon()
-            ring = poly[0] if poly else None
-        if not ring:
-            return None
-        coords = [(pt.x(), pt.y()) for pt in ring]
-        if len(coords) > 1 and coords[0] == coords[-1]:
-            coords = coords[:-1]
-        return coords
-
-    def _survey_line_wgs84(self):
-        """Corridor centre line as [(lon, lat), ...] in WGS84, or None. The
-        website stores one line per mission, so a multi-part centre line is
-        refused rather than joined into a line the drone never flies."""
-        parts = self._corridor_line_parts()
-        if not parts or self._survey_line_crs is None:
-            return None
-        if len(parts) > 1:
-            raise FlypathSyncError(
-                'FlyPath stores one corridor centre line, but this one has %d '
-                'separate lines. Send them as separate missions.' % len(parts))
-        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
-        xform = QgsCoordinateTransform(self._survey_line_crs, wgs84,
-                                       QgsProject.instance())
-        return [(pt.x(), pt.y()) for pt in (xform.transform(v) for v in parts[0])]
 
     def _front_overlap_fraction(self):
         """Current along-track (front) overlap as a fraction 0..0.99.
