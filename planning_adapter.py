@@ -63,10 +63,8 @@ def build_request(*, survey_area, drone_profile_id, altitude_m, speed_m_s,
 
 
 def plan(request):
-    """Run the bundled engine and validate the adapter-facing result shape."""
-    result = plan_2d(request)
-    consume_result(request, result)
-    return result
+    """Run the bundled engine; consumers validate the returned result once."""
+    return plan_2d(request)
 
 
 def consume_result(request, result, *, require_supported=True,
@@ -181,10 +179,10 @@ def consume_result(request, result, *, require_supported=True,
 
 
 def validate_mission_provenance(mission):
-    """Reject a shared result paired with different editable mission inputs."""
+    """Validate a saved plan once and return its compatibility and flights."""
     result = mission.get('planning_result')
     if not result:
-        return
+        return None
     request = mission.get('planning_request')
     settings = mission.get('settings') or {}
     if not isinstance(request, dict):
@@ -230,13 +228,14 @@ def validate_mission_provenance(mission):
                         for point in exterior] if isinstance(exterior, list) else None)
     if request_polygon != polygon:
         raise ValueError('The saved planning area does not match the mission geometry.')
-    consume_result(request, result, require_supported=False,
-                   legacy_waypoints=mission.get('waypoints') or None)
+    flights = consume_result(request, result, require_supported=False,
+                             legacy_waypoints=mission.get('waypoints') or None)
     supported = (request.get('contract_version') == CONTRACT_VERSION
                  and result.get('contract_version') == CONTRACT_VERSION
                  and result.get('engine_version') == ENGINE_VERSION)
     if supported and plan_2d(request) != result:
         raise ValueError('The saved planning result does not match its request.')
+    return supported, flights
 
 
 def _ratio(value):

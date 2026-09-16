@@ -828,7 +828,6 @@ class FlyPathDialog(QWidget):
         self._planning_request   = None   # versioned request behind the current 2D plan
         self._planning_result    = None   # one shared source for preview/stats/export
         self._planning_locations = None   # imported launch/home data has no UI yet
-        self._flight_actions     = []     # engine actions parallel to _missions
         self._preview_heights    = []     # committed preview values parallel to missions
         self._preview_ground     = []
         self._saved_plan_locked  = False  # imported routes regenerate only via Preview
@@ -4019,11 +4018,9 @@ class FlyPathDialog(QWidget):
             locations=self._planning_locations,
         )
 
-    def _apply_planning_result(self, request, result, *, require_supported=True,
-                               legacy_waypoints=None):
-        flights = planning_adapter.consume_result(
-            request, result, require_supported=require_supported,
-            legacy_waypoints=legacy_waypoints)
+    def _apply_planning_result(self, request, result, *, flights=None):
+        if flights is None:
+            flights = planning_adapter.consume_result(request, result)
         route = [(row['position']['longitude_deg'], row['position']['latitude_deg'])
                  for row in result['route']['waypoints']]
         self._planning_request = request
@@ -4032,14 +4029,7 @@ class FlyPathDialog(QWidget):
         self._waypoints = route
         self._shot_spacing_m = result['capture']['shot_spacing_m']
         self._missions = [flight['waypoints'] for flight in flights]
-        self._flight_actions = [flight['actions'] for flight in flights]
-        self._live_waypoints = route
-        self._live_missions = list(self._missions)
-        self._live_elevations = None
-        self._live_heights = [None] * len(flights)
-        self._live_ground = [None] * len(flights)
         self._gen_elevations = None
-        self._live_statistics = result['statistics']
         stats = result['statistics']
         self.coverageLabel.setText(f"{stats['survey_area_m2'] / 10_000:.2f} ha")
         incomplete = not stats.get('estimates_complete', False)
@@ -4072,7 +4062,9 @@ class FlyPathDialog(QWidget):
         except (ValueError, planning_adapter.PlanningError) as exc:
             self._planning_request = None
             self._planning_result = None
-            self._flight_actions = []
+            self._waypoints = []
+            self._missions = []
+            self._shot_spacing_m = 0.0
             if not silent:
                 QMessageBox.warning(self, 'Cannot Plan Mission', str(exc))
             return None
@@ -4107,7 +4099,8 @@ class FlyPathDialog(QWidget):
 
         Uses the actual mission count, which in full-auto can exceed the Split
         Missions value when the waypoint cap forces extra missions."""
-        n = len(self._live_missions) if self._live_missions else self.splitSpin.value()
+        current = self._missions if self._planning_result else self._live_missions
+        n = len(current) if current else self.splitSpin.value()
         prev = self.splitPartCombo.currentData()
         self.splitPartCombo.blockSignals(True)
         self.splitPartCombo.clear()
@@ -4134,10 +4127,6 @@ class FlyPathDialog(QWidget):
             return
         if self._uses_shared_planning():
             if self._saved_plan_locked:
-                if self._planning_result:
-                    self._apply_planning_result(
-                        self._planning_request, self._planning_result,
-                        require_supported=not self._unsupported_saved_plan)
                 return
             if self._plan_shared() is None:
                 self._clear_stats()
@@ -4378,7 +4367,7 @@ class FlyPathDialog(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         # Bring the HUD back when the panel reopens, if there is a live plan.
-        if self._hud is not None and self._live_waypoints:
+        if self._hud is not None and (self._live_waypoints or self._planning_result):
             self._show_hud()
         self._show_info_hud()   # the info card follows the panel's visibility
 
@@ -4418,7 +4407,11 @@ class FlyPathDialog(QWidget):
             if result is None:
                 return
             waypoints, shot_spacing_m = result
-            missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
+            if self._uses_shared_planning() and self._planning_result:
+                missions_h = [(part, None, None) for part in self._missions]
+            else:
+                missions_h = self._missions_with_heights(
+                    waypoints, self._gen_elevations)
         missions = [wps for wps, _, _ in missions_h]
         heights  = [h for _, h, _ in missions_h]
         ground   = [g for _, _, g in missions_h]
@@ -4427,10 +4420,6 @@ class FlyPathDialog(QWidget):
         self._missions       = missions
         self._preview_heights = heights
         self._preview_ground = ground
-        if self._uses_shared_planning() and self._planning_result:
-            consumed = planning_adapter.consume_result(
-                self._planning_request, self._planning_result)
-            self._flight_actions = [flight['actions'] for flight in consumed]
         self._show_corridor_band()   # under the path (no-op in 2D)
         line_layer = self._build_path_layer(missions)
         wp_layer   = self._build_waypoints_layer(missions, heights, ground)
@@ -4570,19 +4559,21 @@ class FlyPathDialog(QWidget):
         """
         if not self._preview_layer_ids:
             return
-        missions = self._live_missions
-        flat     = self._live_waypoints
+        shared = bool(self._planning_result)
+        missions = self._missions if shared else self._live_missions
+        flat = self._waypoints if shared else self._live_waypoints
         if not flat or len(flat) < 2 or not missions:
             self._on_clear_preview(reset_area=False)
             return
-        self._waypoints      = flat
-        self._missions       = missions
-        self._shot_spacing_m = (self._planning_result['capture']['shot_spacing_m']
-                                if self._planning_result else max(
-                                    self.speedSpin.value()
-                                    * self.photoIntervalSpin.value(), 0.5))
-        self._gen_elevations = self._live_elevations
-        self._redraw_preview_layers(missions, self._live_heights, self._live_ground)
+        if not shared:
+            self._waypoints = flat
+            self._missions = missions
+            self._shot_spacing_m = max(
+                self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5)
+            self._gen_elevations = self._live_elevations
+        heights = None if shared else self._live_heights
+        ground = None if shared else self._live_ground
+        self._redraw_preview_layers(missions, heights, ground)
         self._show_corridor_band()   # keep the overlay in sync with the buffer
 
     def _redraw_preview_layers(self, missions, heights=None, ground=None):
@@ -4617,7 +4608,6 @@ class FlyPathDialog(QWidget):
         self._clear_corridor_band()
         self._waypoints = []
         self._missions = []
-        self._flight_actions = []
         self._preview_heights = []
         self._preview_ground = []
         self._planning_request = None
@@ -4974,47 +4964,20 @@ class FlyPathDialog(QWidget):
             'area':       self.coverageLabel.text(),
             'area_m2':    (measure_survey_area(self._survey_polygon, self._survey_polygon_crs)
                            if self._mission_kind() == '2d' else None),
-            'statistics': self._live_statistics,
+            'statistics': (self._planning_result['statistics']
+                           if self._planning_result else self._live_statistics),
             'flight_count': len(self._missions or []),
         }
 
-    def _restore_imported_route(self, mission):
+    def _restore_imported_route(self, mission, provenance):
         """Show the saved route without regenerating it under installed profiles."""
         request = mission.get('planning_request')
         result = mission.get('planning_result')
         legacy = mission.get('waypoints') or []
         if result:
-            if not isinstance(request, dict):
-                request = {}
-            try:
-                flights = planning_adapter.consume_result(
-                    request, result, legacy_waypoints=legacy or None)
-                supported = True
-            except ValueError:
-                try:
-                    flights = planning_adapter.consume_result(
-                        request, result, require_supported=False,
-                        legacy_waypoints=legacy or None)
-                except ValueError as exc:
-                    raise FlypathSyncError(
-                        'This mission has an invalid saved planning result: %s' % exc) from None
-                supported = False
+            supported, flights = provenance
             self._on_clear_preview(reset_area=False)
-            if supported:
-                self._apply_planning_result(request, result,
-                                            legacy_waypoints=legacy or None)
-            else:
-                route = [point for flight in flights for point in flight['waypoints']]
-                # Adjacent flights share their seam; the route itself does not.
-                route = [(row['position']['longitude_deg'], row['position']['latitude_deg'])
-                         for row in result['route']['waypoints']]
-                self._planning_request = request
-                self._planning_result = result
-                self._waypoints = route
-                self._missions = [flight['waypoints'] for flight in flights]
-                self._flight_actions = [flight['actions'] for flight in flights]
-                self._live_waypoints = route
-                self._live_missions = list(self._missions)
+            self._apply_planning_result(request, result, flights=flights)
             self._unsupported_saved_plan = not supported
         elif legacy:
             route = [(float(lon), float(lat)) for lat, lon in legacy]
@@ -5103,7 +5066,7 @@ class FlyPathDialog(QWidget):
         if not isinstance(settings, dict):
             raise FlypathSyncError('This mission\'s settings could not be read.')
         try:
-            planning_adapter.validate_mission_provenance(mission)
+            provenance = planning_adapter.validate_mission_provenance(mission)
         except ValueError as exc:
             raise FlypathSyncError(str(exc)) from None
         if settings.get('reverse_route'):
@@ -5245,7 +5208,7 @@ class FlyPathDialog(QWidget):
         self._on_param_changed()
         self.autoDirectionBtn.setChecked(bool(settings.get('auto_direction')))
         self._loading_mission = False
-        self._restore_imported_route(mission)
+        self._restore_imported_route(mission, provenance)
         self._zoom_to_website_geometry(geom, wgs84)
         return adjusted
 
@@ -6118,6 +6081,7 @@ class FlyPathDialog(QWidget):
             QMessageBox.warning(self, 'Export Blocked', errors)
             return
         mission = 'FlyPath Mission'
+        flight_actions = []
 
         # ── Resolve waypoints first (needed for both destinations) ────────
         if self._waypoints and self._shot_spacing_m:
@@ -6174,7 +6138,7 @@ class FlyPathDialog(QWidget):
                 self._planning_request, self._planning_result,
                 legacy_waypoints=[[lat, lon] for lon, lat in self._waypoints])
             missions_h = [(flight['waypoints'], None, None) for flight in consumed]
-            self._flight_actions = [flight['actions'] for flight in consumed]
+            flight_actions = [flight['actions'] for flight in consumed]
         else:
             missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
 
@@ -6194,13 +6158,13 @@ class FlyPathDialog(QWidget):
                 part_wps, part_heights, _ = missions_h[part]
                 part_name = f'{mission} {part + 1} of {len(missions_h)}'
                 self._export_rc(part_name, part_wps, shot_spacing_m, part_heights,
-                                self._flight_actions[part] if self._flight_actions else None)
+                                flight_actions[part] if flight_actions else None)
             else:
                 part_wps, part_heights, _ = missions_h[0]
                 self._export_rc(mission, part_wps, shot_spacing_m, part_heights,
-                                self._flight_actions[0] if self._flight_actions else None)
+                                flight_actions[0] if flight_actions else None)
         else:
-            self._export_local(mission, missions_h, self._flight_actions)
+            self._export_local(mission, missions_h, flight_actions)
 
     def _export_local_enterprise(self, mission, waypoints):
         """Save a single enterprise (DJI Pilot 2) mapping2d KMZ from the survey

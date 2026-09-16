@@ -29,12 +29,20 @@ def test_planning_dialog_state():
         assert planner.splitCheck.isChecked(), 'new missions enable splitting'
         planner._waypoints = [(1, 2), (3, 4)]
         planner._missions = [list(planner._waypoints)]
-        planner._flight_actions = [{'type': 'take_photo'}]
         planner._planning_request = {'contract_version': 1}
         planner._planning_result = {'contract_version': 1}
         planner._on_clear_preview(reset_area=False)
         assert planner._waypoints == [] and planner._missions == []
         assert planner._planning_request is None and planner._planning_result is None
+
+        planner._waypoints = [(1, 2), (3, 4)]
+        planner._missions = [list(planner._waypoints)]
+        planner._shot_spacing_m = 5
+        error = module.planning_adapter.PlanningError('invalid', 'bad request')
+        with patch.object(module.planning_adapter, 'plan', side_effect=error):
+            assert planner._plan_shared() is None
+        assert planner._waypoints == [] and planner._missions == []
+        assert planner._shot_spacing_m == 0
 
         planner.terrainFollowCheck.setChecked(True)
         planner._terrain = SimpleNamespace(
@@ -65,6 +73,10 @@ def test_planning_dialog_state():
         }
         planner._apply_website_mission(mission)
         planner._on_preview()
+        expected = [flight['waypoints'] for flight in
+                    module.planning_adapter.consume_result(
+                        planner._planning_request, planner._planning_result)]
+        assert planner._missions == expected
         shared = planner._website_payload('Shared mission')
         saved_result = shared['planning_result']
         older = deepcopy(shared)
