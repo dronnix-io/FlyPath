@@ -607,12 +607,8 @@ _COLOR_START_MARKER  = '#CC2222'   # red filled circle — first waypoint
 _COLOR_END_MARKER    = '#2D6DB5'   # blue filled circle — last waypoint
 _COLOR_MID_MARKER    = 'white'     # white circle — intermediate waypoints
 
-# Distinct flight-path colours, one per split mission. The first is the same
-# yellow used before splitting existed, so an unsplit plan looks unchanged.
-_MISSION_COLORS = [
-    '#FFE600', '#00E0FF', '#FF7AD9', '#7CFF6B', '#FFA24B',
-    '#B98CFF', '#4BE0C0', '#FF6B6B', '#8CD6FF', '#E0FF6B',
-]
+# Match website js/planner-route-layer.js FLIGHT_COLORS, including repeat order.
+_MISSION_COLORS = ['#FFE600', '#ff9f43', '#a88bff', '#35c99a', '#ff6f91']
 
 
 def _mission_color(i):
