@@ -126,6 +126,7 @@ from . import survey_geometry
 from . import takeoff_adapter
 from . import mission_export
 from . import preview_layers
+from . import map_overlays
 from .planning_lifecycle import PlanningLifecycle
 from .flypath_sync import FlypathSyncError
 
@@ -597,18 +598,6 @@ _SITE_URL     = 'https://flypath.io'
 # ── Map preview colour constants ───────────────────────────────────────────
 _COLOR_START_MARKER = preview_layers.START_COLOR
 _COLOR_END_MARKER = preview_layers.END_COLOR
-
-
-# Distinct tones of purple, one per split mission's takeoff zone, so overlapping
-# circles stay tellable apart. Ordered dark -> light; all clearly purple.
-_TAKEOFF_PURPLES = [
-    (74, 20, 140), (123, 31, 162), (156, 39, 176), (103, 58, 183),
-    (171, 71, 188), (63, 81, 181), (186, 104, 200), (149, 117, 205),
-]
-
-
-def _takeoff_purple(i):
-    return _TAKEOFF_PURPLES[i % len(_TAKEOFF_PURPLES)]
 
 
 class _HoverFilter(QObject):
@@ -2797,87 +2786,6 @@ class FlyPathDialog(QWidget):
             missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
         return [wps for wps, _, _ in missions_h]
 
-    def _build_takeoff_zone_layer(self, result):
-        """Build the takeoff-zone overlay: one smooth dark-purple region per split
-        sub-mission, drawn under the flight path. On flat ground the region is the
-        full circle around the first waypoint; where the terrain changes it is the
-        matching-elevation part of that circle. Each region is a single polygon
-        carrying its mission index and reference elevation. Returns the layer, or
-        None when every zone came back empty."""
-        to_wgs = result['to_wgs']
-        radius_m = result['radius_m']
-        layer = QgsVectorLayer(
-            'Polygon?crs=EPSG:4326&field=mission:integer'
-            '&field=ref_elevation_m:double',
-            'FlyPath — Takeoff Zone', 'memory')
-        layer.setCustomProperty('flypath_internal', True)
-
-        feats = []
-        indices = []
-        for z in result['zones']:
-            cx, cy = z['center_utm']
-            disk = QgsGeometry.fromPointXY(QgsPointXY(cx, cy)).buffer(radius_m, 48)
-            if z['flat']:
-                region = disk                       # whole circle qualifies
-            else:
-                cells = z['cells_utm']
-                if not cells:
-                    continue
-                # Buffer each qualifying sample and merge, so the region is one
-                # smooth blob rather than grid squares, then clip to the circle.
-                r = z['spacing']
-                blob = QgsGeometry.unaryUnion([
-                    QgsGeometry.fromPointXY(QgsPointXY(x, y)).buffer(r, 8)
-                    for x, y in cells
-                ])
-                region = blob.intersection(disk)
-                if region.isEmpty():
-                    continue
-            region.transform(to_wgs)
-            feat = QgsFeature()
-            feat.setGeometry(region)
-            feat.setAttributes([z['index'], round(z['ref_elev'], 1)])
-            feats.append(feat)
-            indices.append(z['index'])
-        if not feats:
-            return None
-
-        layer.dataProvider().addFeatures(feats)
-        layer.setRenderer(self._takeoff_renderer(indices))
-        layer.triggerRepaint()
-
-        # Place the zone directly beneath FlyPath's own path/marker layers, so it
-        # sits under the flight path, but above the user's layers, so an opaque
-        # DEM or basemap raster does not hide it (which a bottom insertion would).
-        proj = QgsProject.instance()
-        proj.addMapLayer(layer, False)
-        root = proj.layerTreeRoot()
-        own_ids = set(self._preview_layer_ids)
-        insert_at = 0
-        for i, node in enumerate(root.children()):
-            if getattr(node, 'layerId', lambda: None)() in own_ids:
-                insert_at = i + 1
-        root.insertLayer(insert_at, layer)
-        return layer
-
-    def _takeoff_renderer(self, indices):
-        """Rule-based renderer giving each mission's takeoff zone its own tone of
-        purple, so overlapping circles are tellable apart. A single (unsplit) zone
-        keeps the plain deep purple."""
-        single = len(indices) <= 1
-        root = QgsRuleBasedRenderer.Rule(None)
-        for m in indices:
-            r, g, b = _takeoff_purple(m)
-            sym = QgsFillSymbol.createSimple({
-                'color': '%d,%d,%d,120' % (r, g, b),      # translucent fill
-                'outline_color': '#%02X%02X%02X' % (r, g, b),
-                'outline_width': '0.5',
-            })
-            label = 'Takeoff zone' if single else 'Takeoff %d' % (m + 1)
-            root.appendChild(QgsRuleBasedRenderer.Rule(
-                sym, filterExp='"mission" = %d' % m, label=label))
-        return QgsRuleBasedRenderer(root)
-
     def _update_takeoff_gsd_var(self):
         """Show the GSD change the current tolerance allows at the current
         altitude, so the trade-off is visible before sampling the DEM."""
@@ -2936,7 +2844,7 @@ class FlyPathDialog(QWidget):
                 'ground elevations could be read.\n\nSelect a DEM that covers '
                 'the takeoff area, or switch to the online elevation source.')
             return False
-        layer = self._build_takeoff_zone_layer(result)
+        layer = map_overlays.create_takeoff(result, self._preview_layer_ids)
         if layer is None:
             QMessageBox.information(self, 'Takeoff Zone',
                 'No takeoff ground was found within %.0f m of the first waypoint '
@@ -2958,7 +2866,7 @@ class FlyPathDialog(QWidget):
     def _remove_takeoff_layer(self):
         """Remove the takeoff-zone map layer only, without touching the button."""
         if self._takeoff_layer_id:
-            QgsProject.instance().removeMapLayer(self._takeoff_layer_id)
+            map_overlays.remove(self._takeoff_layer_id)
             self._takeoff_layer_id = None
             self.iface.mapCanvas().refresh()
 
@@ -3090,61 +2998,6 @@ class FlyPathDialog(QWidget):
         return {'segments': segments, 'to_wgs': to_wgs, 'interval': interval,
                 'n_valid': n_valid, 'n_levels': len(levels)}
 
-    def _build_contour_layer(self, result):
-        """Build the DEM contour overlay: one labelled line feature per level,
-        drawn under the flight path. Returns the layer, or None when there are no
-        contour segments."""
-        segments = result['segments']
-        if not segments:
-            return None
-        by_level = {}
-        for level, seg in segments:
-            by_level.setdefault(level, []).append(
-                [QgsPointXY(*seg[0]), QgsPointXY(*seg[1])])
-
-        layer = QgsVectorLayer(
-            'LineString?crs=EPSG:4326&field=level:double',
-            'FlyPath — DEM Contours', 'memory')
-        layer.setCustomProperty('flypath_internal', True)
-        feats = []
-        for level, parts in by_level.items():
-            feat = QgsFeature()
-            feat.setGeometry(QgsGeometry.fromMultiPolylineXY(parts))
-            feat.setAttributes([round(level, 2)])
-            feats.append(feat)
-        layer.dataProvider().addFeatures(feats)
-
-        symbol = QgsLineSymbol.createSimple({
-            'color': '140,90,30,180', 'width': '0.25',
-        })
-        layer.renderer().setSymbol(symbol)
-
-        lbl = QgsPalLayerSettings()
-        lbl.fieldName = 'level'
-        try:
-            lbl.placement = Qgis.LabelPlacement.Line
-        except AttributeError:
-            lbl.placement = getattr(QgsPalLayerSettings, 'Line')
-        fmt = QgsTextFormat()
-        fmt.setFont(QFont('Segoe UI', 6))
-        fmt.setColor(QColor('#5A3C1E'))
-        fmt.setSize(6)
-        lbl.setFormat(fmt)
-        layer.setLabeling(QgsVectorLayerSimpleLabeling(lbl))
-        layer.setLabelsEnabled(True)
-
-        # Sit under FlyPath's path/markers but above the user's basemap/DEM.
-        proj = QgsProject.instance()
-        proj.addMapLayer(layer, False)
-        root = proj.layerTreeRoot()
-        own_ids = set(self._preview_layer_ids)
-        insert_at = 0
-        for i, node in enumerate(root.children()):
-            if getattr(node, 'layerId', lambda: None)() in own_ids:
-                insert_at = i + 1
-        root.insertLayer(insert_at, layer)
-        return layer
-
     def _on_toggle_contours(self, checked):
         """Toggle the DEM contour overlay from the single on/off button."""
         if checked:
@@ -3190,7 +3043,7 @@ class FlyPathDialog(QWidget):
                 'be read.\n\nSelect a DEM that covers it, or switch to the online '
                 'elevation source.')
             return False
-        layer = self._build_contour_layer(result)
+        layer = map_overlays.create_contours(result, self._preview_layer_ids)
         if layer is None:
             QMessageBox.information(self, 'DEM Contours',
                 'The terrain here is flat within the %.1f m contour interval, so '
@@ -3209,7 +3062,7 @@ class FlyPathDialog(QWidget):
     def _remove_contour_layer(self):
         """Remove the contour map layer only, without touching the button."""
         if self._contour_layer_id:
-            QgsProject.instance().removeMapLayer(self._contour_layer_id)
+            map_overlays.remove(self._contour_layer_id)
             self._contour_layer_id = None
             self.iface.mapCanvas().refresh()
 
