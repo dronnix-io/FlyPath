@@ -125,6 +125,7 @@ from . import controller_storage
 from . import survey_geometry
 from . import takeoff_adapter
 from . import mission_export
+from . import preview_layers
 from .planning_lifecycle import PlanningLifecycle
 from .flypath_sync import FlypathSyncError
 
@@ -594,16 +595,8 @@ _README_URL   = _REPO_URL + '#readme'
 _SITE_URL     = 'https://flypath.io'
 
 # ── Map preview colour constants ───────────────────────────────────────────
-_COLOR_START_MARKER  = '#CC2222'   # red filled circle — first waypoint
-_COLOR_END_MARKER    = '#2D6DB5'   # blue filled circle — last waypoint
-_COLOR_MID_MARKER    = 'white'     # white circle — intermediate waypoints
-
-# Match website js/planner-route-layer.js FLIGHT_COLORS, including repeat order.
-_MISSION_COLORS = ['#FFE600', '#ff9f43', '#a88bff', '#35c99a', '#ff6f91']
-
-
-def _mission_color(i):
-    return _MISSION_COLORS[i % len(_MISSION_COLORS)]
+_COLOR_START_MARKER = preview_layers.START_COLOR
+_COLOR_END_MARKER = preview_layers.END_COLOR
 
 
 # Distinct tones of purple, one per split mission's takeoff zone, so overlapping
@@ -4306,133 +4299,10 @@ class FlyPathDialog(QWidget):
         self._preview_heights = heights
         self._preview_ground = ground
         self._show_corridor_band()   # under the path (no-op in 2D)
-        line_layer = self._build_path_layer(missions)
-        wp_layer   = self._build_waypoints_layer(missions, heights, ground)
-        self._preview_layer_ids = [line_layer.id(), wp_layer.id()]
+        self._preview_layer_ids = preview_layers.create(
+            missions, heights, ground)
         self._update_web_buttons()
         self.iface.mapCanvas().refresh()
-
-    def _path_renderer(self, n_missions):
-        """Rule-based renderer that colours each split mission's line its own
-        colour. A single (unsplit) mission keeps the original yellow."""
-        root = QgsRuleBasedRenderer.Rule(None)
-        for m in range(max(1, n_missions)):
-            sym = QgsLineSymbol.createSimple({
-                'color': _mission_color(m), 'width': '0.8',
-                'capstyle': 'round', 'joinstyle': 'round',
-            })
-            label = 'Flight path' if n_missions <= 1 else f'Mission {m + 1}'
-            root.appendChild(QgsRuleBasedRenderer.Rule(
-                sym, filterExp=f'"mission" = {m}', label=label))
-        return QgsRuleBasedRenderer(root)
-
-    def _build_path_layer(self, missions):
-        """Create and register a LineString layer for the flight path, drawing
-        one colour-coded polyline per split mission."""
-        layer = QgsVectorLayer(
-            'LineString?crs=EPSG:4326&field=id:integer&field=mission:integer',
-            'FlyPath — Path', 'memory'
-        )
-        layer.setCustomProperty('flypath_internal', True)
-        layer.setRenderer(self._path_renderer(len(missions)))
-        self._populate_path_layer(layer, missions)
-        QgsProject.instance().addMapLayer(layer)
-        return layer
-
-    def _populate_path_layer(self, layer, missions):
-        """(Re)fill the path layer with one polyline per mission, in place.
-
-        Missions are drawn as separate polylines with no line joining one to
-        the next: the drone lands and swaps battery between them, so there is
-        no flight leg connecting them."""
-        dp = layer.dataProvider()
-        dp.truncate()
-        feats = []
-        for m, wps in enumerate(missions):
-            if len(wps) < 2:
-                continue
-            feat = QgsFeature()
-            feat.setGeometry(QgsGeometry.fromPolylineXY(
-                [QgsPointXY(lon, lat) for lon, lat in wps]
-            ))
-            feat.setAttributes([m, m])
-            feats.append(feat)
-        dp.addFeatures(feats)
-        layer.triggerRepaint()
-
-    def _build_waypoints_layer(self, missions, heights=None, ground=None):
-        """Create and register a rule-based Point layer for waypoint markers.
-        The map label is the waypoint number; with terrain follow, each waypoint's
-        attribute table also carries its ground elevation (m) and its flight
-        height H (m, relative to the launch point, as shown on the RC)."""
-        layer = QgsVectorLayer(
-            'Point?crs=EPSG:4326&field=seq:integer&field=wp_type:string(10)'
-            '&field=mission:integer&field=ground_elevation_m:double'
-            '&field=flight_height_m:double',
-            'FlyPath — Waypoints', 'memory'
-        )
-        layer.setCustomProperty('flypath_internal', True)
-        self._populate_waypoints_layer(layer, missions, heights, ground)
-
-        root = QgsRuleBasedRenderer.Rule(None)
-        for expr, color, border, size, label in [
-            ('"wp_type" = \'start\'', _COLOR_START_MARKER, _COLOR_MID_MARKER, '7.5', 'Start'),
-            ('"wp_type" = \'end\'',   _COLOR_END_MARKER,   _COLOR_MID_MARKER, '7.5', 'End'),
-            ('"wp_type" = \'mid\'',   _COLOR_MID_MARKER,   '#FFE600',         '4.0', 'Waypoint'),
-        ]:
-            sym = QgsMarkerSymbol.createSimple({
-                'name': 'circle', 'color': color,
-                'outline_color': border, 'outline_width': '0.4',
-                'size': size,
-            })
-            root.appendChild(QgsRuleBasedRenderer.Rule(sym, filterExp=expr, label=label))
-        layer.setRenderer(QgsRuleBasedRenderer(root))
-
-        lbl = QgsPalLayerSettings()
-        lbl.fieldName = 'seq'
-        try:
-            lbl.placement = Qgis.LabelPlacement.OverPoint
-        except AttributeError:
-            lbl.placement = getattr(QgsPalLayerSettings, 'OverPoint')
-        lbl.priority = 10
-        fmt = QgsTextFormat()
-        fmt.setFont(QFont('Segoe UI', 7, _FontBold))
-        fmt.setColor(QColor('#1E2128'))
-        fmt.setSize(7)
-        lbl.setFormat(fmt)
-        layer.setLabeling(QgsVectorLayerSimpleLabeling(lbl))
-        layer.setLabelsEnabled(True)
-
-        QgsProject.instance().addMapLayer(layer)
-        return layer
-
-    def _populate_waypoints_layer(self, layer, missions, heights=None, ground=None):
-        """(Re)fill the waypoint markers, in place. Each mission is numbered
-        from 1 on its own and gets its own start and end marker. With terrain
-        follow, each waypoint also carries its ground elevation and flight height
-        H (both NULL for a flat, non-terrain mission)."""
-        dp = layer.dataProvider()
-        dp.truncate()
-        wp_feats = []
-        for m, wps in enumerate(missions):
-            last_idx = len(wps) - 1
-            m_h = heights[m] if heights and m < len(heights) else None
-            m_g = ground[m] if ground and m < len(ground) else None
-            for i, (lon, lat) in enumerate(wps):
-                f = QgsFeature()
-                f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(lon, lat)))
-                if i == 0:
-                    wp_type = 'start'
-                elif i == last_idx:
-                    wp_type = 'end'
-                else:
-                    wp_type = 'mid'
-                g = m_g[i] if m_g and i < len(m_g) else None
-                h = m_h[i] if m_h and i < len(m_h) else None
-                f.setAttributes([i + 1, wp_type, m, g, h])
-                wp_feats.append(f)
-        dp.addFeatures(wp_feats)
-        layer.triggerRepaint()
 
     def _sync_preview(self):
         """Keep an already-shown preview in sync with the current parameters.
@@ -4463,32 +4333,13 @@ class FlyPathDialog(QWidget):
 
     def _redraw_preview_layers(self, missions, heights=None, ground=None):
         """Refresh the existing preview layers in place from new missions."""
-        proj = QgsProject.instance()
-        line_layer = (proj.mapLayer(self._preview_layer_ids[0])
-                      if len(self._preview_layer_ids) >= 1 else None)
-        wp_layer   = (proj.mapLayer(self._preview_layer_ids[1])
-                      if len(self._preview_layer_ids) >= 2 else None)
-        if line_layer is None or wp_layer is None:
-            # Layers were removed outside the plugin — rebuild from scratch.
-            for layer_id in self._preview_layer_ids:
-                if proj.mapLayer(layer_id):
-                    proj.removeMapLayer(layer_id)
-            line_layer = self._build_path_layer(missions)
-            wp_layer   = self._build_waypoints_layer(missions, heights, ground)
-            self._preview_layer_ids = [line_layer.id(), wp_layer.id()]
-        else:
-            # The mission count can change between syncs (the split value or the
-            # line count moved), so rebuild the colour rules before refilling.
-            line_layer.setRenderer(self._path_renderer(len(missions)))
-            self._populate_path_layer(line_layer, missions)
-            self._populate_waypoints_layer(wp_layer, missions, heights, ground)
+        self._preview_layer_ids = preview_layers.redraw(
+            self._preview_layer_ids, missions, heights, ground)
         self.iface.mapCanvas().refresh()
 
     def _on_clear_preview(self, reset_area=True):
         # Always remove the flight-path preview layers and the corridor overlay
-        for lid in self._preview_layer_ids:
-            if QgsProject.instance().mapLayer(lid):
-                QgsProject.instance().removeMapLayer(lid)
+        preview_layers.remove(self._preview_layer_ids)
         self._preview_layer_ids = []
         self._clear_corridor_band()
         self._waypoints = []
@@ -4913,9 +4764,7 @@ class FlyPathDialog(QWidget):
         self.previewBtn.setText('Preview on Map')
         if self.terrainFollowCheck.isChecked():
             self._terrain_failed = True
-        line_layer = self._build_path_layer(self._missions)
-        wp_layer = self._build_waypoints_layer(self._missions)
-        self._preview_layer_ids = [line_layer.id(), wp_layer.id()]
+        self._preview_layer_ids = preview_layers.create(self._missions)
         self._update_web_buttons()
         self.iface.mapCanvas().refresh()
 
