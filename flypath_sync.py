@@ -169,6 +169,11 @@ def validate_mission(mission):
         for key in ('name', 'drone_model'):
             if mission.get(key) is not None and not isinstance(mission[key], str):
                 raise ValueError()
+        if mission.get('source_product') not in (None, 'plugin', 'website'):
+            raise ValueError()
+        for key in ('planning_request', 'planning_result'):
+            if mission.get(key) is not None and not isinstance(mission[key], dict):
+                raise ValueError()
         for key in ('polygon', 'waypoints'):
             points = mission.get(key, [])
             if not isinstance(points, list) or len(points) > MAX_MISSION_POINTS:

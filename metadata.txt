@@ -1,7 +1,7 @@
 [general]
 name=FlyPath
-qgisMinimumVersion=3.16
-qgisMaximumVersion=4.99
+qgisMinimumVersion=3.44.14
+qgisMaximumVersion=3.44.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
 version=2.4.1
 changelog=2.4.1 - Fixed the My missions list showing the mission update time in UTC instead of

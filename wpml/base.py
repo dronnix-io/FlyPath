@@ -35,6 +35,9 @@ class MissionSpec:
     # interval capture manually. 'full': every waypoint is a photo location and
     # the writer adds a takePhoto action to each (full-automatic 2D mapping).
     capture_mode: str = 'semi'
+    # Engine-owned ordered actions for this flight. None keeps legacy behavior;
+    # a list is serialized exactly by the consumer writer.
+    actions: list = None
     # Terrain follow: per-waypoint executeHeight (metres, relative to the launch
     # point) so the drone holds a constant height above ground. None = a single
     # altitude for every waypoint (flat). When set, must match waypoints length.

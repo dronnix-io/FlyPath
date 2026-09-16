@@ -8,9 +8,17 @@ from pathlib import Path
 _PROFILE_FILE = Path(__file__).with_name("profiles") / "drones.json"
 
 
+PROFILE_VERSION = 1
+
+
 @lru_cache(maxsize=1)
+def _profile_source():
+    return _PROFILE_FILE.read_text(encoding="utf-8")
+
+
 def load_drone_profiles():
-    profiles = json.loads(_PROFILE_FILE.read_text(encoding="utf-8"))
+    # Parse a fresh object so callers cannot mutate cached catalogue state.
+    profiles = json.loads(_profile_source())
     if not isinstance(profiles, dict) or not profiles:
         raise ValueError("Drone profiles must be a non-empty object.")
     codes = [profile.get("website_code") for profile in profiles.values() if profile.get("website_code")]

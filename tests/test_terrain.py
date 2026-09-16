@@ -98,6 +98,20 @@ def test_densify_relaxes_toward_max_points():
     assert len(bounded) <= 40, 'relaxation should bring it within the budget'
 
 
+def test_corridor_densifies_interior_legs():
+    def ramp(lon, lat):
+        return lon * 100000.0
+    # A curved corridor pass has interior vertices; its second leg must be
+    # sampled too instead of being mistaken for a short grid connector.
+    wps = [(0.0, 0.0), (0.01, 0.0), (0.02, 0.0)]
+    grid, _ = densify_by_terrain(wps, ramp, tolerance_m=50.0)
+    corridor, elevations = densify_by_terrain(
+        wps, ramp, tolerance_m=50.0, all_legs=True)
+    assert len(corridor) > len(grid)
+    assert any(0.01 < lon < 0.02 for lon, _ in corridor)
+    assert len(corridor) == len(elevations)
+
+
 # ── Height calculation ──────────────────────────────────────────────────────
 
 def test_heights_hold_constant_agl():

@@ -30,8 +30,14 @@ def boustrophedon_route(columns, densify_spacing=None):
     endpoints are returned. Returns a flat list of (x, y) points in the rotated
     frame.
     """
+    return [point for survey_pass in boustrophedon_passes(columns, densify_spacing)
+            for point in survey_pass]
+
+
+def boustrophedon_passes(columns, densify_spacing=None):
+    """Return ordered survey passes without losing boundaries to densification."""
     cells, adjacency = decompose_cells(columns)
-    return order_cells(cells, adjacency, densify_spacing)
+    return order_cell_passes(cells, adjacency, densify_spacing)
 
 
 def decompose_cells(columns):
@@ -108,6 +114,12 @@ def cell_turns(cell, densify_spacing=None):
     return turns
 
 
+def cell_passes(cell, densify_spacing=None):
+    return [(_pass_points(x, ylo, yhi, densify_spacing)
+             if k % 2 == 0 else _pass_points(x, ylo, yhi, densify_spacing)[::-1])
+            for k, (x, ylo, yhi) in enumerate(cell)]
+
+
 def _visit_order(turnlists, adjacency):
     """Depth-first cell order that sweeps the area cleanly, corner to corner.
 
@@ -156,22 +168,38 @@ def order_cells(cells, adjacency, densify_spacing=None):
     cell's exit. Every pass itself lies within a single strip."""
     # Each cell has >= 1 segment, so cell_turns yields >= 2 points; indices stay
     # aligned with `adjacency`.
-    turnlists = [cell_turns(c, densify_spacing) for c in cells]
+    return [point for survey_pass in order_cell_passes(cells, adjacency, densify_spacing)
+            for point in survey_pass]
+
+
+def order_cell_passes(cells, adjacency, densify_spacing=None):
+    """Order cells while retaining each real scan-line segment as one pass."""
+    passlists = [cell_passes(c, densify_spacing) for c in cells]
+    turnlists = [[point for survey_pass in passes for point in survey_pass]
+                 for passes in passlists]
     if not turnlists:
         return []
     route = []
+    ordered = []
     cur = None
     for k in _visit_order(turnlists, adjacency):
         t = turnlists[k]
         if cur is None:
             chosen = t
+            chosen_passes = passlists[k]
         else:
             fwd = (t[0][0] - cur[0]) ** 2 + (t[0][1] - cur[1]) ** 2
             rev = (t[-1][0] - cur[0]) ** 2 + (t[-1][1] - cur[1]) ** 2
-            chosen = t if fwd <= rev else t[::-1]
+            if fwd <= rev:
+                chosen = t
+                chosen_passes = passlists[k]
+            else:
+                chosen = t[::-1]
+                chosen_passes = [survey_pass[::-1] for survey_pass in passlists[k][::-1]]
         route.extend(chosen)
+        ordered.extend(chosen_passes)
         cur = route[-1]
-    return route
+    return ordered
 
 
 def split_waypoints(waypoints, n_missions):

@@ -78,7 +78,7 @@ def write(drone, spec, filepath):
     # back scrambled (issue #13).
     placemarks = _placemark_blocks(spec.waypoints, spec.altitude_m, spec.speed_ms,
                                    spec.gimbal_pitch, spec.capture_mode, spec.heights,
-                                   spec.curved_path)
+                                   spec.curved_path, spec.actions)
     template_kml   = _build_template_kml(mission_config, ts_ms, spec.mission_name,
                                          spec.speed_ms, spec.altitude_m, height_mode,
                                          placemarks)
@@ -147,7 +147,7 @@ def _build_template_kml(mission_config, ts_ms, mission_name,
 
 
 def _placemark_blocks(waypoints, altitude_m, speed_ms, gimbal_pitch,
-                      capture_mode='semi', heights=None, curved=True):
+                      capture_mode='semi', heights=None, curved=True, actions=None):
     """Build the waypoint Placemark list shared by template.kml and waylines.wpml.
 
     In 'full' capture mode every waypoint also carries a takePhoto action, so
@@ -161,10 +161,23 @@ def _placemark_blocks(waypoints, altitude_m, speed_ms, gimbal_pitch,
     placemark_blocks = []
     group_id = 1                                     # unique per action group
     full = capture_mode == 'full'
+    planned = None
+    if actions is not None:
+        planned = {index: [] for index in range(len(waypoints))}
+        for action in actions:
+            index = action.get('waypoint_index') if isinstance(action, dict) else None
+            if type(index) is not int or index not in planned:
+                raise ValueError('Planned action does not match the flight waypoints.')
+            planned[index].append(action)
 
     for idx, (lon, lat) in enumerate(waypoints):
         action_groups = ''
-        if idx == 0 and full:
+        if planned is not None:
+            if planned[idx]:
+                action_groups += _planned_action_group(
+                    group_id, idx, planned[idx], gimbal_pitch)
+                group_id += 1
+        elif idx == 0 and full:
             action_groups += _first_capture_action_group(group_id=group_id,
                                                           pitch_angle=gimbal_pitch)
             group_id += 1
@@ -183,6 +196,53 @@ def _placemark_blocks(waypoints, altitude_m, speed_ms, gimbal_pitch,
         )
 
     return '\n'.join(placemark_blocks)
+
+
+def _planned_action_group(group_id, index, actions, gimbal_pitch):
+    """Serialize one engine-owned ordered action sequence at a waypoint."""
+    blocks = []
+    for action_id, action in enumerate(actions):
+        kind = action.get('type')
+        if kind == 'rotate_camera':
+            pitch = action.get('pitch_deg', gimbal_pitch)
+            body = f'''            <wpml:actionActuatorFunc>gimbalRotate</wpml:actionActuatorFunc>
+            <wpml:actionActuatorFuncParam>
+              <wpml:gimbalHeadingYawBase>aircraft</wpml:gimbalHeadingYawBase>
+              <wpml:gimbalRotateMode>absoluteAngle</wpml:gimbalRotateMode>
+              <wpml:gimbalPitchRotateEnable>1</wpml:gimbalPitchRotateEnable>
+              <wpml:gimbalPitchRotateAngle>{pitch}</wpml:gimbalPitchRotateAngle>
+              <wpml:gimbalRollRotateEnable>0</wpml:gimbalRollRotateEnable>
+              <wpml:gimbalYawRotateEnable>0</wpml:gimbalYawRotateEnable>
+              <wpml:gimbalRotateTimeEnable>0</wpml:gimbalRotateTimeEnable>
+              <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
+            </wpml:actionActuatorFuncParam>'''
+        elif kind == 'hover':
+            body = f'''            <wpml:actionActuatorFunc>hover</wpml:actionActuatorFunc>
+            <wpml:actionActuatorFuncParam>
+              <wpml:hoverTime>{float(action['duration_s']):.1f}</wpml:hoverTime>
+            </wpml:actionActuatorFuncParam>'''
+        elif kind == 'take_photo':
+            body = '''            <wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>
+            <wpml:actionActuatorFuncParam>
+              <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
+            </wpml:actionActuatorFuncParam>'''
+        else:
+            raise ValueError('Unsupported planned action: %s.' % kind)
+        blocks.append(f'''          <wpml:action>
+            <wpml:actionId>{action_id}</wpml:actionId>
+{body}
+          </wpml:action>''')
+    return f'''        <wpml:actionGroup>
+          <wpml:actionGroupId>{group_id}</wpml:actionGroupId>
+          <wpml:actionGroupStartIndex>{index}</wpml:actionGroupStartIndex>
+          <wpml:actionGroupEndIndex>{index}</wpml:actionGroupEndIndex>
+          <wpml:actionGroupMode>sequence</wpml:actionGroupMode>
+          <wpml:actionTrigger>
+            <wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>
+          </wpml:actionTrigger>
+{chr(10).join(blocks)}
+        </wpml:actionGroup>
+'''
 
 
 def _build_waylines_wpml(mission_config, speed_ms, height_mode, placemarks):

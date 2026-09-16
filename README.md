@@ -75,12 +75,12 @@ A walkthrough of installing and using FlyPath in QGIS: defining a survey area, s
 | Requirement | Details |
 |---|---|
 | Operating System | Windows 10 / 11 |
-| QGIS | 3.16 or later (4.x supported) |
-| Python | 3.9+ (bundled with QGIS) |
+| QGIS | 3.44 LTR; this candidate was tested on 3.44.14 |
+| Python | 3.10+ required by the engine; tested with QGIS Python 3.12 |
 | Drone | DJI Mini 3 Pro, Mini 4 Pro, Mini 5 Pro, Air 3, Air 3S, Mavic 3 Classic, or Mavic 4 Pro |
 | Controller | DJI RC2 (for direct USB export) |
 
-> Linux and macOS support is planned for a future release.
+> This engine migration candidate was tested on Windows with QGIS 3.44.14. Other QGIS versions and platforms require validation. The engine requires Shapely 2.1+ and pyproj 3.7+.
 
 ---
 
