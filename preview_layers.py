@@ -50,6 +50,14 @@ def remove(layer_ids, project=None):
             project.removeMapLayer(layer_id)
 
 
+def remove_stale(project=None):
+    """Remove FlyPath's temporary layers left in a reopened QGIS project."""
+    project = project or QgsProject.instance()
+    for layer_id, layer in list(project.mapLayers().items()):
+        if layer.customProperty('flypath_internal'):
+            project.removeMapLayer(layer_id)
+
+
 def _path_renderer(count):
     root = QgsRuleBasedRenderer.Rule(None)
     for mission in range(max(1, count)):

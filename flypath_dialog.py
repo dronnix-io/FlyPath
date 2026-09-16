@@ -4173,14 +4173,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         self._disconnect_layer_signals()
         self._remove_survey_area_layer()
         self._on_clear_preview(reset_area=False)
-        # Belt-and-suspenders: remove any remaining flypath_internal layers
-        # (e.g. if the user moved the panel or state got out of sync)
-        to_remove = [
-            lid for lid, layer in QgsProject.instance().mapLayers().items()
-            if layer.customProperty('flypath_internal')
-        ]
-        for lid in to_remove:
-            QgsProject.instance().removeMapLayer(lid)
+        # Belt-and-suspenders cleanup if panel state got out of sync.
+        preview_layers.remove_stale()
         try:
             QgsProject.instance().layersAdded.disconnect(self._refresh_layer_combo)
             QgsProject.instance().layersRemoved.disconnect(self._refresh_layer_combo)

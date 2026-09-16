@@ -3,7 +3,9 @@ import os
 from qgis.PyQt.QtWidgets import QAction, QDockWidget, QTabWidget
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtCore import Qt
+from qgis.core import QgsProject
 
+from . import preview_layers
 from .flypath_dialog import FlyPathDialog
 from .flypath_library import MissionLibrary
 
@@ -27,6 +29,9 @@ class FlyPath:
         self.panel = None
 
     def initGui(self):
+        project = QgsProject.instance()
+        preview_layers.remove_stale(project)
+        project.readProject.connect(self._remove_stale_layers)
         icon = QIcon(os.path.join(self.plugin_dir, 'icon.png'))
         self.action = QAction(icon, 'FlyPath', self.iface.mainWindow())
         self.action.setCheckable(True)
@@ -67,6 +72,10 @@ class FlyPath:
         self.dock_widget.visibilityChanged.connect(self.action.setChecked)
 
     def unload(self):
+        try:
+            QgsProject.instance().readProject.disconnect(self._remove_stale_layers)
+        except (TypeError, RuntimeError):
+            pass
         self.iface.removeToolBarIcon(self.action)
         self.iface.removePluginMenu('FlyPath', self.action)
         if self.dock_widget:
@@ -76,6 +85,9 @@ class FlyPath:
             self.iface.mainWindow().removeDockWidget(self.dock_widget)
             self.dock_widget.setParent(None)
             self.dock_widget = None
+
+    def _remove_stale_layers(self, *_):
+        preview_layers.remove_stale()
 
     def toggle_panel(self, checked):
         if checked:

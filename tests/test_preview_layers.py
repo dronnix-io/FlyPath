@@ -39,7 +39,13 @@ def test_preview_layers_create_redraw_and_recover():
         assert rows[3][2] == 'start' and rows[4][2] == 'end'
         assert len(path.renderer().rootRule().children()) == 2
 
-        project.removeMapLayer(ids[0])
+        ordinary = module.QgsVectorLayer('Point?crs=EPSG:4326', 'User layer', 'memory')
+        project.addMapLayer(ordinary)
+        module.remove_stale(project)
+        assert project.mapLayer(ordinary.id()) is ordinary
+        assert not any(project.mapLayer(layer_id) for layer_id in ids), \
+            'Plugin startup must remove stale FlyPath layers restored by QGIS'
+
         replacement = module.redraw(ids, [missions[0]], project=project)
         assert replacement != ids
         assert all(project.mapLayer(layer_id) for layer_id in replacement)
