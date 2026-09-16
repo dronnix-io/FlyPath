@@ -392,13 +392,14 @@ class WebsiteSyncLifecycleMixin:
         elif legacy and self._mission_type() != 'full':
             route = [(float(lon), float(lat)) for lat, lon in legacy]
             self._waypoints = route
-            self._missions = [route]
+            self._missions = self._split_missions(route)
             self._live_waypoints = route
-            self._live_missions = [route]
+            self._live_missions = self._missions
             self._shot_spacing_m = max(
                 self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5)
             restore_estimates()
-            self.waypointsLabel.setText(str(len(route)))
+            self.waypointsLabel.setText(str(sum(map(len, self._missions))))
+            self.linesLabel.setText(str(len(route) // 2))
             self._set_info('Saved route and estimates. Editing settings requires '
                            'regeneration with the installed planning engine.')
         else:

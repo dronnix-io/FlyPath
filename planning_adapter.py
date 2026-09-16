@@ -4,9 +4,12 @@ import math
 
 from .flypath_engine import __version__ as ENGINE_VERSION
 from .flypath_engine.planning import (
-    CONTRACT_VERSION, DIRECTION_CONVENTION, PlanningError as PlanningError, plan_2d,
+    CONTRACT_VERSION, DIRECTION_CONVENTION, PlanningError as _PlanningError, plan_2d,
 )
 from .flypath_engine.profiles import PROFILE_VERSION
+
+
+PlanningError = _PlanningError
 
 
 FINISH_ACTIONS = {

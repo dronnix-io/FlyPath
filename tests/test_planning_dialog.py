@@ -80,14 +80,25 @@ def test_planning_dialog_state():
         assert planner._missions == expected
         shared = planner._website_payload('Shared mission')
         saved_result = shared['planning_result']
-        legacy = dict(mission, waypoints=mission['polygon'][:2], estimates={
-            'time': '1 min', 'distance': '0.23 km', 'photos': '11',
-            'batteries': '1', 'area': '0.96 ha',
-            'statistics': {'strip_count': 12}})
+        legacy_points = [
+            [51.0100, -114.0200], [51.0130, -114.0200],
+            [51.0130, -114.0185], [51.0100, -114.0185],
+            [51.0100, -114.0170], [51.0130, -114.0170],
+            [51.0130, -114.0155], [51.0100, -114.0155],
+        ]
+        legacy = dict(mission,
+                      settings=dict(mission['settings'], terrain_follow=True,
+                                    split_count=2),
+                      waypoints=legacy_points,
+                      estimates={'time': '2 min', 'distance': '0.97 km',
+                                 'photos': '60', 'batteries': '1',
+                                 'area': '3.5 ha'})
         planner._apply_website_mission(legacy)
-        assert planner.photosLabel.text() == '11', 'Show saved estimates on load'
-        assert planner.waypointsLabel.text() == '2'
-        assert planner.linesLabel.text() == '12', 'Show saved line count on load'
+        assert planner.photosLabel.text() == '60', 'Show saved estimates on load'
+        assert planner.waypointsLabel.text() == '9', 'Count the shared split seam'
+        assert planner.linesLabel.text() == '4', 'Derive lines from endpoint pairs'
+        assert len(planner._missions) == 2
+        assert sum(map(len, planner._missions)) == 9
         assert planner._waypoints == [tuple(reversed(p)) for p in legacy['waypoints']]
         loaded_route = deepcopy(planner._waypoints)
         with patch.object(planner, '_generate_waypoints',
@@ -98,7 +109,8 @@ def test_planning_dialog_state():
 
         full_legacy = deepcopy(mission)
         full_legacy['settings'].update(capture_mode='full', front_overlap=50,
-                                       auto_direction=True, direction=90)
+                                       auto_direction=True, direction=90,
+                                       terrain_follow=False)
         full_legacy['waypoints'] = mission['polygon'][:2]
         planner._apply_website_mission(full_legacy)
         assert planner._planning.result, \
