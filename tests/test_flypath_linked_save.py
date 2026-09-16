@@ -20,6 +20,7 @@ def test_linked_save():
         raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
     sync = module.flypath_sync
     planner = SimpleNamespace(
+        _planning=module.PlanningLifecycle(),
         _website_link=None, _preview_layer_ids=['preview'], _missions=[[1]],
         _update_web_buttons=lambda: None,
         _website_payload=lambda name: {'name': name, 'settings': {'altitude': 80}},

@@ -9,6 +9,8 @@ so writers take one object instead of a long argument list. `esc` and
 """
 
 import io
+import os
+import tempfile
 import zipfile
 from dataclasses import dataclass
 
@@ -58,10 +60,24 @@ def esc(text):
 
 
 def package_kmz(filepath, entries):
-    """Write a .kmz (zip) from an ordered list of (arcname, text) entries."""
+    """Atomically replace a .kmz with ordered ``(arcname, text)`` entries."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
         for arc, content in entries:
             zf.writestr(arc, content)
-    with open(filepath, 'wb') as f:
-        f.write(buf.getvalue())
+    directory = os.path.dirname(os.path.abspath(filepath))
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                mode='wb', dir=directory, prefix='.flypath-', suffix='.kmz',
+                delete=False) as output:
+            temporary = output.name
+            output.write(buf.getvalue())
+        os.replace(temporary, filepath)
+        temporary = None
+    finally:
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass

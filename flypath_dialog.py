@@ -126,6 +126,7 @@ from .wpml import MissionSpec, write_mission
 from .hardware import registry
 from . import flypath_sync
 from . import planning_adapter
+from .planning_lifecycle import PlanningLifecycle
 from .flypath_sync import FlypathSyncError
 
 try:
@@ -821,14 +822,9 @@ class FlyPathDialog(QWidget):
         self._missions           = []     # last previewed plan, split into sub-missions
         self._live_waypoints     = None   # last grid computed for stats/live sync
         self._live_missions      = None   # last grid split by the current split count
-        self._planning_request   = None   # versioned request behind the current 2D plan
-        self._planning_result    = None   # one shared source for preview/stats/export
-        self._planning_locations = None   # imported launch/home data has no UI yet
+        self._planning = PlanningLifecycle()
         self._preview_heights    = []     # committed preview values parallel to missions
         self._preview_ground     = []
-        self._saved_plan_locked  = False  # imported routes regenerate only via Preview
-        self._saved_plan_dirty   = False  # controls changed since an imported route loaded
-        self._unsupported_saved_plan = False
         self._split_choice_required = False
         self._terrain_failed     = False
         self._loading_mission    = False
@@ -2162,8 +2158,7 @@ class FlyPathDialog(QWidget):
         self.exportBtn.clicked.connect(self._on_export)
 
     def _on_param_changed(self):
-        if self._saved_plan_locked:
-            self._saved_plan_dirty = True
+        if self._planning.settings_changed():
             self.previewBtn.setText('Regenerate on Map')
             self._update_gsd()
             self._update_interval()
@@ -4012,7 +4007,7 @@ class FlyPathDialog(QWidget):
             requested_flights=self.splitSpin.value() if self.splitCheck.isChecked() else 1,
             max_waypoints_per_flight=self.maxWaypointsSpin.value(),
             cross_hatch=self.crossHatchCheck.isChecked(),
-            locations=self._planning_locations,
+            locations=self._planning.locations,
         )
 
     def _apply_planning_result(self, request, result, *, flights=None):
@@ -4020,9 +4015,7 @@ class FlyPathDialog(QWidget):
             flights = planning_adapter.consume_result(request, result)
         route = [(row['position']['longitude_deg'], row['position']['latitude_deg'])
                  for row in result['route']['waypoints']]
-        self._planning_request = request
-        self._planning_result = result
-        self._planning_locations = request.get('locations')
+        self._planning.record(request, result)
         self._waypoints = route
         self._shot_spacing_m = result['capture']['shot_spacing_m']
         self._missions = [flight['waypoints'] for flight in flights]
@@ -4057,8 +4050,7 @@ class FlyPathDialog(QWidget):
             self._apply_planning_result(request, result)
             return result
         except (ValueError, planning_adapter.PlanningError) as exc:
-            self._planning_request = None
-            self._planning_result = None
+            self._planning.plan_failed()
             self._waypoints = []
             self._missions = []
             self._shot_spacing_m = 0.0
@@ -4096,7 +4088,7 @@ class FlyPathDialog(QWidget):
 
         Uses the actual mission count, which in full-auto can exceed the Split
         Missions value when the waypoint cap forces extra missions."""
-        current = self._missions if self._planning_result else self._live_missions
+        current = self._missions if self._planning.result else self._live_missions
         n = len(current) if current else self.splitSpin.value()
         prev = self.splitPartCombo.currentData()
         self.splitPartCombo.blockSignals(True)
@@ -4123,7 +4115,7 @@ class FlyPathDialog(QWidget):
             self._update_stats_corridor()
             return
         if self._uses_shared_planning():
-            if self._saved_plan_locked:
+            if self._planning.locked:
                 return
             if self._plan_shared() is None:
                 self._clear_stats()
@@ -4365,7 +4357,7 @@ class FlyPathDialog(QWidget):
         super().showEvent(event)
         # Bring the HUD back when the panel reopens, if there is a live plan.
         if self._hud is not None and (
-                self._waypoints or self._live_waypoints or self._planning_result):
+                self._waypoints or self._live_waypoints or self._planning.result):
             self._show_hud()
         self._show_info_hud()   # the info card follows the panel's visibility
 
@@ -4379,24 +4371,25 @@ class FlyPathDialog(QWidget):
     def _on_preview(self):
         if not self._has_survey_area():
             return
-        if self._saved_plan_locked and not self._saved_plan_dirty and self._missions:
+        action = self._planning.begin_preview(
+            has_saved_route=bool(self._missions),
+            split_choice_required=self._split_choice_required)
+        if action == 'restore':
             self._redraw_preview_layers(
                 self._missions, self._preview_heights, self._preview_ground)
             return
-        if self._unsupported_saved_plan:
+        if action == 'unsupported':
             QMessageBox.warning(
                 self, 'Cannot Regenerate Mission',
                 'This saved plan uses an unsupported planning version. Update '
                 'FlyPath before regenerating or exporting it.')
             return
-        if self._split_choice_required:
+        if action == 'choose_splitting':
             QMessageBox.warning(
                 self, 'Choose Splitting',
                 'This older mission does not record whether splitting was '
                 'enabled. Choose the Splitting checkbox before regenerating it.')
             return
-        self._saved_plan_locked = False
-        self._saved_plan_dirty = False
         self.previewBtn.setText('Preview on Map')
         self._on_clear_preview(reset_area=False)
         if self._mission_kind() == 'corridor':
@@ -4410,7 +4403,7 @@ class FlyPathDialog(QWidget):
             if result is None:
                 return
             waypoints, shot_spacing_m = result
-            if self._uses_shared_planning() and self._planning_result:
+            if self._uses_shared_planning() and self._planning.result:
                 missions_h = [(part, None, None) for part in self._missions]
             else:
                 missions_h = self._missions_with_heights(
@@ -4562,7 +4555,7 @@ class FlyPathDialog(QWidget):
         """
         if not self._preview_layer_ids:
             return
-        shared = bool(self._planning_result)
+        shared = bool(self._planning.result)
         missions = self._missions if shared else self._live_missions
         flat = self._waypoints if shared else self._live_waypoints
         if not flat or len(flat) < 2 or not missions:
@@ -4613,12 +4606,9 @@ class FlyPathDialog(QWidget):
         self._missions = []
         self._preview_heights = []
         self._preview_ground = []
-        self._planning_request = None
-        self._planning_result = None
+        self._planning.clear_preview()
         self._shot_spacing_m = 0.0
         self._gen_elevations = None
-        if self._saved_plan_locked:
-            self._saved_plan_dirty = True
         # The takeoff zone and contours belong to the plan being cleared.
         self._on_clear_takeoff_zone()
         self._on_clear_contours()
@@ -4637,11 +4627,8 @@ class FlyPathDialog(QWidget):
             self._survey_polygon_crs = None
             self._survey_line        = None
             self._survey_line_crs    = None
-            self._saved_plan_locked  = False
-            self._saved_plan_dirty   = False
-            self._unsupported_saved_plan = False
             self._split_choice_required = False
-            self._planning_locations = None
+            self._planning.reset()
             self._live_missions      = None
             self._split_overridden   = False
             self.autoDirectionBtn.setChecked(False)
@@ -4781,9 +4768,7 @@ class FlyPathDialog(QWidget):
     # ── Push ─────────────────────────────────────────────
 
     def _on_send_to_website(self, save_as_new=False):
-        if (getattr(self, '_unsupported_saved_plan', False)
-                or (getattr(self, '_saved_plan_locked', False)
-                    and getattr(self, '_saved_plan_dirty', False))):
+        if self._planning.save_requires_regeneration():
             QMessageBox.warning(
                 self, 'Regeneration Required',
                 'The saved route no longer matches the editable settings. Choose '
@@ -4867,8 +4852,8 @@ class FlyPathDialog(QWidget):
                 else self._survey_polygon_wgs84())
         if not area:
             raise FlypathSyncError('This mission has no survey area to send.')
-        if not corridor and self._planning_request:
-            survey_area = self._planning_request.get('survey_area', {})
+        if not corridor and self._planning.request:
+            survey_area = self._planning.request.get('survey_area', {})
             if survey_area.get('parts') or survey_area.get('holes'):
                 raise FlypathSyncError(
                     'FlyPath website sync cannot yet store polygon holes or '
@@ -4894,9 +4879,9 @@ class FlyPathDialog(QWidget):
             'estimates': self._website_estimates(),
             'source_product': 'plugin',
         }
-        if self._planning_request and self._planning_result:
-            payload['planning_request'] = self._planning_request
-            payload['planning_result'] = self._planning_result
+        if self._planning.request and self._planning.result:
+            payload['planning_request'] = self._planning.request
+            payload['planning_result'] = self._planning.result
         return payload
 
     def _website_settings(self):
@@ -4968,8 +4953,8 @@ class FlyPathDialog(QWidget):
             'area':       self.coverageLabel.text(),
             'area_m2':    (measure_survey_area(self._survey_polygon, self._survey_polygon_crs)
                            if self._mission_kind() == '2d' else None),
-            'statistics': (self._planning_result['statistics']
-                           if self._planning_result else self._live_statistics),
+            'statistics': (self._planning.result['statistics']
+                           if self._planning.result else self._live_statistics),
             'flight_count': len(self._missions or []),
         }
 
@@ -5001,12 +4986,10 @@ class FlyPathDialog(QWidget):
         self._on_clear_preview(reset_area=False)
         self._clear_stats()
         self.previewBtn.setText('Preview on Map')
-        self._unsupported_saved_plan = False
-        self._planning_locations = None
         if result:
             supported, flights = provenance
             self._apply_planning_result(request, result, flights=flights)
-            self._unsupported_saved_plan = not supported
+            self._planning.preserve_imported_route(supported=supported)
         elif legacy and self._mission_type() != 'full':
             route = [(float(lon), float(lat)) for lat, lon in legacy]
             self._waypoints = route
@@ -5020,19 +5003,17 @@ class FlyPathDialog(QWidget):
             self._set_info('Saved route and estimates. Editing settings requires '
                            'regeneration with the installed planning engine.')
         else:
-            self._saved_plan_locked = False
-            self._saved_plan_dirty = False
+            self._planning.begin_preview(has_saved_route=False)
             if not self._split_choice_required:
                 self._on_preview()
-                if not self._planning_result:
+                if not self._planning.result:
                     restore_estimates()
                     self.waypointsLabel.setText(str(len(self._waypoints)))
             else:
                 self._set_info('Choose Splitting, then Preview on Map to generate '
                                'this older mission’s route.')
             return
-        self._saved_plan_locked = True
-        self._saved_plan_dirty = False
+        self._planning.preserve_imported_route()
         self.previewBtn.setText('Preview on Map')
         if self.terrainFollowCheck.isChecked():
             self._terrain_failed = True
@@ -5164,7 +5145,7 @@ class FlyPathDialog(QWidget):
 
         # ── Nothing above changed any state; from here the load applies. ──
         self._loading_mission = True
-        self._saved_plan_locked = True
+        self._planning.begin_import()
         # Restore Auto only after loading: intermediate control signals must
         # not optimise the imported heading against the previous survey area.
         self.autoDirectionBtn.setChecked(False)
@@ -6099,13 +6080,14 @@ class FlyPathDialog(QWidget):
     def _on_export(self):
         if not self._has_survey_area():
             return
-        if self._unsupported_saved_plan:
+        planning_issue = self._planning.export_issue()
+        if planning_issue == 'unsupported':
             QMessageBox.warning(
                 self, 'Export Blocked',
                 'This saved plan uses an unsupported planning version. Update '
                 'FlyPath before regenerating or exporting it.')
             return
-        if self._saved_plan_locked and self._saved_plan_dirty:
+        if planning_issue == 'regeneration_required':
             QMessageBox.warning(
                 self, 'Regeneration Required',
                 'Mission settings changed, but the saved route is still preserved. '
@@ -6117,9 +6099,9 @@ class FlyPathDialog(QWidget):
                 'Terrain data could not be loaded. Toggle Terrain Follow to retry '
                 'before exporting; FlyPath will not substitute a flat mission.')
             return
-        if self._planning_result and not self._planning_result['validation']['export_allowed']:
+        if planning_issue == 'validation':
             errors = '\n'.join('• ' + error['message']
-                               for error in self._planning_result['validation']['errors'])
+                               for error in self._planning.result['validation']['errors'])
             QMessageBox.warning(self, 'Export Blocked', errors)
             return
         mission = 'FlyPath Mission'
@@ -6147,7 +6129,7 @@ class FlyPathDialog(QWidget):
         # as a single file and imported in Pilot 2. Splitting and the DJI Fly RC
         # transfer do not apply to them.
         if drone.category == 'enterprise':
-            if self._planning_result:
+            if self._planning.result:
                 QMessageBox.warning(
                     self, 'Export Blocked',
                     'DJI Pilot 2 rebuilds mapping routes and cannot serialize this '
@@ -6175,9 +6157,9 @@ class FlyPathDialog(QWidget):
             shot_spacing_m = self._corridor_shot_spacing()
             if not missions_h:
                 return
-        elif self._planning_result:
+        elif self._planning.result:
             consumed = planning_adapter.consume_result(
-                self._planning_request, self._planning_result,
+                self._planning.request, self._planning.result,
                 legacy_waypoints=[[lat, lon] for lon, lat in self._waypoints])
             missions_h = [(flight['waypoints'], None, None) for flight in consumed]
             flight_actions = [flight['actions'] for flight in consumed]

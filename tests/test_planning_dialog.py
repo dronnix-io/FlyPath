@@ -30,11 +30,10 @@ def test_planning_dialog_state():
         assert planner.splitCheck.isChecked(), 'new missions enable splitting'
         planner._waypoints = [(1, 2), (3, 4)]
         planner._missions = [list(planner._waypoints)]
-        planner._planning_request = {'contract_version': 1}
-        planner._planning_result = {'contract_version': 1}
+        planner._planning.record({'contract_version': 1}, {'contract_version': 1})
         planner._on_clear_preview(reset_area=False)
         assert planner._waypoints == [] and planner._missions == []
-        assert planner._planning_request is None and planner._planning_result is None
+        assert planner._planning.request is None and planner._planning.result is None
 
         planner._waypoints = [(1, 2), (3, 4)]
         planner._missions = [list(planner._waypoints)]
@@ -73,11 +72,11 @@ def test_planning_dialog_state():
             },
         }
         planner._apply_website_mission(mission)
-        assert planner._preview_layer_ids and planner._planning_result, \
+        assert planner._preview_layer_ids and planner._planning.result, \
             'Loading a mission without a saved route must preview automatically'
         expected = [flight['waypoints'] for flight in
                     module.planning_adapter.consume_result(
-                        planner._planning_request, planner._planning_result)]
+                        planner._planning.request, planner._planning.result)]
         assert planner._missions == expected
         shared = planner._website_payload('Shared mission')
         saved_result = shared['planning_result']
@@ -102,12 +101,12 @@ def test_planning_dialog_state():
                                        auto_direction=True, direction=90)
         full_legacy['waypoints'] = mission['polygon'][:2]
         planner._apply_website_mission(full_legacy)
-        assert planner._planning_result, \
+        assert planner._planning.result, \
             'A legacy Full-auto route must be regenerated from its settings'
         assert len(planner._waypoints) > len(full_legacy['waypoints'])
-        assert planner._planning_request['direction']['mode'] == 'automatic'
+        assert planner._planning.request['direction']['mode'] == 'automatic'
         assert planner.directionSpin.value() == \
-            planner._planning_result['resolved_direction']['value_deg']
+            planner._planning.result['resolved_direction']['value_deg']
         assert len(planner._missions) >= full_legacy['settings']['split_count']
         assert int(planner.photosLabel.text().replace(',', '')) >= len(planner._waypoints)
 
@@ -123,16 +122,16 @@ def test_planning_dialog_state():
         older = deepcopy(shared)
         older['planning_result']['engine_version'] = '0.3.0'
         planner._apply_website_mission(older)
-        assert planner._unsupported_saved_plan and planner._saved_plan_locked
+        assert planner._planning.unsupported and planner._planning.locked
         planner._apply_website_mission(shared)
-        assert planner._planning_result == saved_result
-        assert planner._saved_plan_locked and not planner._saved_plan_dirty
+        assert planner._planning.result == saved_result
+        assert planner._planning.locked and not planner._planning.dirty
         with patch.object(planner, '_generate_waypoints') as generate:
             planner._on_preview()
         generate.assert_not_called()
-        assert planner._planning_result == saved_result
+        assert planner._planning.result == saved_result
         planner.altitudeSpin.setValue(81)
-        assert planner._saved_plan_dirty
+        assert planner._planning.dirty
         assert planner.previewBtn.text() == 'Regenerate on Map'
         with patch.object(module.QMessageBox, 'warning') as warning:
             assert planner._on_send_to_website() is False
@@ -156,7 +155,7 @@ def test_planning_dialog_state():
 
         # Website loads happen while the My missions tab hides the planner.
         # Showing the planner must reveal stats for a restored local route too.
-        planner._planning_result = None
+        planner._planning.plan_failed()
         planner._live_waypoints = None
         planner._waypoints = loaded_route
         with patch.object(planner, '_show_hud') as show_hud:
@@ -164,10 +163,7 @@ def test_planning_dialog_state():
         show_hud.assert_called_once()
 
         # A DEM error raised by generation during export must not reach a writer.
-        planner._saved_plan_locked = False
-        planner._saved_plan_dirty = False
-        planner._planning_request = None
-        planner._planning_result = None
+        planner._planning.reset()
         planner._waypoints = []
         planner.terrainFollowCheck.blockSignals(True)
         planner.terrainFollowCheck.setChecked(True)
