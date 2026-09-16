@@ -169,7 +169,8 @@ def validate_mission(mission):
         for key in ('name', 'drone_model'):
             if mission.get(key) is not None and not isinstance(mission[key], str):
                 raise ValueError()
-        if mission.get('source_product') not in (None, 'plugin', 'website'):
+        # Existing website missions have blank provenance after migration.
+        if mission.get('source_product') not in (None, '', 'plugin', 'website'):
             raise ValueError()
         for key in ('planning_request', 'planning_result'):
             if mission.get(key) is not None and not isinstance(mission[key], dict):

@@ -2164,6 +2164,7 @@ class FlyPathDialog(QWidget):
     def _on_param_changed(self):
         if self._saved_plan_locked:
             self._saved_plan_dirty = True
+            self.previewBtn.setText('Regenerate on Map')
             self._update_gsd()
             self._update_interval()
             return
@@ -4363,7 +4364,8 @@ class FlyPathDialog(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         # Bring the HUD back when the panel reopens, if there is a live plan.
-        if self._hud is not None and (self._live_waypoints or self._planning_result):
+        if self._hud is not None and (
+                self._waypoints or self._live_waypoints or self._planning_result):
             self._show_hud()
         self._show_info_hud()   # the info card follows the panel's visibility
 
@@ -4376,6 +4378,10 @@ class FlyPathDialog(QWidget):
 
     def _on_preview(self):
         if not self._has_survey_area():
+            return
+        if self._saved_plan_locked and not self._saved_plan_dirty and self._missions:
+            self._redraw_preview_layers(
+                self._missions, self._preview_heights, self._preview_ground)
             return
         if self._unsupported_saved_plan:
             QMessageBox.warning(
@@ -4391,6 +4397,7 @@ class FlyPathDialog(QWidget):
             return
         self._saved_plan_locked = False
         self._saved_plan_dirty = False
+        self.previewBtn.setText('Preview on Map')
         self._on_clear_preview(reset_area=False)
         if self._mission_kind() == 'corridor':
             missions_h = self._corridor_missions_with_heights()
@@ -4617,6 +4624,7 @@ class FlyPathDialog(QWidget):
         self._on_clear_contours()
 
         if reset_area:
+            self.previewBtn.setText('Preview on Map')
             self._website_link = None
             # Full reset — also stop any active draw and remove the boundary
             self._leave_draw_tool()
@@ -4970,24 +4978,62 @@ class FlyPathDialog(QWidget):
         request = mission.get('planning_request')
         result = mission.get('planning_result')
         legacy = mission.get('waypoints') or []
+
+        def restore_estimates():
+            estimates = mission.get('estimates') or {}
+            if not isinstance(estimates, dict):
+                return
+            for key, label in (
+                    ('time', self.flightTimeLabel),
+                    ('distance', self.distanceLabel),
+                    ('photos', self.photosLabel),
+                    ('batteries', self.batteriesLabel),
+                    ('area', self.coverageLabel)):
+                value = estimates.get(key)
+                if isinstance(value, (str, int, float)):
+                    label.setText(str(value))
+            statistics = estimates.get('statistics')
+            strip_count = statistics.get('strip_count') if isinstance(statistics, dict) else None
+            if type(strip_count) is int and strip_count >= 0:
+                self.linesLabel.setText(str(strip_count))
+            self._show_hud()
+
+        self._on_clear_preview(reset_area=False)
+        self._clear_stats()
+        self.previewBtn.setText('Preview on Map')
+        self._unsupported_saved_plan = False
+        self._planning_locations = None
         if result:
             supported, flights = provenance
-            self._on_clear_preview(reset_area=False)
             self._apply_planning_result(request, result, flights=flights)
             self._unsupported_saved_plan = not supported
-        elif legacy:
+        elif legacy and self._mission_type() != 'full':
             route = [(float(lon), float(lat)) for lat, lon in legacy]
-            self._on_clear_preview(reset_area=False)
             self._waypoints = route
             self._missions = [route]
             self._live_waypoints = route
             self._live_missions = [route]
             self._shot_spacing_m = max(
                 self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5)
+            restore_estimates()
+            self.waypointsLabel.setText(str(len(route)))
+            self._set_info('Saved route and estimates. Editing settings requires '
+                           'regeneration with the installed planning engine.')
         else:
+            self._saved_plan_locked = False
+            self._saved_plan_dirty = False
+            if not self._split_choice_required:
+                self._on_preview()
+                if not self._planning_result:
+                    restore_estimates()
+                    self.waypointsLabel.setText(str(len(self._waypoints)))
+            else:
+                self._set_info('Choose Splitting, then Preview on Map to generate '
+                               'this older mission’s route.')
             return
         self._saved_plan_locked = True
         self._saved_plan_dirty = False
+        self.previewBtn.setText('Preview on Map')
         if self.terrainFollowCheck.isChecked():
             self._terrain_failed = True
         line_layer = self._build_path_layer(self._missions)
@@ -6626,6 +6672,8 @@ class FlyPathDialog(QWidget):
             if self._plan_shared(silent=False) is None:
                 return None
             return list(self._waypoints), self._shot_spacing_m
+        if self.autoDirectionBtn.isChecked():
+            self._on_auto_direction()
         drone = self.droneModelCombo.currentText()
         if not registry.has(drone):
             return None

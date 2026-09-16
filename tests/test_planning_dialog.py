@@ -15,8 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 def test_planning_dialog_state():
     try:
-        from qgis.core import QgsApplication
+        from qgis.core import QgsApplication, QgsProject
         from qgis.gui import QgsMapCanvas
+        from qgis.PyQt.QtGui import QShowEvent
         module = importlib.import_module(
             Path(__file__).resolve().parents[1].name + '.flypath_dialog')
     except ImportError as exc:
@@ -72,13 +73,53 @@ def test_planning_dialog_state():
             },
         }
         planner._apply_website_mission(mission)
-        planner._on_preview()
+        assert planner._preview_layer_ids and planner._planning_result, \
+            'Loading a mission without a saved route must preview automatically'
         expected = [flight['waypoints'] for flight in
                     module.planning_adapter.consume_result(
                         planner._planning_request, planner._planning_result)]
         assert planner._missions == expected
         shared = planner._website_payload('Shared mission')
         saved_result = shared['planning_result']
+        legacy = dict(mission, waypoints=mission['polygon'][:2], estimates={
+            'time': '1 min', 'distance': '0.23 km', 'photos': '11',
+            'batteries': '1', 'area': '0.96 ha',
+            'statistics': {'strip_count': 12}})
+        planner._apply_website_mission(legacy)
+        assert planner.photosLabel.text() == '11', 'Show saved estimates on load'
+        assert planner.waypointsLabel.text() == '2'
+        assert planner.linesLabel.text() == '12', 'Show saved line count on load'
+        assert planner._waypoints == [tuple(reversed(p)) for p in legacy['waypoints']]
+        loaded_route = deepcopy(planner._waypoints)
+        with patch.object(planner, '_generate_waypoints',
+                          return_value=(loaded_route, 5.0)) as generate:
+            planner._on_preview()
+        generate.assert_not_called()
+        assert planner._waypoints == loaded_route, 'Preview must not replace a saved route'
+
+        full_legacy = deepcopy(mission)
+        full_legacy['settings'].update(capture_mode='full', front_overlap=50,
+                                       auto_direction=True, direction=90)
+        full_legacy['waypoints'] = mission['polygon'][:2]
+        planner._apply_website_mission(full_legacy)
+        assert planner._planning_result, \
+            'A legacy Full-auto route must be regenerated from its settings'
+        assert len(planner._waypoints) > len(full_legacy['waypoints'])
+        assert planner._planning_request['direction']['mode'] == 'automatic'
+        assert planner.directionSpin.value() == \
+            planner._planning_result['resolved_direction']['value_deg']
+        assert len(planner._missions) >= full_legacy['settings']['split_count']
+        assert int(planner.photosLabel.text().replace(',', '')) >= len(planner._waypoints)
+
+        previous_layers = list(planner._preview_layer_ids)
+        planner._apply_website_mission(legacy)
+        assert all(QgsProject.instance().mapLayer(lid) is None
+                   for lid in previous_layers), 'Repeated loads replace the preview'
+        ambiguous = deepcopy(mission)
+        del ambiguous['settings']['split_enabled']
+        planner._apply_website_mission(ambiguous)
+        assert not planner._preview_layer_ids and not planner._waypoints
+        assert planner._split_choice_required, 'Do not guess an older splitting choice'
         older = deepcopy(shared)
         older['planning_result']['engine_version'] = '0.3.0'
         planner._apply_website_mission(older)
@@ -86,12 +127,41 @@ def test_planning_dialog_state():
         planner._apply_website_mission(shared)
         assert planner._planning_result == saved_result
         assert planner._saved_plan_locked and not planner._saved_plan_dirty
+        with patch.object(planner, '_generate_waypoints') as generate:
+            planner._on_preview()
+        generate.assert_not_called()
+        assert planner._planning_result == saved_result
         planner.altitudeSpin.setValue(81)
         assert planner._saved_plan_dirty
+        assert planner.previewBtn.text() == 'Regenerate on Map'
         with patch.object(module.QMessageBox, 'warning') as warning:
             assert planner._on_send_to_website() is False
             planner._on_export()
         assert warning.call_count == 2
+
+        # Terrain generation must resolve Auto, too, instead of using the
+        # stale manual heading imported alongside a saved automatic route.
+        terrain = deepcopy(legacy)
+        terrain['settings'] = dict(legacy['settings'], terrain_follow=True,
+                                   auto_direction=True, direction=90)
+        planner._apply_website_mission(terrain)
+        with patch.object(module, 'find_optimal_direction', return_value=0), \
+                patch.object(module, 'generate_flight_grid',
+                             return_value=(loaded_route, 5.0)) as grid, \
+                patch.object(planner, '_apply_terrain',
+                             side_effect=lambda route: (route, None)):
+            planner._generate_waypoints()
+        assert grid.call_args.kwargs['direction_deg'] == 0
+        assert planner.autoDirectionBtn.isChecked()
+
+        # Website loads happen while the My missions tab hides the planner.
+        # Showing the planner must reveal stats for a restored local route too.
+        planner._planning_result = None
+        planner._live_waypoints = None
+        planner._waypoints = loaded_route
+        with patch.object(planner, '_show_hud') as show_hud:
+            planner.showEvent(QShowEvent())
+        show_hud.assert_called_once()
 
         # A DEM error raised by generation during export must not reach a writer.
         planner._saved_plan_locked = False

@@ -25,6 +25,7 @@ def test_settings_round_trip():
         'drone_model': 'mini3pro',
         'polygon': [[51.01, -114.02], [51.01, -114.015],
                     [51.013, -114.015], [51.013, -114.02]],
+        'waypoints': [[51.01, -114.02], [51.013, -114.015]],
         'settings': {
             'mapping_style': '2d', 'capture_mode': 'semi',
             'altitude': 80, 'speed': 8, 'side_overlap': 70,
