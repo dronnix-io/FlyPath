@@ -118,13 +118,13 @@ from .terrain import (
     TERRARIUM_URL, ZOOM, TILE_SIZE, tile_coords, elevation_from_rgb,
     sample_elevations, densify_by_terrain, heights_above_takeoff,
 )
-from .wpml import MissionSpec, write_mission
 from .hardware import registry
 from . import flypath_sync
 from . import planning_adapter
 from . import controller_storage
 from . import survey_geometry
 from . import takeoff_adapter
+from . import mission_export
 from .planning_lifecycle import PlanningLifecycle
 from .flypath_sync import FlypathSyncError
 
@@ -229,7 +229,6 @@ class _TerrainLayerSampler:
 
 # ── MTP PowerShell exit codes ─────────────────────────────────────────────
 _MTP_EXIT_NAV_FAIL      = 1   # could not navigate path to waypoint folder
-_MTP_EXIT_NO_UUID       = 2   # no UUID mission folder found in waypoint folder
 _MTP_EXIT_UUID_MISSING  = 3   # UUID folder gone between script 1 and script 2
 _MTP_EXIT_UUID_NO_OPEN  = 4   # UUID folder exists but GetFolder returned None
 
@@ -5449,31 +5448,15 @@ class FlyPathDialog(QWidget):
         except OSError:
             pass
 
-    def _write_mission_kmz(self, filepath, waypoints, mission, create_time_ms=None,
-                           heights=None, actions=None):
-        """Write the KMZ file using current UI parameter values.
-
-        Builds the full MissionSpec; the consumer writer ignores the enterprise
-        fields (polygon, overlaps, direction, margin) and vice versa. `heights`
-        (terrain follow) is a per-waypoint executeHeight list or None.
-
-        The Launch Offset is subtracted from the written heights only (the single
-        altitude and, when present, every terrain-follow executeHeight), so a
-        raised launch spot keeps the real height above ground on plan. The
-        planning altitude that drives GSD, overlap and the flight lines is
-        untouched. This runs per mission, so every split mission gets it too, for
-        both 2D and corridor missions (they share this writer)."""
-        drone = registry.get(self.droneModelCombo.currentText())
-        offset = self.launchOffsetSpin.value()
-        spec = MissionSpec(
-            waypoints=waypoints,
-            altitude_m=self.altitudeSpin.value() - offset,
+    def _export_settings(self):
+        """Snapshot export inputs from widgets before any destination work."""
+        return mission_export.ExportSettings(
+            drone=registry.get(self.droneModelCombo.currentText()),
+            altitude_m=self.altitudeSpin.value(),
             speed_ms=self.speedSpin.value(),
             finish_action=self.finishActionCombo.currentText(),
             rc_lost_action=self.rcLostActionCombo.currentText(),
             gimbal_pitch=self.gimbalAngleSpin.value(),
-            mission_name=mission,
-            create_time_ms=create_time_ms,
             polygon=survey_geometry.polygon_vertices(
                 self._survey_polygon, self._survey_polygon_crs),
             side_overlap=self.sideOverlapSpin.value() / 100.0,
@@ -5481,12 +5464,9 @@ class FlyPathDialog(QWidget):
             direction_deg=self.directionSpin.value(),
             margin_m=self.marginSpin.value(),
             capture_mode=self._mission_type(),
-            heights=([h - offset for h in heights]
-                     if heights is not None else None),
             curved_path=self._path_curved(),
-            actions=actions,
+            launch_offset_m=self.launchOffsetSpin.value(),
         )
-        write_mission(drone, spec, filepath)
 
     def _missions_with_heights(self, waypoints, elevations):
         """Split into missions and return [(waypoints, flight_heights, ground_elevs)].
@@ -5673,7 +5653,8 @@ class FlyPathDialog(QWidget):
             return
 
         try:
-            self._write_mission_kmz(filepath, waypoints, mission)
+            mission_export.write_kmz(
+                filepath, self._export_settings(), waypoints, mission)
         except Exception as exc:
             QMessageBox.critical(self, 'Export Failed', str(exc))
             return
@@ -5719,31 +5700,13 @@ class FlyPathDialog(QWidget):
             return
 
         n = len(missions)
-        base, ext = os.path.splitext(filepath)
-        ext = ext or '.kmz'
-        # One file when unsplit; otherwise name them <base>_1_of_N … so they
-        # stay in order and never overwrite one another.
-        if n <= 1:
-            wps0, heights0, _ = missions[0]
-            targets = [(filepath, wps0, mission, heights0,
-                        actions[0] if actions else None)]
-        else:
-            width = len(str(n))
-            targets = []
-            for i, (wps, heights, _) in enumerate(missions, start=1):
-                path = f'{base}_{str(i).zfill(width)}_of_{n}{ext}'
-                targets.append((path, wps, f'{mission} {i} of {n}', heights,
-                                actions[i - 1] if actions else None))
-
-        written = []
         try:
-            for path, wps, name, heights, flight_actions in targets:
-                self._write_mission_kmz(path, wps, name, heights=heights,
-                                        actions=flight_actions)
-                written.append(path)
+            targets = mission_export.write_local(
+                filepath, mission, missions, self._export_settings(), actions)
         except Exception as exc:
             QMessageBox.critical(self, 'Export Failed', str(exc))
             return
+        written = [target[0] for target in targets]
 
         QSettings('FlyPath', 'FlyPath').setValue(
             'local_export_dir', os.path.dirname(filepath)
@@ -5787,24 +5750,23 @@ class FlyPathDialog(QWidget):
         # Keep the mission's original createTime so its date still matches
         # DJI Fly (DJI keeps the name; only the waypoints change).
         create_ms = target.get('create_ms') or None
+        is_mtp = not os.path.isdir(self._rc_waypoint_path)
 
-        if os.path.isdir(self._rc_waypoint_path):
-            # Manually located folder (SD card / mapped drive / local copy):
-            # a plain file write, no MTP transfer needed.
-            ok, detail = self._export_to_folder_rc(
-                target['uuid'], mission, waypoints, create_ms, heights, actions)
-        else:
+        if is_mtp:
             # Auto-detected MTP device path: copy over USB via Windows Shell.
             QApplication.setOverrideCursor(_WaitCursor)
             self._set_info('Sending the mission to the RC, please wait…')
             QApplication.processEvents()
+        try:
             try:
-                ok, detail = self._export_to_mtp_rc(
-                    self._rc_waypoint_path, mission, waypoints, shot_spacing_m,
-                    target_uuid=target['uuid'], create_time_ms=create_ms,
-                    heights=heights, actions=actions,
-                )
-            finally:
+                ok, detail = mission_export.replace_controller(
+                    self._rc_waypoint_path, target['uuid'], self._export_settings(),
+                    waypoints, mission, create_time_ms=create_ms, heights=heights,
+                    actions=actions, mtp_copy=self._copy_kmz_to_mtp)
+            except Exception as exc:
+                ok, detail = False, str(exc)
+        finally:
+            if is_mtp:
                 QApplication.restoreOverrideCursor()
                 self._set_info(_INFO_IDLE)
 
@@ -5837,40 +5799,8 @@ class FlyPathDialog(QWidget):
         else:
             QMessageBox.critical(self, 'RC Export Failed', detail)
 
-    def _export_to_folder_rc(self, uuid, mission, waypoints, create_time_ms=None,
-                             heights=None, actions=None):
-        """Replace a mission inside a real filesystem waypoint folder.
-
-        Returns (success: bool, detail: str) matching _export_to_mtp_rc.
-        """
-        folder = os.path.join(self._rc_waypoint_path, uuid)
-        if not os.path.isdir(folder):
-            return False, f'Mission folder not found:\n{folder}'
-        kmz = os.path.join(folder, uuid + '.kmz')
-        try:
-            self._write_mission_kmz(kmz, waypoints, mission, create_time_ms,
-                                    heights=heights, actions=actions)
-        except Exception as exc:
-            return False, str(exc)
-        return True, uuid
-
-    def _export_to_mtp_rc(self, rc_dir, mission, waypoints, shot_spacing_m,
-                          target_uuid=None, create_time_ms=None, heights=None,
-                          actions=None):
-        """
-        Export the KMZ directly to a DJI RC connected as an MTP device.
-
-        Shell.Namespace() cannot resolve 'This PC\\...' paths directly.
-        Instead we navigate step-by-step from the 'This PC' CLSID using
-        GetFolder, which works with MTP virtual filesystem items.
-
-        If target_uuid is given, that mission is replaced directly; otherwise
-        the most recently modified mission folder is used.
-
-        Returns (success: bool, detail: str)
-          success=True  → detail is the UUID that was replaced
-          success=False → detail is a human-readable error message
-        """
+    def _copy_kmz_to_mtp(self, rc_dir, uuid_name, tmp_kmz, tmp_dir):
+        """Copy an assembled KMZ to its selected MTP mission folder."""
         ps_exe = os.path.join(
             os.environ.get('SystemRoot', r'C:\Windows'),
             r'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -5882,26 +5812,7 @@ class FlyPathDialog(QWidget):
         ps_parts = ', '.join("'" + p.replace("'", "''") + "'" for p in parts)
         nav      = self._mtp_nav_fragment(ps_parts)
 
-        tmp_dir = tempfile.mkdtemp(prefix='flypath_')
-        try:
-            if target_uuid:
-                # Picker already chose the mission; the copy step verifies it exists.
-                uuid_name = target_uuid
-            else:
-                uuid_name, err = self._mtp_find_uuid(ps_exe, nav, tmp_dir, rc_dir)
-                if uuid_name is None:
-                    return False, err
-
-            tmp_kmz = os.path.join(tmp_dir, uuid_name + '.kmz')
-            try:
-                self._write_mission_kmz(tmp_kmz, waypoints, mission, create_time_ms,
-                                        heights=heights, actions=actions)
-            except Exception as exc:
-                return False, f'Could not write KMZ: {exc}'
-
-            return self._mtp_copy_kmz(ps_exe, nav, tmp_dir, uuid_name, tmp_kmz)
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+        return self._mtp_copy_kmz(ps_exe, nav, tmp_dir, uuid_name, tmp_kmz)
 
     @staticmethod
     def _mtp_nav_fragment(ps_parts):
@@ -5926,56 +5837,6 @@ class FlyPathDialog(QWidget):
             '    $folder = $next\n'
             '}\n'
         )
-
-    @staticmethod
-    def _mtp_find_uuid(ps_exe, nav, tmp_dir, rc_dir):
-        """
-        Run Script 1: navigate to waypoint folder and return the latest UUID folder name.
-
-        Returns (uuid_name, None) on success, or (None, error_message) on failure.
-        """
-        find_ps = os.path.join(tmp_dir, 'find_uuid.ps1')
-        with open(find_ps, 'w', encoding='utf-8') as fh:
-            fh.write(
-                nav +
-                '$uuidPattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"\n'
-                '$latest = $null; $latestDate = [DateTime]::MinValue\n'
-                'foreach ($item in $folder.Items()) {\n'
-                '    if ($item.IsFolder -and $item.Name -match $uuidPattern -and $item.ModifyDate -gt $latestDate) {\n'
-                '        $latestDate = $item.ModifyDate; $latest = $item\n'
-                '    }\n'
-                '}\n'
-                f'if (-not $latest) {{ exit {_MTP_EXIT_NO_UUID} }}\n'
-                'Write-Output $latest.Name\n'
-            )
-
-        try:
-            r = subprocess.run(  # nosec B603
-                [ps_exe, '-NoProfile', '-NonInteractive',
-                 '-ExecutionPolicy', 'Bypass', '-File', find_ps],
-                capture_output=True, text=True, timeout=30,
-                creationflags=_NO_WINDOW, startupinfo=_STARTUPINFO
-            )
-        except subprocess.TimeoutExpired:
-            return None, 'Timed out reading the RC waypoint folder.\nCheck the RC is connected via USB.'
-        except Exception as exc:
-            return None, f'PowerShell error: {exc}'
-
-        if r.returncode == _MTP_EXIT_NAV_FAIL:
-            return None, (
-                'Could not navigate to the RC waypoint folder.\n\n'
-                f'Path used:\n{rc_dir}\n\n'
-                'Check that the RC is connected via USB and the path is correct.\n\n'
-                f'Details:\n{r.stderr.strip()}'
-            )
-        if r.returncode == _MTP_EXIT_NO_UUID or not r.stdout.strip():
-            return None, (
-                'No valid mission folder found on the RC.\n\n'
-                'Open DJI Fly on the RC, create a waypoint mission '
-                '(even a 3-point dummy), then export again.\n\n'
-                'FlyPath only replaces folders with a valid DJI UUID name.'
-            )
-        return r.stdout.strip().splitlines()[0].strip(), None
 
     @staticmethod
     def _mtp_copy_kmz(ps_exe, nav, tmp_dir, uuid_name, tmp_kmz):

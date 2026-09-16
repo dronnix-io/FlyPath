@@ -180,6 +180,16 @@ def test_planning_dialog_state():
             planner._on_export()
         export.assert_not_called()
         assert warning.call_args.args[1] == 'Terrain Export Blocked'
+
+        # RC export must translate settings/geometry failures into the existing
+        # user-facing error instead of letting them escape the Qt handler.
+        planner.rcMissionCombo.clear()
+        planner.rcMissionCombo.addItem('Mission', {'uuid': 'mission-id', 'create_ms': 0})
+        planner._rc_waypoint_path = os.getcwd()
+        with patch.object(planner, '_export_settings', side_effect=ValueError('bad geometry')), \
+                patch.object(module.QMessageBox, 'critical') as critical:
+            planner._export_rc('Mission', [(0, 0)], 5.0)
+        assert critical.call_args.args[1:] == ('RC Export Failed', 'bad geometry')
     finally:
         planner.close()
         canvas.close()
