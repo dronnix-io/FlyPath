@@ -1,24 +1,19 @@
-# Existing evidence
+# Compatibility evidence
 
-Website commit `1603e9f` aligned manual direction with plugin-generated QGIS
-bearings and preserved legacy saved routes until explicit regeneration.
+The reusable direction fixture is stored at
+`tests/shared_engine/fixtures/plugin-direction.json`. It covers representative
+manual bearings and automatic direction behavior against QGIS-generated output.
 
-Verified during the website preparation work:
+The current `v0.4.0` candidate adds public-boundary parity checks for eight
+semi/full-auto, manual/automatic, and cross-hatch combinations. Both consumers
+produce equivalent planning results, split-flight coordinates, and supported
+camera actions within the documented serialization tolerance.
 
-- 106 JavaScript tests pass.
-- Manual 0, 70, 90, 180, 250, and 360 cases pass against the QGIS fixture.
-- Auto preview, commit, save/reload, legacy preservation, and explicit
-  regeneration are covered.
+Engine unit tests cover geometry, WGS84 measurements, route ordering,
+statistics, profiles, time-balanced splitting, waypoint limits, and structured
+validation. Plugin tests cover the adapter, saved-route preservation, terrain
+guards, and supported KMZ output.
 
-The reusable QGIS fixture is stored as
-`tests/shared_engine/fixtures/plugin-direction.json`.
-
-Since that initial evidence, both products have adopted the shared grid,
-automatic direction, route ordering, WGS84 measurements, route-level
-statistics, and drone profiles through engine `v0.3.0`. Unit and adapter tests
-cover those seams, including the reported mission input.
-
-Full-engine parity is not yet established. Flight-split policy, recovery,
-per-flight totals, photo/action generation, and some export decisions still
-live in client code. The fixture matrix also lacks independently reviewed
-expected output for every contract case and the full QGIS/platform smoke run.
+Remaining evidence is listed in `migration-map.md`: broader QGIS/platform
+installation coverage and controller or aircraft execution testing are still
+required.

@@ -9,7 +9,7 @@ remotely. Engine changes must still go through release/pin/vendor tooling.
 | Capability | Owner | Status |
 | --- | --- | --- |
 | 2D geometry, ordering, direction, WGS84 measurement | Engine | Integrated |
-| Versioned aircraft and camera values | Engine profiles | Integrated; website old DB columns are inert pending removal approval |
+| Versioned aircraft and camera values | Engine profiles | Integrated; consumer-local values are not planning authority |
 | Complete split policy and per-flight results | Engine plan_2d | Integrated; splitting defaults on and can be disabled |
 | Capture actions and full-auto action totals | Engine plan_2d | Integrated into consumer WPML serialization |
 | Known outbound/recovery and incomplete totals | Engine plan_2d | Integrated; unknown travel remains explicit |
@@ -36,8 +36,9 @@ installation and aircraft/controller execution remain unverified.
 
 Enterprise shared-result export is explicitly blocked because the native
 mapping writer cannot yet serialize the complete action contract. Syncing
-polygon holes/multipart areas to the website is blocked until its storage is
-lossless. Imported terrain routes require Preview to reacquire heights.
+polygon holes or multipart areas is blocked until the public mission-sync
+contract can represent them losslessly. Imported terrain routes require Preview
+to reacquire heights.
 
 ## Later phases
 
