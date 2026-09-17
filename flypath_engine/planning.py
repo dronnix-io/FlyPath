@@ -451,15 +451,6 @@ def _flight_location(locations, index):
     return value if kind == "shared" else (value[index] if index < len(value) else {})
 
 
-def _known_location_seconds(points, start, end, speed, finish_action, location):
-    seconds = 0.0
-    if location and location.get("launch"):
-        seconds += _distance(location["launch"], points[start]) / speed
-    if finish_action == "return_to_home" and location and location.get("home"):
-        seconds += _distance(points[end], location["home"]) / speed
-    return seconds
-
-
 def _distance(first, second):
     return route_distance_m([first, second])
 

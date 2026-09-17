@@ -4,7 +4,7 @@ The reusable direction fixture is stored at
 `tests/shared_engine/fixtures/plugin-direction.json`. It covers representative
 manual bearings and automatic direction behavior against QGIS-generated output.
 
-The current `v0.4.0` candidate adds public-boundary parity checks for eight
+Release `v0.4.0` adds public-boundary parity checks for eight
 semi/full-auto, manual/automatic, and cross-hatch combinations. Both consumers
 produce equivalent planning results, split-flight coordinates, and supported
 camera actions within the documented serialization tolerance.

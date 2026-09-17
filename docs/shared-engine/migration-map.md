@@ -1,10 +1,10 @@
 # Migration map
 
-## First phase — local v0.4.0 candidate
+## First phase — v0.4.0
 
-The bundled engine is pinned to local tag `v0.4.0`, source commit
-`050d368a59d2be903605099fe3cd006e917507e9`. The tag has not been published
-remotely. Engine changes must still go through release/pin/vendor tooling.
+The bundled engine is pinned to released tag `v0.4.0`, source commit
+`32a946a9ff5c9777a3b865b122145ca382ed20a8`. Engine changes must still go
+through release/pin/vendor tooling.
 
 | Capability | Owner | Status |
 | --- | --- | --- |
@@ -24,9 +24,9 @@ the offline plugin. Both consumer adapters and KMZ actions are compared by
 
 ## Verification and limits
 
-QGIS 3.44.14 / Python 3.12 on Windows was tested. The candidate metadata is
+QGIS 3.44.14 / Python 3.12 on Windows was tested. The release metadata is
 restricted to the QGIS 3.44 line; previous 3.16/4.x and Python 3.9 claims no
-longer apply to this candidate. The engine itself requires Python 3.10+.
+longer apply to this release. The engine itself requires Python 3.10+.
 
 Twenty-one of 22 direct plugin test scripts passed. The unchanged credential
 vault suite stalled and is not counted as passed. Focused final adapter,

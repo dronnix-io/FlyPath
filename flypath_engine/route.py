@@ -105,15 +105,6 @@ def _pass_points(x, ylo, yhi, densify_spacing):
     return [(x, ylo + i * step) for i in range(n + 1)]
 
 
-def cell_turns(cell, densify_spacing=None):
-    """Snake one cell into points: up one line, down the next."""
-    turns = []
-    for k, (x, ylo, yhi) in enumerate(cell):
-        pts = _pass_points(x, ylo, yhi, densify_spacing)
-        turns.extend(pts if k % 2 == 0 else pts[::-1])
-    return turns
-
-
 def cell_passes(cell, densify_spacing=None):
     return [(_pass_points(x, ylo, yhi, densify_spacing)
              if k % 2 == 0 else _pass_points(x, ylo, yhi, densify_spacing)[::-1])
@@ -159,17 +150,6 @@ def _visit_order(turnlists, adjacency):
                           reverse=True)
             stack.extend(nbrs)
     return order
-
-
-def order_cells(cells, adjacency, densify_spacing=None):
-    """Concatenate the cells into one route in adjacency (graph) order, so the
-    legs between strips run along the survey area's spine and stay inside it.
-    Each cell is flown in whichever direction enters it closest to the previous
-    cell's exit. Every pass itself lies within a single strip."""
-    # Each cell has >= 1 segment, so cell_turns yields >= 2 points; indices stay
-    # aligned with `adjacency`.
-    return [point for survey_pass in order_cell_passes(cells, adjacency, densify_spacing)
-            for point in survey_pass]
 
 
 def order_cell_passes(cells, adjacency, densify_spacing=None):
