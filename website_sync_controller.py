@@ -1,7 +1,7 @@
 """FlyPath website save/load orchestration for the QGIS dialog."""
 import datetime
 
-from qgis.PyQt.QtCore import Qt, QUrl
+from qgis.PyQt.QtCore import QEventLoop, QObject, QThread, Qt, QUrl, pyqtSignal, pyqtSlot
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
     QApplication,
@@ -33,6 +33,25 @@ except AttributeError:
     _WaitCursor = getattr(Qt, 'WaitCursor')
     _MB_YES = getattr(QMessageBox, 'Yes')
     _MB_NO = getattr(QMessageBox, 'No')
+
+
+class _WebsiteCall(QObject):
+    finished = pyqtSignal()
+
+    def __init__(self, work, token):
+        super().__init__()
+        self.work = work
+        self.token = token
+        self.result = None
+        self.error = None
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            self.result = self.work(self.token)
+        except Exception as exc:  # Re-raised on the UI thread below.
+            self.error = exc
+        self.finished.emit()
 
 
 class WebsiteSyncLifecycleMixin:
@@ -117,8 +136,7 @@ class WebsiteSyncLifecycleMixin:
         return token
 
     def _run_web(self, title, work, *, raise_conflict=False):
-        """Run one website call with the token, a wait cursor and the sync
-        buttons disabled (a slow connection should look busy, not crashed).
+        """Run one website call off the UI thread with the sync controls disabled.
         Returns work()'s value, or None when it failed or was cancelled — the
         error is shown as a message box here so flypath_sync stays Qt-free."""
         try:
@@ -133,13 +151,23 @@ class WebsiteSyncLifecycleMixin:
         if library is not None:
             library.setEnabled(False)
         QApplication.setOverrideCursor(_WaitCursor)
-        # ponytail: retain synchronous HTTP; use a QGIS task if request latency disrupts planning.
-        QApplication.processEvents()     # paint the busy state before blocking
         try:
             if (flypath_sync.load_base_url() != origin or
                     flypath_sync.load_token() != token):
                 raise FlypathSyncError('The FlyPath connection changed before sending. No request was made. Retry with the intended website and account.')
-            return work(token)
+            thread = QThread()
+            call = _WebsiteCall(work, token)
+            call.moveToThread(thread)
+            loop = QEventLoop()
+            thread.started.connect(call.run)
+            call.finished.connect(thread.quit)
+            call.finished.connect(loop.quit)
+            thread.start()
+            loop.exec()
+            thread.wait()
+            if call.error is not None:
+                raise call.error
+            return call.result
         except FlypathSyncError as exc:
             if exc.status == 401:
                 # The token is gone or was regenerated: forget it so the next

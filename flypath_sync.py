@@ -41,8 +41,8 @@ MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_ERROR_BYTES = 64 * 1024
 MAX_JSON_DEPTH = 32
 
-# Network calls run on the UI thread (as the DEM fetches already do), so the
-# timeout is what bounds how long QGIS can look frozen on a dead connection.
+# The website controller runs these calls on a worker thread. The timeout still
+# bounds cleanup and how long the controls remain busy on a dead connection.
 TIMEOUT_S = 20
 
 NO_TOKEN_MESSAGE = (           # nosec B105
