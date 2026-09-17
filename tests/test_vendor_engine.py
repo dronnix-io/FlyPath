@@ -33,6 +33,7 @@ def test_replace_and_verify_package():
         assert not (destination / "stale.py").exists()
         assert json.loads((destination / "SOURCE.json").read_text())["tag"] == "v1.2.3"
     assert _include(Path("flypath_engine/grid.py"))
+    assert not _include(Path("AGENTS.md"))
     assert not _include(Path("tests/test_grid.py"))
 
 

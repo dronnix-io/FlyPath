@@ -10,7 +10,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED = {".github", "build", "dist", "docs", "tests", "tools"}
 EXCLUDED_ROOT_FILES = {
-    ".gitignore", "CONTEXT.md", "CONTRIBUTING.md", "SECURITY.md",
+    ".gitignore", "AGENTS.md", "CONTEXT.md", "CONTRIBUTING.md", "SECURITY.md",
     "flypath-engine.json",
 }
 
