@@ -48,3 +48,22 @@ jobs:
 
       - name: Security scan (bandit)
         run: python -m bandit -q -r . -x ./tests,./tools
+
+  qgis-package:
+    name: Packaged plugin / QGIS 3.44.14
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Test ZIP in official QGIS runtime
+        shell: bash
+        run: |
+          docker run --detach --name qgis-runtime \
+            --volume "$GITHUB_WORKSPACE:/tests_directory" \
+            --env DISPLAY=:99 \
+            qgis/qgis:3.44.14-noble
+          trap 'docker rm --force qgis-runtime' EXIT
+          docker exec qgis-runtime sh -lc \
+            'cd /tests_directory && python3 tools/build_plugin.py'
+          docker exec qgis-runtime sh -lc \
+            'cd /tests_directory && python3 tests/test_qgis_package.py "$(ls -1t dist/FlyPath-*.zip | head -n 1)"'
