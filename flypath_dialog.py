@@ -2918,11 +2918,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         stats = result['statistics']
         self.coverageLabel.setText(f"{stats['survey_area_m2'] / 10_000:.2f} ha")
         incomplete = not stats.get('estimates_complete', False)
-        travel_note = ' + travel unknown' if incomplete else ''
         self.flightTimeLabel.setText(
-            f"{stats['known_estimated_seconds'] / 60:.1f} min{travel_note}")
+            f"{stats['known_estimated_seconds'] / 60:.1f} min")
         self.distanceLabel.setText(
-            f"{stats['known_distance_m'] / 1000:.2f} km{travel_note}")
+            f"{stats['known_distance_m'] / 1000:.2f} km")
         photo_prefix = '~' if stats.get('photo_count_kind') == 'estimate' else ''
         self.photosLabel.setText(f"{photo_prefix}{stats['photo_count']:,}")
         self.waypointsLabel.setText(f"{stats['waypoint_count']:,}")

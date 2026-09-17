@@ -79,6 +79,8 @@ def test_planning_dialog_state():
                     module.planning_adapter.consume_result(
                         planner._planning.request, planner._planning.result)]
         assert planner._missions == expected
+        assert 'travel unknown' not in planner.flightTimeLabel.text()
+        assert 'travel unknown' not in planner.distanceLabel.text()
         shared = planner._website_payload('Shared mission')
         saved_result = shared['planning_result']
         stale = deepcopy(shared)
