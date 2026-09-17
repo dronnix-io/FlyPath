@@ -463,14 +463,14 @@ class WebsiteSyncLifecycleMixin:
         if mission is None:
             return
         try:
-            adjusted = self._apply_website_mission(mission)
+            adjusted, recovery_note = self._apply_website_mission(mission)
         except FlypathSyncError as exc:
             QMessageBox.warning(self, 'Cannot Load Mission', str(exc))
             return
         self._remember_website_mission(mission)
-        note = ''
+        note = ('\n\n' + recovery_note) if recovery_note else ''
         if adjusted:
-            note = ('\n\nThese settings are outside this plugin\'s own range '
+            note += ('\n\nThese settings are outside this plugin\'s own range '
                     'and were adjusted to the nearest value it can fly:\n  '
                     + '\n  '.join(adjusted))
         QMessageBox.information(
@@ -505,17 +505,24 @@ class WebsiteSyncLifecycleMixin:
     def _apply_website_mission(self, mission):
         """Rebuild a website mission as a local one. Everything the plugin
         cannot represent is rejected before any map state changes, so a refused
-        load leaves the current plan untouched. Returns the settings whose value
-        the plugin's own range could not hold, as lines for the caller to show:
-        those are adjusted, never silently."""
+        load leaves the current plan untouched. Returns adjusted-setting lines
+        and an optional saved-route recovery note for the caller to show."""
         flypath_sync.validate_mission(mission)
         settings = mission.get('settings') or {}
         if not isinstance(settings, dict):
             raise FlypathSyncError('This mission\'s settings could not be read.')
+        recovery_note = ''
         try:
             provenance = planning_adapter.validate_mission_provenance(mission)
         except ValueError as exc:
-            raise FlypathSyncError(str(exc)) from None
+            if not mission.get('planning_result'):
+                raise FlypathSyncError(str(exc)) from None
+            recovery_note = (
+                'The saved route could not be verified and was regenerated from '
+                'the mission settings. Review it before saving changes.')
+            mission = {**mission, 'planning_request': {}, 'planning_result': {},
+                       'waypoints': []}
+            provenance = None
         if settings.get('reverse_route'):
             raise FlypathSyncError('This mission uses a reversed route, which the plugin cannot edit. Disable Reverse route on the website first.')
         style = settings.get('mapping_style', '2d')
@@ -657,7 +664,7 @@ class WebsiteSyncLifecycleMixin:
         self._loading_mission = False
         self._restore_imported_route(mission, provenance)
         self._zoom_to_website_geometry(geom, wgs84)
-        return adjusted
+        return adjusted, recovery_note
 
     def _zoom_to_website_geometry(self, geom, crs):
         canvas = self.iface.mapCanvas()

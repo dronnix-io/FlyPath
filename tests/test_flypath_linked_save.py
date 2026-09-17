@@ -26,7 +26,7 @@ def test_linked_save():
         _update_web_buttons=lambda: None,
         _website_payload=lambda name: {'name': name, 'settings': {'altitude': 80}},
         _run_web=lambda title, work, **kwargs: work('token-a'),
-        _apply_website_mission=lambda mission: [],
+        _apply_website_mission=lambda mission: ([], ''),
     )
     for name in ('_current_website_link', '_remember_website_mission',
                  '_on_send_to_website', '_resolve_website_conflict', '_on_load_from_website', '_forget_website_mission'):

@@ -71,7 +71,8 @@ def test_planning_dialog_state():
                 'split_max_wp': 70,
             },
         }
-        planner._apply_website_mission(mission)
+        adjusted, recovery_note = planner._apply_website_mission(mission)
+        assert not adjusted and not recovery_note
         assert planner._preview_layer_ids and planner._planning.result, \
             'Loading a mission without a saved route must preview automatically'
         expected = [flight['waypoints'] for flight in
@@ -80,6 +81,12 @@ def test_planning_dialog_state():
         assert planner._missions == expected
         shared = planner._website_payload('Shared mission')
         saved_result = shared['planning_result']
+        stale = deepcopy(shared)
+        stale['planning_result']['statistics']['photo_count'] += 1
+        adjusted, recovery_note = planner._apply_website_mission(stale)
+        assert not adjusted and recovery_note
+        assert planner._planning.result, \
+            'Invalid saved provenance must regenerate from safe inputs'
         legacy_points = [
             [51.0100, -114.0200], [51.0130, -114.0200],
             [51.0130, -114.0185], [51.0100, -114.0185],
