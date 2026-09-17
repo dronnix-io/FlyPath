@@ -119,6 +119,19 @@ from .planning_lifecycle import PlanningLifecycle
 from .survey_controller import SurveyLifecycleMixin
 from .website_sync_controller import WebsiteSyncLifecycleMixin
 
+
+def _format_duration(seconds):
+    seconds = max(0, round(seconds))
+    return f'{seconds // 60}m {seconds % 60}s' if seconds >= 60 else f'{seconds}s'
+
+
+def _format_distance(meters):
+    meters = max(0, meters)
+    if meters >= 1000:
+        decimals = 2 if meters < 10000 else 1
+        return f'{meters / 1000:.{decimals}f} km'
+    return f'{round(meters)} m'
+
 try:
     _PolygonGeometry = QgsWkbTypes.GeometryType.PolygonGeometry
     _LineGeometry    = QgsWkbTypes.GeometryType.LineGeometry
@@ -1551,30 +1564,33 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         flight lines, keeps the panel and toolbars free, and never shrinks the
         map. It is click-through so it never blocks map interaction. Creates the
         same label attributes _update_stats writes to."""
+        self.coverageLabel = QLabel('—')
+        self.coverageLabel.setObjectName('coverageLabel')
+        self.coverageLabel.hide()
         fields = [
             ('flightTimeLabel', 'Flight Time',
              'Estimated total flight duration based on path length and speed. '
              'Does not include takeoff, landing, or battery swap time.'),
-            ('distanceLabel',   'Distance',
-             'Total distance the drone will fly along all flight lines.'),
-            ('coverageLabel',   'Coverage',
-             'Total survey area in hectares as calculated from the polygon.'),
-            ('corridorLengthLabel', 'Corridor Length',
-             'Total length of the corridor centre line (corridor missions only).'),
-            ('linesLabel',      'Lines',
-             'Number of parallel flight lines needed to cover the survey area.'),
-            ('waypointsLabel',  'Waypoints',
-             'Total waypoints in the mission: turn points in semi-automatic, one '
-             'per photo in full-automatic. DJI Fly caps a mission near 200, so '
-             'the survey is split to stay under the Max Waypoints value.'),
-            ('photosLabel',     'Photos',
-             'Estimated number of photos the camera will take during the mission.'),
             ('batteriesLabel',  'Batteries',
              'Estimated battery charges needed for the mission. Planned against a '
              f'{int(round(_BATTERY_RESERVE * 100))}% reserve, so usable time per '
              f'battery is {int(round((1 - _BATTERY_RESERVE) * 100))}% of the '
              'drone\'s rated endurance, leaving margin for wind, turnarounds and '
              'a safe return.'),
+            ('distanceLabel',   'Distance',
+             'Total distance the drone will fly along all flight lines.'),
+            ('corridorLengthLabel', 'Corridor Length',
+             'Total length of the corridor centre line (corridor missions only).'),
+            ('waypointsLabel',  'Waypoints',
+             'Total waypoints in the mission: turn points in semi-automatic, one '
+             'per photo in full-automatic. DJI Fly caps a mission near 200, so '
+             'the survey is split to stay under the Max Waypoints value.'),
+            ('photosLabel',     'Photos',
+             'Estimated number of photos the camera will take during the mission.'),
+            ('frontOverlapStatLabel', 'Front Overlap',
+             'Along-track overlap between consecutive photos.'),
+            ('linesLabel',      'Strips',
+             'Number of parallel flight strips needed to cover the survey area.'),
         ]
         canvas = self.iface.mapCanvas()
         try:
@@ -1589,7 +1605,11 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         grid.setVerticalSpacing(7)
         title = QLabel('Mission Stats')
         title.setObjectName('hudTitle')
-        grid.addWidget(title, 0, 0, 1, 2)
+        grid.addWidget(title, 0, 0)
+        self._hudContext = QLabel('—')
+        self._hudContext.setObjectName('hudContext')
+        self._hudContext.setAlignment(_AlignRight | _AlignVCenter)
+        grid.addWidget(self._hudContext, 0, 1)
         self._hudCaptions = {}
         for i, (attr, caption, tip) in enumerate(fields):
             cap = QLabel(f'{caption}')          # single column: one stat per row
@@ -1609,8 +1629,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
             '#flypathHud QLabel { color: #C7CBD1; font-size: 13px; }'
             '#flypathHud QLabel#hudTitle { color: #7FB3E8; font-weight: bold; '
             'font-size: 13px; padding-bottom: 2px; }'
+            '#flypathHud QLabel#hudContext { color: #8A93A0; font-size: 11px; }'
             '#flypathHud QLabel#flightTimeLabel, #flypathHud QLabel#distanceLabel, '
-            '#flypathHud QLabel#coverageLabel, #flypathHud QLabel#linesLabel, '
+            '#flypathHud QLabel#linesLabel, #flypathHud QLabel#frontOverlapStatLabel, '
             '#flypathHud QLabel#waypointsLabel, #flypathHud QLabel#photosLabel, '
             '#flypathHud QLabel#batteriesLabel, #flypathHud QLabel#corridorLengthLabel '
             '{ color: #F0A500; font-weight: bold; }'
@@ -1644,6 +1665,14 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
 
     def _show_hud(self):
         if self._hud and self.isVisible():
+            context = [self.coverageLabel.text(), f'{self.gsdSpin.value():.2f} cm']
+            self._hudContext.setText(' · '.join(value for value in context if value != '—'))
+            if self._mission_type() == 'full':
+                overlap = f'{self.frontOverlapSpin.value()}%'
+            else:
+                overlap = self.frontOverlapLabel.text().split()[0]
+                overlap = overlap if overlap == '—' else f'{overlap}%'
+            self.frontOverlapStatLabel.setText(overlap)
             self._position_hud()
             self._hud.show()
             self._hud.raise_()
@@ -2916,14 +2945,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         self._missions = [flight['waypoints'] for flight in flights]
         self._gen_elevations = None
         stats = result['statistics']
-        self.coverageLabel.setText(f"{stats['survey_area_m2'] / 10_000:.2f} ha")
+        self.coverageLabel.setText(f"{stats['survey_area_m2'] / 10_000:.1f} ha")
         incomplete = not stats.get('estimates_complete', False)
-        self.flightTimeLabel.setText(
-            f"{stats['known_estimated_seconds'] / 60:.1f} min")
-        self.distanceLabel.setText(
-            f"{stats['known_distance_m'] / 1000:.2f} km")
-        photo_prefix = '~' if stats.get('photo_count_kind') == 'estimate' else ''
-        self.photosLabel.setText(f"{photo_prefix}{stats['photo_count']:,}")
+        self.flightTimeLabel.setText(_format_duration(stats['known_estimated_seconds']))
+        self.distanceLabel.setText(_format_distance(stats['known_distance_m']))
+        photo_suffix = ' estimated' if stats.get('photo_count_kind') == 'estimate' else ''
+        self.photosLabel.setText(f"{stats['photo_count']:,}{photo_suffix}")
         self.waypointsLabel.setText(f"{stats['waypoint_count']:,}")
         self.linesLabel.setText(str(stats['strip_count']))
         self.batteriesLabel.setText(str(stats['battery_count']))
@@ -3023,7 +3050,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         speed = self.speedSpin.value()
 
         # Coverage area
-        self.coverageLabel.setText(f'{self._area_ha():.2f} ha')
+        self.coverageLabel.setText(f'{self._area_ha():.1f} ha')
 
         # Flight-path stats are taken from the ACTUAL generated waypoints (the
         # same path the preview draws), so distance, lines, photos and time
@@ -3085,12 +3112,11 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
             stop_seconds=_HALT_S,
         )
         n_photos = stats["photo_count"]
-        flight_min = stats["flight_seconds"] / 60.0
         batteries = stats["battery_count"]
         self._live_statistics = stats
 
-        self.flightTimeLabel.setText(f'{flight_min:.1f} min')
-        self.distanceLabel.setText(f'{dist_m / 1000:.2f} km')
+        self.flightTimeLabel.setText(_format_duration(stats['flight_seconds']))
+        self.distanceLabel.setText(_format_distance(dist_m))
         self.photosLabel.setText(f'{n_photos:,}')
         self.waypointsLabel.setText(f'{len(waypoints):,}')
         self.linesLabel.setText(str(n_lines))
@@ -3146,7 +3172,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         da.setEllipsoid('WGS84')
         length_m = da.measureLength(self._survey_line)
         total_width = 2.0 * self.bufferSpin.value()
-        self.coverageLabel.setText(f'{length_m * total_width / 10_000:.2f} ha')
+        self.coverageLabel.setText(f'{length_m * total_width / 10_000:.1f} ha')
 
         full = self._mission_type() == 'full'
         usable_min = d.battery_time_min * (1.0 - _BATTERY_RESERVE)
@@ -3199,8 +3225,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
             flight_min = dist_m / (speed * 60.0) if speed > 0 else 0.0
         batteries = math.ceil(flight_min / usable_min) if flight_min > 0 else 0
 
-        self.flightTimeLabel.setText(f'{flight_min:.1f} min')
-        self.distanceLabel.setText(f'{dist_m / 1000:.2f} km')
+        self.flightTimeLabel.setText(_format_duration(flight_min * 60))
+        self.distanceLabel.setText(_format_distance(dist_m))
         self.photosLabel.setText(f'{n_photos:,}')
         self.waypointsLabel.setText(f'{len(waypoints):,}')
         self.linesLabel.setText(str(n_lines))
@@ -3238,7 +3264,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
     def _clear_stats(self):
         for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
                      'waypointsLabel', 'linesLabel', 'batteriesLabel',
-                     'coverageLabel', 'corridorLengthLabel'):
+                     'coverageLabel', 'corridorLengthLabel',
+                     'frontOverlapStatLabel'):
             getattr(self, attr).setText('—')
         self.areaLabel.setText('—')
         self._hide_hud()

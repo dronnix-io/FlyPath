@@ -24,9 +24,18 @@ def test_planning_dialog_state():
         raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
     app = QgsApplication.instance() or QgsApplication([], False)
     app.initQgis()
+    assert module._format_duration(29.2) == '29s'
+    assert module._format_duration(90.2) == '1m 30s'
+    assert module._format_distance(232.4) == '232 m'
+    assert module._format_distance(1234) == '1.23 km'
     canvas = QgsMapCanvas()
     planner = module.FlyPathDialog(SimpleNamespace(mapCanvas=lambda: canvas))
     try:
+        assert list(planner._hudCaptions) == [
+            'flightTimeLabel', 'batteriesLabel', 'distanceLabel',
+            'corridorLengthLabel', 'waypointsLabel', 'photosLabel',
+            'frontOverlapStatLabel', 'linesLabel',
+        ]
         assert planner.splitCheck.isChecked(), 'new missions enable splitting'
         planner._waypoints = [(1, 2), (3, 4)]
         planner._missions = [list(planner._waypoints)]
