@@ -2,7 +2,7 @@ import os
 
 from qgis.PyQt.QtWidgets import QAction, QDockWidget, QTabWidget
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, QTimer
 from qgis.core import QgsProject
 
 from . import preview_layers
@@ -87,7 +87,7 @@ class FlyPath:
             self.dock_widget = None
 
     def _remove_stale_layers(self, *_):
-        preview_layers.remove_stale()
+        QTimer.singleShot(0, preview_layers.remove_stale)
 
     def toggle_panel(self, checked):
         if checked:
