@@ -26,6 +26,7 @@ from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
 try:
     _AlignLeft    = Qt.AlignmentFlag.AlignLeft
+    _AlignRight   = Qt.AlignmentFlag.AlignRight
     _AlignVCenter = Qt.AlignmentFlag.AlignVCenter
     _AlignCenter  = Qt.AlignmentFlag.AlignCenter
     _EventEnter   = QEvent.Type.Enter
@@ -55,6 +56,7 @@ except AttributeError:
     # Old PyQt5 without scoped enums; fetch unscoped names dynamically so the
     # scoped forms above remain the only static enum references in the file.
     _AlignLeft    = getattr(Qt, 'AlignLeft')
+    _AlignRight   = getattr(Qt, 'AlignRight')
     _AlignVCenter = getattr(Qt, 'AlignVCenter')
     _AlignCenter  = getattr(Qt, 'AlignCenter')
     _EventEnter   = getattr(QEvent, 'Enter')
