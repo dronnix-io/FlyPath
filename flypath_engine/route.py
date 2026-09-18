@@ -1,6 +1,6 @@
 """
-grid_route.py
--------------
+flypath_engine.route
+--------------------
 Concave-safe ordering of lawnmower scan-line segments into a flight route.
 
 Pure Python (no QGIS) so the routing logic can be unit-tested directly.
@@ -30,8 +30,14 @@ def boustrophedon_route(columns, densify_spacing=None):
     endpoints are returned. Returns a flat list of (x, y) points in the rotated
     frame.
     """
+    return [point for survey_pass in boustrophedon_passes(columns, densify_spacing)
+            for point in survey_pass]
+
+
+def boustrophedon_passes(columns, densify_spacing=None):
+    """Return ordered survey passes without losing boundaries to densification."""
     cells, adjacency = decompose_cells(columns)
-    return order_cells(cells, adjacency, densify_spacing)
+    return order_cell_passes(cells, adjacency, densify_spacing)
 
 
 def decompose_cells(columns):
@@ -99,13 +105,10 @@ def _pass_points(x, ylo, yhi, densify_spacing):
     return [(x, ylo + i * step) for i in range(n + 1)]
 
 
-def cell_turns(cell, densify_spacing=None):
-    """Snake one cell into points: up one line, down the next."""
-    turns = []
-    for k, (x, ylo, yhi) in enumerate(cell):
-        pts = _pass_points(x, ylo, yhi, densify_spacing)
-        turns.extend(pts if k % 2 == 0 else pts[::-1])
-    return turns
+def cell_passes(cell, densify_spacing=None):
+    return [(_pass_points(x, ylo, yhi, densify_spacing)
+             if k % 2 == 0 else _pass_points(x, ylo, yhi, densify_spacing)[::-1])
+            for k, (x, ylo, yhi) in enumerate(cell)]
 
 
 def _visit_order(turnlists, adjacency):
@@ -149,29 +152,61 @@ def _visit_order(turnlists, adjacency):
     return order
 
 
-def order_cells(cells, adjacency, densify_spacing=None):
-    """Concatenate the cells into one route in adjacency (graph) order, so the
-    legs between strips run along the survey area's spine and stay inside it.
-    Each cell is flown in whichever direction enters it closest to the previous
-    cell's exit. Every pass itself lies within a single strip."""
-    # Each cell has >= 1 segment, so cell_turns yields >= 2 points; indices stay
-    # aligned with `adjacency`.
-    turnlists = [cell_turns(c, densify_spacing) for c in cells]
+def order_cell_passes(cells, adjacency, densify_spacing=None):
+    """Order cells while retaining each real scan-line segment as one pass."""
+    passlists = [cell_passes(c, densify_spacing) for c in cells]
+    turnlists = [[point for survey_pass in passes for point in survey_pass]
+                 for passes in passlists]
     if not turnlists:
         return []
     route = []
+    ordered = []
     cur = None
     for k in _visit_order(turnlists, adjacency):
         t = turnlists[k]
         if cur is None:
             chosen = t
+            chosen_passes = passlists[k]
         else:
             fwd = (t[0][0] - cur[0]) ** 2 + (t[0][1] - cur[1]) ** 2
             rev = (t[-1][0] - cur[0]) ** 2 + (t[-1][1] - cur[1]) ** 2
-            chosen = t if fwd <= rev else t[::-1]
+            if fwd <= rev:
+                chosen = t
+                chosen_passes = passlists[k]
+            else:
+                chosen = t[::-1]
+                chosen_passes = [survey_pass[::-1] for survey_pass in passlists[k][::-1]]
         route.extend(chosen)
+        ordered.extend(chosen_passes)
         cur = route[-1]
-    return route
+    return ordered
+
+
+def split_waypoints(waypoints, n_missions):
+    """Split endpoint pairs into contiguous flights with shared seams."""
+    pts = list(waypoints)
+    n_lines = len(pts) // 2
+    try:
+        n = int(n_missions)
+    except (TypeError, ValueError):
+        n = 1
+    n = max(1, min(n, max(1, n_lines)))
+    if n <= 1 or n_lines <= 1:
+        return [pts]
+
+    base, rem = divmod(n_lines, n)
+    missions = []
+    start_line = 0
+    prev_last = None
+    for group in range(n):
+        count = base + (1 if group < rem else 0)
+        chunk = pts[start_line * 2:(start_line + count) * 2]
+        if prev_last is not None:
+            chunk = [prev_last] + chunk
+        missions.append(chunk)
+        prev_last = chunk[-1]
+        start_line += count
+    return missions
 
 
 def split_by_waypoint_count(waypoints, n_missions, max_waypoints=None):

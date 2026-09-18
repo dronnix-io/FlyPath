@@ -64,7 +64,7 @@ A walkthrough of installing and using FlyPath in QGIS: defining a survey area, s
 - **Direct RC export**: auto-detects the connected DJI RC (over USB, or as a removable drive), lists the missions DJI Fly tracks, and replaces the one you pick, transferred silently over USB with no prompts or pop-up windows
 - **Mission preview in the RC picker**: every mission on the RC is drawn as a live flight-path thumbnail rendered from its own waypoints and labelled with its waypoint count, so you can see exactly which mission to replace before sending the new one; click a preview to open a zoomable viewer, and the list and preview refresh instantly after each replace
 - **Local folder export**: pick a folder and FlyPath saves a dated `.kmz` file there, then offers to open the folder
-- **FlyPath mission library**: open **FlyPath** and select the **My missions** tab. The **Planner** tab opens by default; opening a website mission returns to it and centers the map. **Open mission** loads a linked working copy; **Save changes** updates that same website mission. A first save creates a mission and links subsequent saves to it. **Save as new…** creates a separate mission. If the website changed since loading, saving stops and offers **Load latest…**, **Save as new…**, or **Cancel**; local edits stay intact unless you confirm reloading. Website-only settings are preserved on updates; reversed routes must be disabled on the website before loading. Links last for this plugin session and are cleared on a full planner reset, project close, or account change. Requires the website revision API and its database migration.
+- **FlyPath mission library**: open **FlyPath** and select the **My missions** tab. The **Planner** tab opens by default; opening a website mission returns to it and centers the map. **Open mission** loads a linked working copy; **Save changes** updates that same website mission. A first save creates a mission and links subsequent saves to it. **Save as new…** creates a separate mission. If the website changed since loading, saving stops and offers **Load latest…**, **Save as new…**, or **Cancel**; local edits stay intact unless you confirm reloading. Website-only settings are preserved on updates; reversed routes must be disabled on the website before loading. Links last for this plugin session and are cleared on a full planner reset, project close, or account change. Requires a compatible website revision API.
 - Contextual hints shown in a card on the map, hover over any parameter to see what it does
 - Dark-themed dock panel, designed to complement the QGIS interface
 
@@ -75,12 +75,12 @@ A walkthrough of installing and using FlyPath in QGIS: defining a survey area, s
 | Requirement | Details |
 |---|---|
 | Operating System | Windows 10 / 11 |
-| QGIS | 3.16 or later (4.x supported) |
-| Python | 3.9+ (bundled with QGIS) |
+| QGIS | 3.44 LTR; this release was tested on 3.44.14 |
+| Python | 3.10+ required by the engine; tested with QGIS Python 3.12 |
 | Drone | DJI Mini 3 Pro, Mini 4 Pro, Mini 5 Pro, Air 3, Air 3S, Mavic 3 Classic, or Mavic 4 Pro |
 | Controller | DJI RC2 (for direct USB export) |
 
-> Linux and macOS support is planned for a future release.
+> This engine release was tested on Windows with QGIS 3.44.14. Other QGIS versions and platforms require validation. The engine requires Shapely 2.1+ and pyproj 3.7+.
 
 ---
 
@@ -274,9 +274,10 @@ FlyPath/
 ├── flypath_dialog.py     # Main UI panel and export logic
 ├── map_tools.py          # Interactive polygon drawing tool
 ├── grid_planner.py       # Flight grid generation (QGIS geometry)
-├── grid_route.py         # Concave-safe route ordering, densify, split (pure Python)
+├── flypath_engine/       # Vendored route planning, measurements, and profiles
 ├── wpml/                 # DJI WPML KMZ writers (consumer / enterprise) via a factory
 ├── hardware/             # Drone registry (drones.json + models)
+├── tools/                # Engine refresh, plugin packaging, and repository checks
 ├── tests/                # Pure-Python unit tests
 ├── metadata.txt          # QGIS plugin metadata
 ├── icon.png              # Plugin icon

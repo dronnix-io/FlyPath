@@ -65,7 +65,8 @@ def sample_elevations(waypoints, sample):
 
 
 def densify_by_terrain(waypoints, sample, tolerance_m,
-                       spacing_m=None, max_points=_DEFAULT_MAX_WAYPOINTS):
+                       spacing_m=None, max_points=_DEFAULT_MAX_WAYPOINTS,
+                       all_legs=False):
     """Semi-automatic terrain follow: insert extra waypoints along the flight
     lines wherever the ground elevation has drifted more than `tolerance_m` from
     the last kept waypoint (each kept waypoint becomes the new reference). The
@@ -75,6 +76,8 @@ def densify_by_terrain(waypoints, sample, tolerance_m,
     points per flight line, snaked, so the legs alternate flight-line / connector
     and the even-indexed legs are the flight lines. `sample(lon, lat)` returns
     ground elevation in metres.
+    Set `all_legs` for corridor routes, whose curved passes can contain interior
+    vertices and therefore do not follow the alternating two-point-line shape.
 
     Returns (waypoints, elevations) as parallel lists. If densifying would exceed
     `max_points`, the tolerance is doubled repeatedly until the route fits (same
@@ -94,7 +97,7 @@ def densify_by_terrain(waypoints, sample, tolerance_m,
     candidates = []                                  # (lon, lat, is_original)
     for i, length in enumerate(leg_len):
         candidates.append((pts[i][0], pts[i][1], True))
-        if i % 2 == 0 and length > spacing:          # only densify the flight lines
+        if (all_legs or i % 2 == 0) and length > spacing:
             extra = int(length // spacing)
             for j in range(1, extra + 1):
                 f = j / (extra + 1)

@@ -9,7 +9,9 @@
       "min_speed_ms": 1.0,
       "max_speed_ms": 12.0,
       "battery_time_min": 34,
-      "signal_range_km": 12.0
+      "signal_range_km": 12.0,
+      "battery_safe_min": 24,
+      "default_speed_ms": 8
     },
     "camera": {
       "sensor_width_mm": 9.6,
@@ -17,7 +19,8 @@
       "focal_length_mm": 6.9,
       "image_width_px": 4000,
       "image_height_px": 3000,
-      "min_shoot_interval_s": 2.0
+      "min_shoot_interval_s": 2.0,
+      "continuous_trigger": true
     },
     "verified": "community-verified",
     "info": "1/1.3\" CMOS  ·  12 MP  ·  24 mm equiv"
@@ -32,7 +35,9 @@
       "min_speed_ms": 1.0,
       "max_speed_ms": 12.0,
       "battery_time_min": 34,
-      "signal_range_km": 20.0
+      "signal_range_km": 20.0,
+      "battery_safe_min": 24,
+      "default_speed_ms": 8
     },
     "camera": {
       "sensor_width_mm": 9.6,
@@ -40,7 +45,8 @@
       "focal_length_mm": 6.9,
       "image_width_px": 4000,
       "image_height_px": 3000,
-      "min_shoot_interval_s": 2.0
+      "min_shoot_interval_s": 2.0,
+      "continuous_trigger": true
     },
     "verified": "native RC2 mission dump",
     "info": "1/1.3\" CMOS  ·  12 MP  ·  24 mm equiv"
@@ -55,7 +61,9 @@
       "min_speed_ms": 1.0,
       "max_speed_ms": 15.0,
       "battery_time_min": 45,
-      "signal_range_km": 20.0
+      "signal_range_km": 20.0,
+      "battery_safe_min": 32,
+      "default_speed_ms": 8
     },
     "camera": {
       "sensor_width_mm": 13.2,
@@ -63,7 +71,8 @@
       "focal_length_mm": 8.8,
       "image_width_px": 8192,
       "image_height_px": 6144,
-      "min_shoot_interval_s": 5.0
+      "min_shoot_interval_s": 5.0,
+      "continuous_trigger": true
     },
     "verified": "community-verified",
     "notes": "Sensor dimensions use the standard 1\" format (13.2 x 8.8 mm); focal length derived from 24 mm equiv on a 1\" sensor (crop factor ~2.73). Verify against official DJI EXIF if better than ~2% GSD precision is needed. Drone enum 68 and RC2 compatibility community-verified.",
@@ -79,7 +88,9 @@
       "min_speed_ms": 1.0,
       "max_speed_ms": 15.0,
       "battery_time_min": 46,
-      "signal_range_km": 20.0
+      "signal_range_km": 20.0,
+      "battery_safe_min": 32,
+      "default_speed_ms": 8
     },
     "camera": {
       "sensor_width_mm": 9.6,
@@ -87,7 +98,8 @@
       "focal_length_mm": 6.9,
       "image_width_px": 4000,
       "image_height_px": 3000,
-      "min_shoot_interval_s": 2.0
+      "min_shoot_interval_s": 2.0,
+      "continuous_trigger": true
     },
     "verified": "Enum assumed 68 (shared with the verified Mini 4 Pro / Mini 5 Pro); awaiting a field-test report on this exact model.",
     "notes": "Native DJI Fly waypoint support, pairs with DJI RC2. drone_enum set to 68, the shared consumer value used by the Mini 4 Pro and Mini 5 Pro; if DJI Fly rejects a mission on this model, the enum needs a model-specific value. Dual-camera (wide + 70 mm tele); the consumer KMZ does not name a lens, so DJI Fly uses the drone's active camera, so select the wide lens for mapping. GSD assumes the 1/1.3\" 48 MP wide lens (values reused from the Mini 4 Pro).",
@@ -103,7 +115,9 @@
       "min_speed_ms": 1.0,
       "max_speed_ms": 15.0,
       "battery_time_min": 45,
-      "signal_range_km": 20.0
+      "signal_range_km": 20.0,
+      "battery_safe_min": 32,
+      "default_speed_ms": 8
     },
     "camera": {
       "sensor_width_mm": 13.2,
@@ -111,7 +125,8 @@
       "focal_length_mm": 8.8,
       "image_width_px": 8192,
       "image_height_px": 6144,
-      "min_shoot_interval_s": 5.0
+      "min_shoot_interval_s": 5.0,
+      "continuous_trigger": true
     },
     "verified": "Enum assumed 68 (shared with the verified Mini 4 Pro / Mini 5 Pro); awaiting a field-test report on this exact model.",
     "notes": "Native DJI Fly waypoint support, pairs with DJI RC2. drone_enum set to 68, the shared consumer value used by the Mini 4 Pro and Mini 5 Pro; if DJI Fly rejects a mission on this model, the enum needs a model-specific value. Dual-camera; the consumer KMZ does not name a lens, so DJI Fly uses the drone's active camera, so select the 1\" main lens for mapping. GSD assumes the 1\" 50 MP main lens (values reused from the Mini 5 Pro).",
@@ -127,7 +142,9 @@
       "min_speed_ms": 1.0,
       "max_speed_ms": 15.0,
       "battery_time_min": 51,
-      "signal_range_km": 30.0
+      "signal_range_km": 30.0,
+      "battery_safe_min": 36,
+      "default_speed_ms": 8
     },
     "camera": {
       "sensor_width_mm": 17.4,
@@ -135,7 +152,8 @@
       "focal_length_mm": 14.0,
       "image_width_px": 12288,
       "image_height_px": 8192,
-      "min_shoot_interval_s": 5.0
+      "min_shoot_interval_s": 5.0,
+      "continuous_trigger": true
     },
     "verified": "Enum assumed 68 (shared with the verified Mini 4 Pro / Mini 5 Pro); camera and shutter interval are estimates; awaiting a field-test report on this exact model.",
     "notes": "Native DJI Fly waypoint support, pairs with DJI RC2 / RC Pro 2. drone_enum set to 68, the shared consumer value used by the Mini 4 Pro and Mini 5 Pro; if DJI Fly rejects a mission on this model, the enum needs a model-specific value. Triple-camera Hasselblad; the consumer KMZ does not name a lens, so DJI Fly uses the drone's active camera, so select the wide lens for mapping. GSD assumes the 4/3 100 MP wide lens (17.4 x 13.0 mm, 28 mm equiv, ~14 mm focal); the 100 MP shutter interval is an estimate.",
@@ -151,7 +169,9 @@
       "min_speed_ms": 1.0,
       "max_speed_ms": 15.0,
       "battery_time_min": 46,
-      "signal_range_km": 15.0
+      "signal_range_km": 15.0,
+      "battery_safe_min": 32,
+      "default_speed_ms": 8
     },
     "camera": {
       "sensor_width_mm": 17.3,
@@ -159,7 +179,8 @@
       "focal_length_mm": 12.29,
       "image_width_px": 5280,
       "image_height_px": 3956,
-      "min_shoot_interval_s": 2.0
+      "min_shoot_interval_s": 2.0,
+      "continuous_trigger": true
     },
     "verified": "Enum assumed 68 (shared with the verified Mini 4 Pro / Mini 5 Pro); awaiting a field-test report on this exact model.",
     "notes": "Single-camera Mavic 3 (the only one without a tele lens); native DJI Fly waypoint support, pairs with DJI RC / RC-N1 / RC Pro (Save to computer; direct RC transfer is built for RC2 and unverified on these controllers). drone_enum set to 68, the shared consumer value used by the Mini 4 Pro and Mini 5 Pro; if DJI Fly rejects a mission on this model, the enum needs a model-specific value. Camera is the 4/3 20 MP Hasselblad L2D-20c (17.3 x 13.0 mm, 24 mm equiv, 12.29 mm focal, 5280 x 3956); shutter interval is an estimate.",
@@ -174,7 +195,9 @@
       "min_speed_ms": 1.0,
       "max_speed_ms": 21.0,
       "battery_time_min": 45,
-      "signal_range_km": 25.0
+      "signal_range_km": 25.0,
+      "battery_safe_min": 32,
+      "default_speed_ms": 15
     },
     "camera": {
       "sensor_width_mm": 17.3,
@@ -184,7 +207,8 @@
       "image_height_px": 3956,
       "payload_enum": 88,
       "payload_sub_enum": 0,
-      "payload_position_index": 0
+      "payload_position_index": 0,
+      "continuous_trigger": true
     },
     "available": false,
     "verified": "UNVERIFIED - estimated values, confirm from a native M4E mission and DJI specs",

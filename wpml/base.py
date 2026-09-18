@@ -9,6 +9,8 @@ so writers take one object instead of a long argument list. `esc` and
 """
 
 import io
+import os
+import tempfile
 import zipfile
 from dataclasses import dataclass
 
@@ -35,6 +37,9 @@ class MissionSpec:
     # interval capture manually. 'full': every waypoint is a photo location and
     # the writer adds a takePhoto action to each (full-automatic 2D mapping).
     capture_mode: str = 'semi'
+    # Engine-owned ordered actions for this flight. None keeps legacy behavior;
+    # a list is serialized exactly by the consumer writer.
+    actions: list = None
     # Terrain follow: per-waypoint executeHeight (metres, relative to the launch
     # point) so the drone holds a constant height above ground. None = a single
     # altitude for every waypoint (flat). When set, must match waypoints length.
@@ -55,10 +60,24 @@ def esc(text):
 
 
 def package_kmz(filepath, entries):
-    """Write a .kmz (zip) from an ordered list of (arcname, text) entries."""
+    """Atomically replace a .kmz with ordered ``(arcname, text)`` entries."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
         for arc, content in entries:
             zf.writestr(arc, content)
-    with open(filepath, 'wb') as f:
-        f.write(buf.getvalue())
+    directory = os.path.dirname(os.path.abspath(filepath))
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                mode='wb', dir=directory, prefix='.flypath-', suffix='.kmz',
+                delete=False) as output:
+            temporary = output.name
+            output.write(buf.getvalue())
+        os.replace(temporary, filepath)
+        temporary = None
+    finally:
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass

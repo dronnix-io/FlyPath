@@ -217,12 +217,13 @@ class CredentialStorageTest(unittest.TestCase):
     def test_credential_dialog_handles_save_failure_without_returning_token(self):
         from qgis.PyQt.QtWidgets import QWidget
         dialog = importlib.import_module(self.repo.name + '.flypath_dialog')
+        controller = importlib.import_module(self.repo.name + '.website_sync_controller')
         planner = QWidget()
         planner._update_web_buttons = lambda: None
         with patch.object(self.credentials, 'unlock_storage'), \
              patch.object(self.sync, 'load_token', return_value=''), \
              patch.object(self.sync, 'save_token', side_effect=self.sync.FlypathSyncError('write failed')), \
-             patch.object(dialog.QInputDialog, 'getText', return_value=('synthetic-token', True)), \
+             patch.object(controller.QInputDialog, 'getText', return_value=('synthetic-token', True)), \
              patch.object(dialog.QMessageBox, 'warning') as warning:
             self.assertIsNone(dialog.FlyPathDialog._web_token(planner))
             self.assertIn('write failed', warning.call_args.args)
@@ -231,6 +232,7 @@ class CredentialStorageTest(unittest.TestCase):
     def test_token_prompt_names_origin_and_refuses_changed_destination(self):
         from qgis.PyQt.QtWidgets import QWidget
         dialog = importlib.import_module(self.repo.name + '.flypath_dialog')
+        controller = importlib.import_module(self.repo.name + '.website_sync_controller')
         planner = QWidget()
         planner._update_web_buttons = lambda: None
         with patch.object(self.credentials, 'unlock_storage'), \
@@ -239,10 +241,11 @@ class CredentialStorageTest(unittest.TestCase):
                  'https://staging.example.test', 'https://staging.example.test',
                  'https://other.example.test']), \
              patch.object(self.sync, 'save_token') as save, \
-             patch.object(dialog.QInputDialog, 'getText', return_value=('synthetic-token', True)) as prompt, \
+             patch.object(controller.QInputDialog, 'getText', return_value=('synthetic-token', True)) as prompt, \
              patch.object(dialog.QMessageBox, 'warning'):
             self.assertIsNone(dialog.FlyPathDialog._web_token(planner))
             self.assertIn('https://staging.example.test', prompt.call_args.args[2])
+            self.assertLessEqual(max(map(len, prompt.call_args.args[2].splitlines())), 90)
             save.assert_not_called()
         planner.close()
 
@@ -259,10 +262,24 @@ class CredentialStorageTest(unittest.TestCase):
             work = Mock()
             with patch.object(self.sync, 'load_base_url', side_effect=['https://flypath.io', changed_origin]), \
                  patch.object(self.sync, 'load_token', return_value=changed_token), \
-                 patch.object(dialog.QApplication, 'processEvents'), \
                  patch.object(dialog.QMessageBox, 'warning'):
                 self.assertIsNone(dialog.FlyPathDialog._run_web(planner, 'Test', work))
                 work.assert_not_called()
+        planner.close()
+
+    def test_web_work_runs_off_the_ui_thread(self):
+        from qgis.PyQt.QtCore import QThread
+        from qgis.PyQt.QtWidgets import QWidget
+        dialog = importlib.import_module(self.repo.name + '.flypath_dialog')
+        planner = QWidget()
+        planner._update_web_buttons = lambda: None
+        planner._web_token = lambda: 'synthetic-token'
+        main_thread = int(QThread.currentThreadId())
+        with patch.object(self.sync, 'load_base_url', return_value='https://flypath.io'), \
+             patch.object(self.sync, 'load_token', return_value='synthetic-token'):
+            worker_thread = dialog.FlyPathDialog._run_web(
+                planner, 'Test', lambda _token: int(QThread.currentThreadId()))
+        self.assertNotEqual(worker_thread, main_thread)
         planner.close()
 
     def test_locked_library_initializes_and_disconnect_clears_mission_link(self):
@@ -278,7 +295,9 @@ class CredentialStorageTest(unittest.TestCase):
              patch.object(self.sync, 'save_token', self.credentials.save_token), \
              patch.object(self.sync, 'load_base_url', self.credentials.load_base_url):
             library = library_module.MissionLibrary(planner)
-            self.assertIn('locked', library.status.text())
+            self.assertIn('saved FlyPath account', library.status.text())
+            self.assertEqual(library.connect_button.text(), 'Unlock account…')
+            self.assertEqual(library.disconnect_button.text(), 'Forget saved access…')
             self.assertFalse(library.disconnect_button.isHidden())
             self.assertFalse(library.refresh_button.isEnabled())
             self.assertIsNone(planner._website_link)

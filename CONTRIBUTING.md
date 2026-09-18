@@ -79,6 +79,25 @@ git rebase upstream/main
 git push origin my-change --force-with-lease
 ```
 
+## Updating the shared engine
+
+Set the engine tag and commit in `flypath-engine.json`, then run:
+
+```bash
+python tools/vendor_engine.py
+```
+
+The command fetches that exact release from the public
+[FlyPath engine repository](https://github.com/alireza7575/flypath_engine)
+and replaces the plugin's `flypath_engine/` directory. Do not copy engine files
+manually.
+
+Building the plugin ZIP verifies the committed engine copy before packaging it:
+
+```bash
+python tools/build_plugin.py
+```
+
 ## Guidelines
 
 - **Qt 5 and Qt 6 compatibility.** FlyPath runs on QGIS 3 (PyQt5) and QGIS 4

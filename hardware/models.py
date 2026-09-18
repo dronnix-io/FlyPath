@@ -59,6 +59,7 @@ class Drone:
     battery_time_min: int
     camera: Camera
     info: str
+    battery_safe_min: int = 0
     # Slowest allowed waypoint speed. Optional in the data (defaults to 1 m/s)
     # because not every drone documents a minimum.
     min_speed_ms: float = 1.0

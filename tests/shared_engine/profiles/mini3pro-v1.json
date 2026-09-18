@@ -1,0 +1,20 @@
+{
+  "profile_version": 1,
+  "id": "mini3pro",
+  "name": "DJI Mini 3 Pro",
+  "category": "consumer",
+  "aircraft": {
+    "minimum_speed_m_s": 1.0,
+    "maximum_speed_m_s": 12.0,
+    "nominal_battery_time_s": 2040
+  },
+  "camera": {
+    "sensor_width_mm": 9.6,
+    "sensor_height_mm": 7.2,
+    "focal_length_mm": 6.9,
+    "image_width_px": 4000,
+    "image_height_px": 3000,
+    "minimum_capture_interval_s": 2.0
+  },
+  "source": "FlyPath plugin hardware/drones.json at 3a390d6"
+}

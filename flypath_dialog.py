@@ -2,11 +2,9 @@ import contextlib
 import datetime
 import math
 import os
-import re
 import shutil
 import subprocess  # nosec B404
 import tempfile
-import zipfile
 
 from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
@@ -15,11 +13,10 @@ from qgis.PyQt.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QCheckBox, QRadioButton, QButtonGroup,
     QMessageBox, QFileDialog, QApplication,
     QStackedWidget, QDialog, QTreeWidget, QTreeWidgetItem, QDialogButtonBox,
-    QInputDialog,
     QGraphicsView, QGraphicsScene, QSizePolicy,
 )
 from qgis.PyQt.QtCore import (
-    Qt, QObject, QEvent, QSettings, QVariant, QSize, QPointF, QUrl, pyqtSignal,
+    Qt, QObject, QEvent, QSettings, QSize, QPointF, QUrl, pyqtSignal,
 )
 from qgis.PyQt.QtGui import (
     QColor, QFont, QPixmap, QPainter, QPen, QPolygonF, QImage, QDesktopServices,
@@ -29,6 +26,7 @@ from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
 try:
     _AlignLeft    = Qt.AlignmentFlag.AlignLeft
+    _AlignRight   = Qt.AlignmentFlag.AlignRight
     _AlignVCenter = Qt.AlignmentFlag.AlignVCenter
     _AlignCenter  = Qt.AlignmentFlag.AlignCenter
     _EventEnter   = QEvent.Type.Enter
@@ -58,6 +56,7 @@ except AttributeError:
     # Old PyQt5 without scoped enums; fetch unscoped names dynamically so the
     # scoped forms above remain the only static enum references in the file.
     _AlignLeft    = getattr(Qt, 'AlignLeft')
+    _AlignRight   = getattr(Qt, 'AlignRight')
     _AlignVCenter = getattr(Qt, 'AlignVCenter')
     _AlignCenter  = getattr(Qt, 'AlignCenter')
     _EventEnter   = getattr(QEvent, 'Enter')
@@ -89,41 +88,51 @@ from qgis.core import (
     QgsProject,
     QgsWkbTypes,
     QgsRasterLayer,
-    QgsVectorLayer,
-    QgsFeature,
     QgsGeometry,
     QgsPointXY,
-    QgsLineSymbol,
-    QgsMarkerSymbol,
-    QgsFillSymbol,
-    QgsRuleBasedRenderer,
-    QgsPalLayerSettings,
-    QgsTextFormat,
-    QgsVectorLayerSimpleLabeling,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsDistanceArea,
     QgsNetworkAccessManager,
 )
-from .map_tools import PolygonDrawTool, LineDrawTool, VertexPickTool
 from .grid_planner import (
-    generate_flight_grid, find_optimal_direction, split_waypoints, _utm_crs_for
+    generate_flight_grid, find_optimal_direction, measure_route,
+    measure_survey_area, _utm_crs_for,
 )
-from .grid_route import split_by_waypoint_count
+from .flypath_engine.route import split_by_waypoint_count, split_waypoints
+from .flypath_engine.statistics import mission_statistics
 from .corridor_planner import generate_corridor_route
 from .corridor_geometry import compute_pass_offsets
-from .takeoff_zone import (
-    takeoff_zone, gsd_variance_pct, sample_grid, search_bounds
-)
+from .takeoff_zone import gsd_variance_pct
 from .contours import contour_segments, nice_levels
 from .terrain import (
     TERRARIUM_URL, ZOOM, TILE_SIZE, tile_coords, elevation_from_rgb,
     sample_elevations, densify_by_terrain, heights_above_takeoff,
 )
-from .wpml import MissionSpec, write_mission
 from .hardware import registry
-from . import flypath_sync
-from .flypath_sync import FlypathSyncError
+from . import planning_adapter
+from . import controller_storage
+from . import survey_geometry
+from . import takeoff_adapter
+from . import mission_export
+from . import preview_layers
+from . import map_overlays
+from .planning_lifecycle import PlanningLifecycle
+from .survey_controller import SurveyLifecycleMixin
+from .website_sync_controller import WebsiteSyncLifecycleMixin
+
+
+def _format_duration(seconds):
+    seconds = max(0, round(seconds))
+    return f'{seconds // 60}m {seconds % 60}s' if seconds >= 60 else f'{seconds}s'
+
+
+def _format_distance(meters):
+    meters = max(0, meters)
+    if meters >= 1000:
+        decimals = 2 if meters < 10000 else 1
+        return f'{meters / 1000:.{decimals}f} km'
+    return f'{round(meters)} m'
 
 try:
     _PolygonGeometry = QgsWkbTypes.GeometryType.PolygonGeometry
@@ -226,17 +235,8 @@ class _TerrainLayerSampler:
 
 # ── MTP PowerShell exit codes ─────────────────────────────────────────────
 _MTP_EXIT_NAV_FAIL      = 1   # could not navigate path to waypoint folder
-_MTP_EXIT_NO_UUID       = 2   # no UUID mission folder found in waypoint folder
 _MTP_EXIT_UUID_MISSING  = 3   # UUID folder gone between script 1 and script 2
 _MTP_EXIT_UUID_NO_OPEN  = 4   # UUID folder exists but GetFolder returned None
-
-# ── RC auto-detection PowerShell exit codes ───────────────────────────────
-_RC_EXIT_FOUND          = 0   # waypoint folder located (PATH/UUID on stdout)
-_RC_EXIT_NONE           = 10  # no DJI RC / waypoint folder found on any device
-_RC_EXIT_DEVICE_NO_WP   = 11  # a DJI device is connected but has no waypoint folder
-
-# Relative path from an MTP storage volume to the DJI waypoint folder
-_RC_REL_PARTS = ['Android', 'data', 'dji.go.v5', 'files', 'waypoint']
 
 # Run PowerShell silently — no console window flashes on screen (Windows only;
 # 0 elsewhere so the creationflags argument stays valid on every platform).
@@ -600,32 +600,8 @@ _README_URL   = _REPO_URL + '#readme'
 _SITE_URL     = 'https://flypath.io'
 
 # ── Map preview colour constants ───────────────────────────────────────────
-_COLOR_START_MARKER  = '#CC2222'   # red filled circle — first waypoint
-_COLOR_END_MARKER    = '#2D6DB5'   # blue filled circle — last waypoint
-_COLOR_MID_MARKER    = 'white'     # white circle — intermediate waypoints
-
-# Distinct flight-path colours, one per split mission. The first is the same
-# yellow used before splitting existed, so an unsplit plan looks unchanged.
-_MISSION_COLORS = [
-    '#FFE600', '#00E0FF', '#FF7AD9', '#7CFF6B', '#FFA24B',
-    '#B98CFF', '#4BE0C0', '#FF6B6B', '#8CD6FF', '#E0FF6B',
-]
-
-
-def _mission_color(i):
-    return _MISSION_COLORS[i % len(_MISSION_COLORS)]
-
-
-# Distinct tones of purple, one per split mission's takeoff zone, so overlapping
-# circles stay tellable apart. Ordered dark -> light; all clearly purple.
-_TAKEOFF_PURPLES = [
-    (74, 20, 140), (123, 31, 162), (156, 39, 176), (103, 58, 183),
-    (171, 71, 188), (63, 81, 181), (186, 104, 200), (149, 117, 205),
-]
-
-
-def _takeoff_purple(i):
-    return _TAKEOFF_PURPLES[i % len(_TAKEOFF_PURPLES)]
+_COLOR_START_MARKER = preview_layers.START_COLOR
+_COLOR_END_MARKER = preview_layers.END_COLOR
 
 
 class _HoverFilter(QObject):
@@ -785,7 +761,7 @@ class _ThumbnailViewer(QDialog):
         self._view.fitInView(self._item, _KeepAspect)
 
 
-class FlyPathDialog(QWidget):
+class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
 
     def __init__(self, iface, parent=None):
         super().__init__(parent)
@@ -822,6 +798,12 @@ class FlyPathDialog(QWidget):
         self._missions           = []     # last previewed plan, split into sub-missions
         self._live_waypoints     = None   # last grid computed for stats/live sync
         self._live_missions      = None   # last grid split by the current split count
+        self._planning = PlanningLifecycle()
+        self._preview_heights    = []     # committed preview values parallel to missions
+        self._preview_ground     = []
+        self._split_choice_required = False
+        self._terrain_failed     = False
+        self._loading_mission    = False
         self._split_overridden   = False  # user typed a split count; stop auto-tracking
         self._setting_split      = False  # guard: programmatic splitSpin.setValue()
         self._rc_waypoint_path   = None   # detected RC waypoint folder display path
@@ -1330,10 +1312,17 @@ class FlyPathDialog(QWidget):
             'to the estimated number of batteries; raise it to fly more, smaller '
             'missions. In full-automatic mode this is a minimum: the Max '
             'Waypoints cap may create more missions than this, never fewer.')
-        form.addRow('Split Missions', self.splitSpin)
+        self.splitCheck = QCheckBox('Enable splitting')
+        self.splitCheck.setChecked(True)
+        self._tip(self.splitCheck,
+            'Allow the planner to add flights when battery or waypoint limits '
+            'require them. Turn this off to request one flight; export is blocked '
+            'when that flight cannot satisfy the limits.')
+        form.addRow('Splitting', self.splitCheck)
+        form.addRow('Minimum Flights', self.splitSpin)
 
         self.maxWaypointsSpin = QSpinBox()
-        self.maxWaypointsSpin.setRange(2, 400)
+        self.maxWaypointsSpin.setRange(2, 200)
         self.maxWaypointsSpin.setValue(_DEFAULT_MAX_WAYPOINTS)
         self._tip(self.maxWaypointsSpin,
             'Maximum waypoints per mission. DJI caps a mission at about 200 '
@@ -1577,30 +1566,33 @@ class FlyPathDialog(QWidget):
         flight lines, keeps the panel and toolbars free, and never shrinks the
         map. It is click-through so it never blocks map interaction. Creates the
         same label attributes _update_stats writes to."""
+        self.coverageLabel = QLabel('—')
+        self.coverageLabel.setObjectName('coverageLabel')
+        self.coverageLabel.hide()
         fields = [
             ('flightTimeLabel', 'Flight Time',
              'Estimated total flight duration based on path length and speed. '
              'Does not include takeoff, landing, or battery swap time.'),
-            ('distanceLabel',   'Distance',
-             'Total distance the drone will fly along all flight lines.'),
-            ('coverageLabel',   'Coverage',
-             'Total survey area in hectares as calculated from the polygon.'),
-            ('corridorLengthLabel', 'Corridor Length',
-             'Total length of the corridor centre line (corridor missions only).'),
-            ('linesLabel',      'Lines',
-             'Number of parallel flight lines needed to cover the survey area.'),
-            ('waypointsLabel',  'Waypoints',
-             'Total waypoints in the mission: turn points in semi-automatic, one '
-             'per photo in full-automatic. DJI Fly caps a mission near 200, so '
-             'the survey is split to stay under the Max Waypoints value.'),
-            ('photosLabel',     'Photos',
-             'Estimated number of photos the camera will take during the mission.'),
             ('batteriesLabel',  'Batteries',
              'Estimated battery charges needed for the mission. Planned against a '
              f'{int(round(_BATTERY_RESERVE * 100))}% reserve, so usable time per '
              f'battery is {int(round((1 - _BATTERY_RESERVE) * 100))}% of the '
              'drone\'s rated endurance, leaving margin for wind, turnarounds and '
              'a safe return.'),
+            ('distanceLabel',   'Distance',
+             'Total distance the drone will fly along all flight lines.'),
+            ('corridorLengthLabel', 'Corridor Length',
+             'Total length of the corridor centre line (corridor missions only).'),
+            ('waypointsLabel',  'Waypoints',
+             'Total waypoints in the mission: turn points in semi-automatic, one '
+             'per photo in full-automatic. DJI Fly caps a mission near 200, so '
+             'the survey is split to stay under the Max Waypoints value.'),
+            ('photosLabel',     'Photos',
+             'Estimated number of photos the camera will take during the mission.'),
+            ('frontOverlapStatLabel', 'Front Overlap',
+             'Along-track overlap between consecutive photos.'),
+            ('linesLabel',      'Strips',
+             'Number of parallel flight strips needed to cover the survey area.'),
         ]
         canvas = self.iface.mapCanvas()
         try:
@@ -1615,7 +1607,11 @@ class FlyPathDialog(QWidget):
         grid.setVerticalSpacing(7)
         title = QLabel('Mission Stats')
         title.setObjectName('hudTitle')
-        grid.addWidget(title, 0, 0, 1, 2)
+        grid.addWidget(title, 0, 0)
+        self._hudContext = QLabel('—')
+        self._hudContext.setObjectName('hudContext')
+        self._hudContext.setAlignment(_AlignRight | _AlignVCenter)
+        grid.addWidget(self._hudContext, 0, 1)
         self._hudCaptions = {}
         for i, (attr, caption, tip) in enumerate(fields):
             cap = QLabel(f'{caption}')          # single column: one stat per row
@@ -1635,8 +1631,9 @@ class FlyPathDialog(QWidget):
             '#flypathHud QLabel { color: #C7CBD1; font-size: 13px; }'
             '#flypathHud QLabel#hudTitle { color: #7FB3E8; font-weight: bold; '
             'font-size: 13px; padding-bottom: 2px; }'
+            '#flypathHud QLabel#hudContext { color: #8A93A0; font-size: 11px; }'
             '#flypathHud QLabel#flightTimeLabel, #flypathHud QLabel#distanceLabel, '
-            '#flypathHud QLabel#coverageLabel, #flypathHud QLabel#linesLabel, '
+            '#flypathHud QLabel#linesLabel, #flypathHud QLabel#frontOverlapStatLabel, '
             '#flypathHud QLabel#waypointsLabel, #flypathHud QLabel#photosLabel, '
             '#flypathHud QLabel#batteriesLabel, #flypathHud QLabel#corridorLengthLabel '
             '{ color: #F0A500; font-weight: bold; }'
@@ -1670,6 +1667,14 @@ class FlyPathDialog(QWidget):
 
     def _show_hud(self):
         if self._hud and self.isVisible():
+            context = [self.coverageLabel.text(), f'{self.gsdSpin.value():.2f} cm']
+            self._hudContext.setText(' · '.join(value for value in context if value != '—'))
+            if self._mission_type() == 'full':
+                overlap = f'{self.frontOverlapSpin.value()}%'
+            else:
+                overlap = self.frontOverlapLabel.text().split()[0]
+                overlap = overlap if overlap == '—' else f'{overlap}%'
+            self.frontOverlapStatLabel.setText(overlap)
             self._position_hud()
             self._hud.show()
             self._hud.raise_()
@@ -2118,6 +2123,7 @@ class FlyPathDialog(QWidget):
         self.terrainFollowCheck.toggled.connect(self._on_terrain_toggled)
         self.terrainToleranceSpin.valueChanged.connect(self._on_param_changed)
         self.splitSpin.valueChanged.connect(self._on_split_changed)
+        self.splitCheck.toggled.connect(self._on_split_enabled)
         self._sourceGroup.buttonClicked.connect(self._on_source_mode_changed)
         self.layerCombo.currentIndexChanged.connect(self._on_layer_changed)
         self.demCombo.currentIndexChanged.connect(self._on_dem_changed)
@@ -2144,6 +2150,11 @@ class FlyPathDialog(QWidget):
         self.exportBtn.clicked.connect(self._on_export)
 
     def _on_param_changed(self):
+        if self._planning.settings_changed():
+            self.previewBtn.setText('Regenerate on Map')
+            self._update_gsd()
+            self._update_interval()
+            return
         if self.autoDirectionBtn.isChecked() and self._mission_kind() == '2d':
             self._on_auto_direction()
         self._update_gsd()
@@ -2163,9 +2174,15 @@ class FlyPathDialog(QWidget):
         if self._setting_split:
             return
         self._split_overridden = True
-        self._update_stats()
+        self._on_param_changed()
         self._refresh_split_part_combo()
-        self._sync_preview()
+
+    def _on_split_enabled(self, checked):
+        self.splitSpin.setEnabled(checked)
+        if not self._setting_split:
+            self._split_overridden = True
+            self._split_choice_required = False
+        self._on_param_changed()
 
     # ── Drone / camera ────────────────────────────────────────────────────
 
@@ -2187,12 +2204,17 @@ class FlyPathDialog(QWidget):
             return
         consumer = registry.get(drone).category == 'consumer'
 
-        # Split Missions row (label + spin): consumer only.
+        # Splitting controls: consumer only.
+        self.splitCheck.setVisible(consumer)
+        split_check_lbl = self._organizer_form.labelForField(self.splitCheck)
+        if split_check_lbl is not None:
+            split_check_lbl.setVisible(consumer)
         self.splitSpin.setVisible(consumer)
         lbl = self._organizer_form.labelForField(self.splitSpin)
         if lbl is not None:
             lbl.setVisible(consumer)
         if not consumer:
+            self.splitCheck.setChecked(False)
             self._setting_split = True
             self.splitSpin.blockSignals(True)
             self.splitSpin.setValue(1)
@@ -2283,158 +2305,14 @@ class FlyPathDialog(QWidget):
 
     # ── Corridor mission breaks (manual line grouping) ────────────────────
 
-    def _on_set_breaks_toggled(self, checked):
-        """Activate/deactivate the vertex-pick tool for placing mission breaks."""
-        if checked:
-            if self._survey_line is None:
-                QMessageBox.information(
-                    self, 'No Corridor',
-                    'Draw or select a corridor centre line first, then place '
-                    'mission breaks on its vertices.')
-                self.setBreaksBtn.setChecked(False)
-                return
-            canvas = self.iface.mapCanvas()
-            self._prev_map_tool = canvas.mapTool()
-            self._break_tool = VertexPickTool(canvas)
-            self._break_tool.set_targets(self._break_targets())   # snap to vertices
-            self._break_tool.point_picked.connect(self._on_break_point_picked)
-            self._break_tool.finished.connect(
-                lambda: self.setBreaksBtn.setChecked(False))
-            canvas.setMapTool(self._break_tool)
-            # Keep the label short so it never widens the panel; the full
-            # instructions go to the info bar below.
-            self.setBreaksBtn.setText('Setting Breaks…')
-            self._set_info(
-                'Click a centre-line vertex to break the mission there; click it '
-                'again to remove the break. Press Escape when done.')
-        else:
-            self._leave_break_tool()
 
-    def _leave_break_tool(self):
-        canvas = self.iface.mapCanvas()
-        current = canvas.mapTool()
-        if self._prev_map_tool is not None:
-            canvas.setMapTool(self._prev_map_tool)
-            self._prev_map_tool = None
-        elif isinstance(current, VertexPickTool):
-            canvas.unsetMapTool(current)
-        self._break_tool = None
-        self.setBreaksBtn.setText('Set Mission Breaks')
-        self._set_info(_INFO_IDLE)
 
-    def _corridor_line_parts(self):
-        """Centre-line parts as lists of QgsPointXY, in the line's own CRS."""
-        g = self._survey_line
-        if g is None:
-            return []
-        if g.isMultipart():
-            return [list(part) for part in g.asMultiPolyline()]
-        return [list(g.asPolyline())]
 
-    def _break_targets(self):
-        """Interior centre-line vertices as QgsPointXY in the canvas map CRS, for
-        the pick tool to snap to. Endpoints are excluded (a part already
-        starts/ends a mission)."""
-        if self._survey_line is None:
-            return []
-        to_map = QgsCoordinateTransform(
-            self._survey_line_crs,
-            self.iface.mapCanvas().mapSettings().destinationCrs(),
-            QgsProject.instance())
-        return [to_map.transform(verts[vi])
-                for verts in self._corridor_line_parts()
-                for vi in range(1, len(verts) - 1)]
 
-    def _nearest_break_vertex(self, map_pt, tol_px=16):
-        """Return (part_idx, vert_idx) of the centre-line vertex nearest to a map
-        point, or None if none is within tol_px pixels. Endpoints of a part are
-        excluded (a part already starts/ends a mission)."""
-        if self._survey_line is None:
-            return None
-        canvas = self.iface.mapCanvas()
-        to_map = QgsCoordinateTransform(self._survey_line_crs,
-                                        canvas.mapSettings().destinationCrs(),
-                                        QgsProject.instance())
-        mupp = canvas.mapUnitsPerPixel() or 1e-9
-        tol_map = tol_px * mupp
-        best = None
-        best_d = tol_map
-        for pi, verts in enumerate(self._corridor_line_parts()):
-            for vi in range(1, len(verts) - 1):        # interior vertices only
-                p = to_map.transform(verts[vi])
-                d = math.hypot(p.x() - map_pt.x(), p.y() - map_pt.y())
-                if d <= best_d:
-                    best_d = d
-                    best = (pi, vi)
-        return best
 
-    def _on_break_point_picked(self, map_pt):
-        hit = self._nearest_break_vertex(map_pt)
-        if hit is None:
-            return
-        if hit in self._corridor_breaks:
-            self._corridor_breaks.discard(hit)
-        else:
-            self._corridor_breaks.add(hit)
-        self._redraw_break_markers()
-        self._update_stats()      # recount missions
-        self._sync_preview()      # recolour the preview if one is shown
 
-    def _clear_breaks(self):
-        """Forget all mission breaks and remove their markers."""
-        self._corridor_breaks = set()
-        if self._break_layer_id:
-            if QgsProject.instance().mapLayer(self._break_layer_id):
-                QgsProject.instance().removeMapLayer(self._break_layer_id)
-            self._break_layer_id = None
 
-    def _redraw_break_markers(self):
-        """(Re)draw the break vertices as a styled point layer."""
-        if self._break_layer_id:
-            if QgsProject.instance().mapLayer(self._break_layer_id):
-                QgsProject.instance().removeMapLayer(self._break_layer_id)
-            self._break_layer_id = None
-        if not self._corridor_breaks or self._survey_line is None:
-            return
-        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
-        to_wgs = QgsCoordinateTransform(self._survey_line_crs, wgs84,
-                                        QgsProject.instance())
-        parts = self._corridor_line_parts()
-        layer = QgsVectorLayer('Point?crs=EPSG:4326',
-                               'FlyPath — Mission Breaks', 'memory')
-        layer.setCustomProperty('flypath_internal', True)
-        feats = []
-        for (pi, vi) in self._corridor_breaks:
-            if pi < len(parts) and vi < len(parts[pi]):
-                p = to_wgs.transform(parts[pi][vi])
-                f = QgsFeature()
-                f.setGeometry(QgsGeometry.fromPointXY(p))
-                feats.append(f)
-        layer.dataProvider().addFeatures(feats)
-        symbol = QgsMarkerSymbol.createSimple({
-            'name': 'circle', 'color': '#FFD400',
-            'outline_color': '#000000', 'outline_width': '0.4', 'size': '4.5',
-        })
-        layer.renderer().setSymbol(symbol)
-        QgsProject.instance().addMapLayer(layer)
-        self._break_layer_id = layer.id()
 
-    def _corridor_sublines(self):
-        """Split the centre line into sub-lines at the break vertices and part
-        boundaries. Adjacent sub-lines share the break vertex so coverage is
-        continuous. Returns a list of QgsGeometry LineStrings."""
-        sublines = []
-        for pi, verts in enumerate(self._corridor_line_parts()):
-            if len(verts) < 2:
-                continue
-            cuts = sorted(vi for (p, vi) in self._corridor_breaks
-                          if p == pi and 0 < vi < len(verts) - 1)
-            bounds = [0] + cuts + [len(verts) - 1]
-            for a, b in zip(bounds, bounds[1:]):
-                sub = verts[a:b + 1]                 # inclusive; shares the break
-                if len(sub) >= 2:
-                    sublines.append(QgsGeometry.fromPolylineXY(sub))
-        return sublines
 
     @staticmethod
     def _set_row_visible(form, widget, visible):
@@ -2475,20 +2353,27 @@ class FlyPathDialog(QWidget):
         (waypoints, None) when off, or on an elevation failure (falls back to a
         flat mission and warns once)."""
         if not self.terrainFollowCheck.isChecked() or not waypoints:
+            self._terrain_failed = False
             return waypoints, None
         try:
             if self._mission_type() == 'full':
-                return waypoints, sample_elevations(waypoints, self._terrain.sample)
-            return densify_by_terrain(waypoints, self._terrain.sample,
-                                      self.terrainToleranceSpin.value())
+                result = waypoints, sample_elevations(waypoints, self._terrain.sample)
+            else:
+                result = densify_by_terrain(
+                    waypoints, self._terrain.sample,
+                    self.terrainToleranceSpin.value(),
+                    all_legs=self._mission_kind() == 'corridor')
+            self._terrain_failed = False
+            return result
         except _TerrainError as exc:
+            self._terrain_failed = True
             if not self._terrain_warned:
                 self._terrain_warned = True
                 QMessageBox.warning(
                     self, 'Terrain data unavailable',
-                    f'{exc}\n\nThe mission will use a single flat altitude. '
-                    'Check your internet connection and toggle Terrain Follow '
-                    'again to retry.')
+                    f'{exc}\n\nThe flat route can still be previewed, but export '
+                    'is blocked until terrain data is available. Check your '
+                    'connection and toggle Terrain Follow again to retry.')
             return waypoints, None
 
     def _set_destination_rc_enabled(self, enabled):
@@ -2510,6 +2395,10 @@ class FlyPathDialog(QWidget):
         self.cameraInfoLabel.setText(
             registry.get(drone).info if registry.has(drone) else '—'
         )
+        if registry.has(drone):
+            interval = registry.get(drone).camera.min_shoot_interval_s
+            self.photoIntervalSpin.setRange(interval, interval)
+            self.photoIntervalSpin.setValue(interval)
 
     def _apply_speed_range(self):
         """Set the Speed control's limits to the selected drone's own range.
@@ -2625,112 +2514,9 @@ class FlyPathDialog(QWidget):
 
     # ── QGIS selection sync ───────────────────────────────────────────────
 
-    def _on_use_qgis_selection(self):
-        """
-        Inspect the current QGIS selection across all non-internal layers of the
-        geometry type this mission kind needs (polygon for 2D Mapping, line for
-        Corridor Mapping) and adopt the single selected feature.
-
-        Rules:
-          0 selected features total → error
-          > 1 selected features total → error
-          exactly 1 selected feature  → sync Layer/Feature combos + survey area
-        """
-        corridor = self._mission_kind() == 'corridor'
-        target_geom = _LineGeometry if corridor else _PolygonGeometry
-        noun = 'line' if corridor else 'polygon'
-        candidates = []
-        for layer in QgsProject.instance().mapLayers().values():
-            if (not hasattr(layer, 'wkbType') or
-                    layer.customProperty('flypath_internal') or
-                    QgsWkbTypes.geometryType(layer.wkbType()) !=
-                    target_geom):
-                continue
-            for fid in layer.selectedFeatureIds():
-                candidates.append((layer, fid))
-
-        if len(candidates) == 0:
-            QMessageBox.information(
-                self, 'Nothing Selected',
-                f'No {noun} is selected in QGIS.\n\n'
-                f'Select a single {noun} with the QGIS selection tool and try again.'
-            )
-            return
-
-        if len(candidates) > 1:
-            QMessageBox.warning(
-                self, f'Multiple {noun.capitalize()}s Selected',
-                f'{len(candidates)} {noun}s are selected across one or more layers.\n\n'
-                f'FlyPath supports one survey {noun} at a time.\n'
-                f'Select exactly one {noun} and try again.'
-            )
-            return
-
-        layer, fid = candidates[0]
-        feat = next(layer.getFeatures([fid]))
-
-        # Remove any active drawn geometry
-        if self._survey_area_layer_id:
-            self._on_remove_drawn_polygon()
-
-        # Sync Layer combo
-        layer_idx = self.layerCombo.findData(layer.id())
-        if layer_idx < 0:
-            return
-        self.layerCombo.blockSignals(True)
-        self.layerCombo.setCurrentIndex(layer_idx)
-        self.layerCombo.blockSignals(False)
-
-        # Connect layer edit signals if not already done
-        if self._monitored_layer_id != layer.id():
-            self._disconnect_layer_signals()
-            self._connect_layer_signals(layer)
-
-        # Sync the Feature combo, then point it at the selected feature
-        self._populate_feature_combo(layer)
-        if layer.featureCount() > 1:
-            feat_idx = self.featureCombo.findData(fid)
-            if feat_idx >= 0:
-                self.featureCombo.blockSignals(True)
-                self.featureCombo.setCurrentIndex(feat_idx)
-                self.featureCombo.blockSignals(False)
-
-        self._set_survey_geometry(feat.geometry(), layer.crs(),
-                                  layer_id=layer.id(), fid=fid)
-        self.selectionInfoLabel.setText('%s  ·  FID %s' % (layer.name(), fid))
 
     # ── Survey area ───────────────────────────────────────────────────────
 
-    def _on_layer_changed(self):
-        layer_id = self.layerCombo.currentData()
-        self._disconnect_layer_signals()
-
-        # Reset feature combo (hidden, label and all, until a layer is chosen)
-        self.featureCombo.blockSignals(True)
-        self.featureCombo.clear()
-        self._set_feature_row_visible(False)
-        self.featureCombo.blockSignals(False)
-
-        if not layer_id:
-            self._survey_polygon     = None
-            self._survey_polygon_crs = None
-            self._on_clear_preview(reset_area=False)
-            self._clear_stats()
-            return
-
-        layer = QgsProject.instance().mapLayer(layer_id)
-        if not layer:
-            return
-
-        # A layer-based polygon replaces any drawn polygon
-        if self._survey_area_layer_id:
-            self._remove_survey_area_layer()
-            self._on_clear_preview(reset_area=False)
-            self._survey_polygon     = None
-            self._survey_polygon_crs = None
-
-        self._connect_layer_signals(layer)
-        self._populate_feature_combo(layer)
 
     def _on_dem_changed(self):
         layer_id = self.demCombo.currentData()
@@ -2751,7 +2537,6 @@ class FlyPathDialog(QWidget):
     # the user. The zone is a full circle of this radius on flat ground, and the
     # matching-elevation part of it where the terrain changes.
     _TAKEOFF_RADIUS_M = 500.0
-    _TAKEOFF_STEPS = 40           # DEM samples across the circle's diameter
     _CONTOUR_STEPS = 160          # max DEM samples across the contour extent
     _CONTOUR_MAX_LEVELS = 80      # coarsen the interval past this many lines
 
@@ -2773,170 +2558,6 @@ class FlyPathDialog(QWidget):
         else:
             missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
         return [wps for wps, _, _ in missions_h]
-
-    def _compute_takeoff_zones(self, tolerance_m):
-        """Sample the DEM and return the takeoff zone(s).
-
-        With "same takeoff for all splits" on, there is a single zone around the
-        original mission's first waypoint (everyone launches from one point).
-        Otherwise there is one zone per split sub-mission.
-
-        Each sub-mission is a separate flight launched from its own takeoff, so
-        each is anchored on its own first waypoint: the zone is the ground within
-        the fixed takeoff radius of that waypoint whose elevation matches the
-        waypoint's, within the tolerance. Uses the currently selected DEM: a local
-        raster if one is chosen, otherwise the online source, like terrain follow.
-
-        Returns a dict {'zones', 'gsd_var', 'n_sampled', 'to_wgs', 'radius_m'}
-        where each zone is {'index', 'ref_elev', 'center_utm', 'spacing', 'flat',
-        'cells_utm': [(x, y), ...]}. `flat` is True when the whole circle is within
-        tolerance (the zone is the full circle). Raises _TerrainError if a
-        reference elevation cannot be read; returns None if there is no mission."""
-        parts = self._mission_parts()
-        if parts is None:
-            return None
-        parts = [p for p in parts if p]
-        if not parts:
-            return None
-
-        # "Same takeoff for all splits": every split is flown from one point at
-        # the original mission's first waypoint, so show a single zone around it
-        # rather than one per split. Off, each split gets its own zone.
-        if self.sameTakeoffCheck.isChecked():
-            parts = parts[:1]
-
-        radius_m = self._TAKEOFF_RADIUS_M
-        spacing = max(10.0, (2.0 * radius_m) / self._TAKEOFF_STEPS)
-
-        # One metric CRS for the whole plan (split missions sit close together).
-        origin_lon, origin_lat = parts[0][0]
-        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
-        utm = _utm_crs_for(origin_lon, origin_lat)
-        to_utm = QgsCoordinateTransform(wgs84, utm, QgsProject.instance())
-        to_wgs = QgsCoordinateTransform(utm, wgs84, QgsProject.instance())
-
-        zones = []
-        n_sampled = 0
-        for idx, mission in enumerate(parts):
-            first_lon, first_lat = mission[0]
-            ref_elev = self._terrain.sample(first_lon, first_lat)   # may raise
-            p = to_utm.transform(QgsPointXY(first_lon, first_lat))
-            center = (p.x(), p.y())
-
-            # Sample the DEM over the circle around the first waypoint.
-            bounds = search_bounds([center], radius_m)
-            candidates = []
-            in_disk = 0
-            for gx, gy in sample_grid(bounds, spacing):
-                if math.hypot(gx - center[0], gy - center[1]) > radius_m:
-                    continue                       # keep the sample area a disk
-                wp = to_wgs.transform(QgsPointXY(gx, gy))
-                try:
-                    elev = self._terrain.sample(wp.x(), wp.y())
-                except _TerrainError:
-                    continue
-                candidates.append((gx, gy, elev))
-                in_disk += 1
-            n_sampled += len(candidates)
-
-            # mission_points is just the first waypoint, so the proximity test is
-            # a plain distance-from-centre disk.
-            zone_utm = takeoff_zone(candidates, [center], ref_elev,
-                                    tolerance_m, radius_m)
-            cells = [(x, y) for x, y, _ in zone_utm]
-            zones.append({
-                'index': idx,
-                'ref_elev': ref_elev,
-                'center_utm': center,
-                'spacing': spacing,
-                'flat': in_disk > 0 and len(cells) == in_disk,
-                'cells_utm': cells,
-            })
-
-        gsd_var = gsd_variance_pct(tolerance_m, self.altitudeSpin.value())
-        return {'zones': zones, 'gsd_var': gsd_var, 'n_sampled': n_sampled,
-                'to_wgs': to_wgs, 'radius_m': radius_m}
-
-    def _build_takeoff_zone_layer(self, result):
-        """Build the takeoff-zone overlay: one smooth dark-purple region per split
-        sub-mission, drawn under the flight path. On flat ground the region is the
-        full circle around the first waypoint; where the terrain changes it is the
-        matching-elevation part of that circle. Each region is a single polygon
-        carrying its mission index and reference elevation. Returns the layer, or
-        None when every zone came back empty."""
-        to_wgs = result['to_wgs']
-        radius_m = result['radius_m']
-        layer = QgsVectorLayer(
-            'Polygon?crs=EPSG:4326&field=mission:integer'
-            '&field=ref_elevation_m:double',
-            'FlyPath — Takeoff Zone', 'memory')
-        layer.setCustomProperty('flypath_internal', True)
-
-        feats = []
-        indices = []
-        for z in result['zones']:
-            cx, cy = z['center_utm']
-            disk = QgsGeometry.fromPointXY(QgsPointXY(cx, cy)).buffer(radius_m, 48)
-            if z['flat']:
-                region = disk                       # whole circle qualifies
-            else:
-                cells = z['cells_utm']
-                if not cells:
-                    continue
-                # Buffer each qualifying sample and merge, so the region is one
-                # smooth blob rather than grid squares, then clip to the circle.
-                r = z['spacing']
-                blob = QgsGeometry.unaryUnion([
-                    QgsGeometry.fromPointXY(QgsPointXY(x, y)).buffer(r, 8)
-                    for x, y in cells
-                ])
-                region = blob.intersection(disk)
-                if region.isEmpty():
-                    continue
-            region.transform(to_wgs)
-            feat = QgsFeature()
-            feat.setGeometry(region)
-            feat.setAttributes([z['index'], round(z['ref_elev'], 1)])
-            feats.append(feat)
-            indices.append(z['index'])
-        if not feats:
-            return None
-
-        layer.dataProvider().addFeatures(feats)
-        layer.setRenderer(self._takeoff_renderer(indices))
-        layer.triggerRepaint()
-
-        # Place the zone directly beneath FlyPath's own path/marker layers, so it
-        # sits under the flight path, but above the user's layers, so an opaque
-        # DEM or basemap raster does not hide it (which a bottom insertion would).
-        proj = QgsProject.instance()
-        proj.addMapLayer(layer, False)
-        root = proj.layerTreeRoot()
-        own_ids = set(self._preview_layer_ids)
-        insert_at = 0
-        for i, node in enumerate(root.children()):
-            if getattr(node, 'layerId', lambda: None)() in own_ids:
-                insert_at = i + 1
-        root.insertLayer(insert_at, layer)
-        return layer
-
-    def _takeoff_renderer(self, indices):
-        """Rule-based renderer giving each mission's takeoff zone its own tone of
-        purple, so overlapping circles are tellable apart. A single (unsplit) zone
-        keeps the plain deep purple."""
-        single = len(indices) <= 1
-        root = QgsRuleBasedRenderer.Rule(None)
-        for m in indices:
-            r, g, b = _takeoff_purple(m)
-            sym = QgsFillSymbol.createSimple({
-                'color': '%d,%d,%d,120' % (r, g, b),      # translucent fill
-                'outline_color': '#%02X%02X%02X' % (r, g, b),
-                'outline_width': '0.5',
-            })
-            label = 'Takeoff zone' if single else 'Takeoff %d' % (m + 1)
-            root.appendChild(QgsRuleBasedRenderer.Rule(
-                sym, filterExp='"mission" = %d' % m, label=label))
-        return QgsRuleBasedRenderer(root)
 
     def _update_takeoff_gsd_var(self):
         """Show the GSD change the current tolerance allows at the current
@@ -2972,7 +2593,12 @@ class FlyPathDialog(QWidget):
         try:
             QApplication.setOverrideCursor(_WaitCursor)
             try:
-                result = self._compute_takeoff_zones(tolerance_m)
+                result = takeoff_adapter.compute_zones(
+                    self._mission_parts(), self._terrain.sample, _TerrainError,
+                    tolerance_m=tolerance_m,
+                    altitude_m=self.altitudeSpin.value(),
+                    same_takeoff=self.sameTakeoffCheck.isChecked(),
+                    radius_m=self._TAKEOFF_RADIUS_M)
             finally:
                 QApplication.restoreOverrideCursor()
         except _TerrainError as exc:
@@ -2991,7 +2617,7 @@ class FlyPathDialog(QWidget):
                 'ground elevations could be read.\n\nSelect a DEM that covers '
                 'the takeoff area, or switch to the online elevation source.')
             return False
-        layer = self._build_takeoff_zone_layer(result)
+        layer = map_overlays.create_takeoff(result, self._preview_layer_ids)
         if layer is None:
             QMessageBox.information(self, 'Takeoff Zone',
                 'No takeoff ground was found within %.0f m of the first waypoint '
@@ -3013,7 +2639,7 @@ class FlyPathDialog(QWidget):
     def _remove_takeoff_layer(self):
         """Remove the takeoff-zone map layer only, without touching the button."""
         if self._takeoff_layer_id:
-            QgsProject.instance().removeMapLayer(self._takeoff_layer_id)
+            map_overlays.remove(self._takeoff_layer_id)
             self._takeoff_layer_id = None
             self.iface.mapCanvas().refresh()
 
@@ -3145,61 +2771,6 @@ class FlyPathDialog(QWidget):
         return {'segments': segments, 'to_wgs': to_wgs, 'interval': interval,
                 'n_valid': n_valid, 'n_levels': len(levels)}
 
-    def _build_contour_layer(self, result):
-        """Build the DEM contour overlay: one labelled line feature per level,
-        drawn under the flight path. Returns the layer, or None when there are no
-        contour segments."""
-        segments = result['segments']
-        if not segments:
-            return None
-        by_level = {}
-        for level, seg in segments:
-            by_level.setdefault(level, []).append(
-                [QgsPointXY(*seg[0]), QgsPointXY(*seg[1])])
-
-        layer = QgsVectorLayer(
-            'LineString?crs=EPSG:4326&field=level:double',
-            'FlyPath — DEM Contours', 'memory')
-        layer.setCustomProperty('flypath_internal', True)
-        feats = []
-        for level, parts in by_level.items():
-            feat = QgsFeature()
-            feat.setGeometry(QgsGeometry.fromMultiPolylineXY(parts))
-            feat.setAttributes([round(level, 2)])
-            feats.append(feat)
-        layer.dataProvider().addFeatures(feats)
-
-        symbol = QgsLineSymbol.createSimple({
-            'color': '140,90,30,180', 'width': '0.25',
-        })
-        layer.renderer().setSymbol(symbol)
-
-        lbl = QgsPalLayerSettings()
-        lbl.fieldName = 'level'
-        try:
-            lbl.placement = Qgis.LabelPlacement.Line
-        except AttributeError:
-            lbl.placement = getattr(QgsPalLayerSettings, 'Line')
-        fmt = QgsTextFormat()
-        fmt.setFont(QFont('Segoe UI', 6))
-        fmt.setColor(QColor('#5A3C1E'))
-        fmt.setSize(6)
-        lbl.setFormat(fmt)
-        layer.setLabeling(QgsVectorLayerSimpleLabeling(lbl))
-        layer.setLabelsEnabled(True)
-
-        # Sit under FlyPath's path/markers but above the user's basemap/DEM.
-        proj = QgsProject.instance()
-        proj.addMapLayer(layer, False)
-        root = proj.layerTreeRoot()
-        own_ids = set(self._preview_layer_ids)
-        insert_at = 0
-        for i, node in enumerate(root.children()):
-            if getattr(node, 'layerId', lambda: None)() in own_ids:
-                insert_at = i + 1
-        root.insertLayer(insert_at, layer)
-        return layer
-
     def _on_toggle_contours(self, checked):
         """Toggle the DEM contour overlay from the single on/off button."""
         if checked:
@@ -3245,7 +2816,7 @@ class FlyPathDialog(QWidget):
                 'be read.\n\nSelect a DEM that covers it, or switch to the online '
                 'elevation source.')
             return False
-        layer = self._build_contour_layer(result)
+        layer = map_overlays.create_contours(result, self._preview_layer_ids)
         if layer is None:
             QMessageBox.information(self, 'DEM Contours',
                 'The terrain here is flat within the %.1f m contour interval, so '
@@ -3264,7 +2835,7 @@ class FlyPathDialog(QWidget):
     def _remove_contour_layer(self):
         """Remove the contour map layer only, without touching the button."""
         if self._contour_layer_id:
-            QgsProject.instance().removeMapLayer(self._contour_layer_id)
+            map_overlays.remove(self._contour_layer_id)
             self._contour_layer_id = None
             self.iface.mapCanvas().refresh()
 
@@ -3273,636 +2844,50 @@ class FlyPathDialog(QWidget):
         self._remove_contour_layer()
         self._sync_toggle(self.showContoursBtn, False, 'Show Contours')
 
-    def _set_feature_row_visible(self, visible):
-        """Show or hide the Feature (FID) picker, with its 'Feature' caption, that
-        sits beside the Layer combo. Hiding it lets the Layer combo take the row."""
-        self.featureCombo.setVisible(visible)
-        self._featureCaption.setVisible(visible)
 
-    def _source_mode_value(self):
-        """Which survey-area source is selected: 'layer', 'selection' or 'draw'."""
-        if self.sourceDrawRadio.isChecked():
-            return 'draw'
-        if self.sourceSelectionRadio.isChecked():
-            return 'selection'
-        return 'layer'
 
-    def _apply_source_mode(self):
-        """Switch the shared source row to the chosen source's controls: the
-        layer + feature combos ('layer'), the Use QGIS Selection button
-        ('selection'), or the draw buttons ('draw'). One stacked row keeps them
-        all at the same position and height."""
-        mode = self._source_mode_value()
-        self._sourceStack.setCurrentIndex(
-            {'layer': 0, 'selection': 1, 'draw': 2}[mode])
 
-    def _on_source_mode_changed(self, _=None):
-        """Switching source starts from a clean slate so areas from different
-        sources never mix. Clicking the already-selected source does nothing."""
-        mode = self._source_mode_value()
-        if mode == self._source_mode:
-            return
-        self._source_mode = mode
-        self._apply_source_mode()
-        self._on_clear_preview(reset_area=True)
 
-    def _clear_survey_from_feature(self):
-        """Drop the current survey area and its stats (no feature chosen)."""
-        self._survey_polygon     = None
-        self._survey_polygon_crs = None
-        self._survey_line        = None
-        self._survey_line_crs    = None
-        self.areaLabel.setText('—')
-        self._clear_stats()
 
-    def _feature_label(self, layer, feat, name_field):
-        """Human label for a feature row in the combo."""
-        fid = feat.id()
-        return (f'FID {fid}  ·  {feat[name_field]}'
-                if name_field else f'FID {fid}')
 
-    def _populate_feature_combo(self, layer):
-        """Populate (or refresh) the feature combo for the given layer.
 
-        The combo is always shown while a layer is selected:
-          0 features  -> a single '— none —' entry, no survey area
-          1 feature   -> that feature, auto-selected as the survey area
-          >1 features -> a picker, prompting the user to choose one
-        """
-        layer_id = layer.id()
 
-        # Remember current selection to restore it after a refresh
-        prev_fid = self.featureCombo.currentData()
 
-        self._set_feature_row_visible(True)
-        self.featureCombo.blockSignals(True)
-        self.featureCombo.clear()
 
-        count = layer.featureCount()
 
-        # 0 (or unknown-and-empty): show a None entry, no survey area
-        if count == 0:
-            self.featureCombo.addItem('— none —', None)
-            self.featureCombo.setCurrentIndex(0)
-            self.featureCombo.blockSignals(False)
-            self._clear_survey_from_feature()
-            return
 
-        name_field = self._guess_name_field(layer)
 
-        # Exactly one feature: list it and select it automatically
-        if count == 1:
-            feat = next(layer.getFeatures())
-            self.featureCombo.addItem(self._feature_label(layer, feat, name_field),
-                                      feat.id())
-            self.featureCombo.setCurrentIndex(0)
-            self.featureCombo.blockSignals(False)
-            self._set_survey_geometry(feat.geometry(), layer.crs(),
-                                      layer_id=layer_id, fid=feat.id())
-            return
 
-        # Several features: prompt the user to pick one
-        self.featureCombo.addItem('— select a feature —', None)
-        for feat in layer.getFeatures():
-            self.featureCombo.addItem(self._feature_label(layer, feat, name_field),
-                                      feat.id())
 
-        # Restore previous selection if that feature still exists
-        idx = self.featureCombo.findData(prev_fid)
-        if idx >= 0:
-            self.featureCombo.setCurrentIndex(idx)
-            self.featureCombo.blockSignals(False)
-        else:
-            # Previously selected feature was deleted — reset survey area
-            self.featureCombo.setCurrentIndex(0)
-            self.featureCombo.blockSignals(False)
-            self._clear_survey_from_feature()
 
-    def _connect_layer_signals(self, layer):
-        """Connect to a layer's edit signals to keep the feature combo in sync."""
-        layer.featureAdded.connect(self._on_layer_features_changed)
-        layer.featuresDeleted.connect(self._on_layer_features_changed)
-        layer.editingStopped.connect(self._on_layer_features_changed)
-        layer.attributeValueChanged.connect(self._on_layer_features_changed)
-        self._monitored_layer_id = layer.id()
 
-    def _disconnect_layer_signals(self):
-        """Disconnect from the previously monitored layer's edit signals."""
-        if not self._monitored_layer_id:
-            return
-        layer = QgsProject.instance().mapLayer(self._monitored_layer_id)
-        if layer:
-            try:
-                layer.featureAdded.disconnect(self._on_layer_features_changed)
-                layer.featuresDeleted.disconnect(self._on_layer_features_changed)
-                layer.editingStopped.disconnect(self._on_layer_features_changed)
-                layer.attributeValueChanged.disconnect(self._on_layer_features_changed)
-            except RuntimeError:
-                pass  # signals already disconnected — safe to ignore
-        self._monitored_layer_id = None
 
-    def _on_layer_features_changed(self, *_args):
-        """Refresh the feature combo whenever features are added, deleted, or edited."""
-        layer_id = self.layerCombo.currentData()
-        if not layer_id:
-            return
-        layer = QgsProject.instance().mapLayer(layer_id)
-        if layer:
-            self._populate_feature_combo(layer)
 
-    def _on_feature_changed(self):
-        fid = self.featureCombo.currentData()
-        if fid is None:
-            self._clear_layer_selection()
-            self._survey_polygon     = None
-            self._survey_polygon_crs = None
-            self._survey_line        = None
-            self._survey_line_crs    = None
-            self._on_clear_preview(reset_area=False)
-            self._clear_stats()
-            return
-        layer_id = self.layerCombo.currentData()
-        layer    = QgsProject.instance().mapLayer(layer_id)
-        if not layer:
-            return
-        feats = list(layer.getFeatures([fid]))
-        if not feats:
-            return
-        self._set_survey_geometry(feats[0].geometry(), layer.crs(),
-                                  layer_id=layer_id, fid=fid)
 
-    def _set_survey_geometry(self, geom, crs, layer_id=None, fid=None):
-        """Dispatch a chosen feature to the polygon (2D) or line (corridor)
-        survey-area setter based on the current mission kind."""
-        if self._mission_kind() == 'corridor':
-            self._set_survey_line(geom, crs, layer_id=layer_id, fid=fid)
-        else:
-            self._set_survey_polygon(geom, crs, layer_id=layer_id, fid=fid)
 
-    def _set_survey_line(self, geom, crs, layer_id=None, fid=None):
-        """Adopt a line feature as the corridor centre line and show its length."""
-        self._on_clear_preview(reset_area=False)   # clear old flight path
-        self._clear_layer_selection()
-        self._clear_breaks()                       # break indices belonged to the old line
-        self._survey_line     = geom
-        self._survey_line_crs = crs
-        if layer_id and fid is not None:
-            layer = QgsProject.instance().mapLayer(layer_id)
-            if layer:
-                self._syncing_selection = True
-                layer.selectByIds([fid])
-                self._syncing_selection = False
-                self._selected_layer_id = layer_id
-                self.iface.mapCanvas().refresh()
-        # _update_stats (corridor branch) refreshes the length read-out.
-        self._update_stats()
-
-    def _corridor_length_text(self):
-        """Corridor centre-line length as a friendly 'x.xx km' / 'x m' string."""
-        if self._survey_line is None or self._survey_line_crs is None:
-            return '—'
-        da = QgsDistanceArea()
-        da.setSourceCrs(self._survey_line_crs,
-                        QgsProject.instance().transformContext())
-        da.setEllipsoid('WGS84')
-        length_m = da.measureLength(self._survey_line)
-        if length_m >= 1000.0:
-            return f'{length_m / 1000.0:.2f} km'
-        return f'{length_m:.0f} m'
-
-    def _set_survey_polygon(self, geom, crs, layer_id=None, fid=None):
-        self._on_clear_preview(reset_area=False)   # clear old flight path
-        self._clear_layer_selection()
-        self._survey_polygon     = geom
-        self._survey_polygon_crs = crs
-        # Highlight the chosen feature in the map canvas
-        if layer_id and fid is not None:
-            layer = QgsProject.instance().mapLayer(layer_id)
-            if layer:
-                self._syncing_selection = True
-                layer.selectByIds([fid])
-                self._syncing_selection = False
-                self._selected_layer_id = layer_id
-                self.iface.mapCanvas().refresh()
-        area_ha = self._area_ha()
-        self.areaLabel.setText(f'{area_ha:.2f} ha')
-        self._update_stats()
-        self._check_area_advisory(area_ha)
-
-    def _clear_layer_selection(self):
-        if self._selected_layer_id:
-            layer = QgsProject.instance().mapLayer(self._selected_layer_id)
-            if layer:
-                layer.removeSelection()
-                self.iface.mapCanvas().refresh()
-            self._selected_layer_id = None
-
-    def _check_area_advisory(self, area_ha):
-        if area_ha > 200:
-            QMessageBox.information(
-                self, 'Large Survey Area',
-                f'The selected area is {area_ha:.0f} ha.\n\n'
-                'A survey this large needs more than one battery. Use the '
-                'Split Missions field in Flight Parameters to divide it into '
-                'separate missions, one per battery (it defaults to the '
-                'estimated Batteries count), then export and fly each part in '
-                'turn.'
-            )
-
-    @staticmethod
-    def _guess_name_field(layer):
-        """Return the first text-like field name, or None."""
-        for field in layer.fields():
-            if field.type() in (QVariant.String,):
-                return field.name()
-        return None
-
-    def _on_draw_polygon(self, checked):
-        # The single Draw button switches tool by mission kind.
-        if self._mission_kind() == 'corridor':
-            self._on_draw_line(checked)
-            return
-        if checked:
-            if self._survey_polygon is not None:
-                reply = QMessageBox.question(
-                    self, 'Replace Survey Area?',
-                    'A survey area is already defined.\n\n'
-                    'Do you want to discard it and draw a new polygon?',
-                    _MB_YES | _MB_NO,
-                    _MB_NO,
-                )
-                if reply != _MB_YES:
-                    self.drawPolygonBtn.setChecked(False)
-                    return
-                # User confirmed — clear everything before drawing
-                self._on_clear_preview(reset_area=True)
-
-            # Reset layer / feature selection — drawn polygon is standalone
-            self._disconnect_layer_signals()
-            self._clear_layer_selection()
-            self.layerCombo.blockSignals(True)
-            self.layerCombo.setCurrentIndex(0)
-            self.layerCombo.blockSignals(False)
-            self.featureCombo.blockSignals(True)
-            self.featureCombo.clear()
-            self.featureCombo.setVisible(False)
-            self.featureCombo.blockSignals(False)
-
-            canvas = self.iface.mapCanvas()
-            self._prev_map_tool = canvas.mapTool()
-            self._draw_tool = PolygonDrawTool(canvas)
-            self._draw_tool.polygon_completed.connect(self._on_polygon_drawn)
-            self._draw_tool.drawing_cancelled.connect(self._on_drawing_cancelled)
-            canvas.setMapTool(self._draw_tool)
-            self.drawPolygonBtn.setText('Drawing…  (right-click or double-click to finish)')
-        else:
-            self._cancel_draw_tool()
-
-    def _leave_draw_tool(self):
-        """Turn off the crosshair draw tool. Restores whatever map tool was
-        active before drawing, or unsets ours if there was none, so the plus
-        cursor is only ever shown while Draw or Edit is active."""
-        canvas = self.iface.mapCanvas()
-        current = canvas.mapTool()
-        if self._prev_map_tool is not None:
-            canvas.setMapTool(self._prev_map_tool)
-            self._prev_map_tool = None
-        elif isinstance(current, (PolygonDrawTool, LineDrawTool)):
-            # No earlier tool to fall back to (the canvas had none when Draw
-            # started); clear ours so the cursor returns to the default arrow.
-            canvas.unsetMapTool(current)
-        self._draw_tool = None
-
-    def _on_polygon_drawn(self, geom):
-        self.drawPolygonBtn.setChecked(False)
-        self.drawPolygonBtn.setText('Draw Polygon on Map')
-        self._leave_draw_tool()
-        crs = self.iface.mapCanvas().mapSettings().destinationCrs()
-        self._show_drawn_polygon(geom, crs)
-        self._set_survey_polygon(geom, crs)
-
-    def _show_drawn_polygon(self, geom, crs):
-        """Add the drawn survey boundary as a styled temporary layer."""
-        self._remove_survey_area_layer()
-
-        # Reproject to WGS84 for consistency with other preview layers
-        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
-        xform = QgsCoordinateTransform(crs, wgs84, QgsProject.instance())
-        g = QgsGeometry(geom)
-        g.transform(xform)
-
-        layer = QgsVectorLayer('Polygon?crs=EPSG:4326',
-                               'FlyPath — Survey Area', 'memory')
-        layer.setCustomProperty('flypath_internal', True)
-        feat = QgsFeature()
-        feat.setGeometry(g)
-        layer.dataProvider().addFeatures([feat])
-
-        symbol = QgsFillSymbol.createSimple({
-            'color': '255,20,147,85',
-            'outline_color': '#FF1493',
-            'outline_width': '0.8',
-            'outline_style': 'dash',
-        })
-        layer.renderer().setSymbol(symbol)
-
-        # Track geometry edits made via QGIS tools
-        layer.editingStopped.connect(self._on_survey_area_edited)
-        layer.geometryChanged.connect(self._on_survey_area_geometry_changed)
-
-        QgsProject.instance().addMapLayer(layer)
-        self._survey_area_layer_id = layer.id()
-        self.editPolygonBtn.setText('✎ Edit')
-        self.editPolygonBtn.setVisible(True)
-        self.removePolygonBtn.setVisible(True)
-        self.iface.mapCanvas().refresh()
 
     # ── Corridor centre-line drawing ──────────────────────────────────────
 
-    def _on_draw_line(self, checked):
-        """Draw the corridor centre line (mirrors the polygon draw flow)."""
-        if checked:
-            if self._survey_line is not None:
-                reply = QMessageBox.question(
-                    self, 'Replace Corridor?',
-                    'A corridor centre line is already defined.\n\n'
-                    'Do you want to discard it and draw a new line?',
-                    _MB_YES | _MB_NO,
-                    _MB_NO,
-                )
-                if reply != _MB_YES:
-                    self.drawPolygonBtn.setChecked(False)
-                    return
-                self._on_clear_preview(reset_area=True)
 
-            # Reset layer / feature selection — a drawn line is standalone
-            self._disconnect_layer_signals()
-            self._clear_layer_selection()
-            self.layerCombo.blockSignals(True)
-            self.layerCombo.setCurrentIndex(0)
-            self.layerCombo.blockSignals(False)
-            self.featureCombo.blockSignals(True)
-            self.featureCombo.clear()
-            self._set_feature_row_visible(False)
-            self.featureCombo.blockSignals(False)
 
-            canvas = self.iface.mapCanvas()
-            self._prev_map_tool = canvas.mapTool()
-            self._draw_tool = LineDrawTool(canvas)
-            self._draw_tool.line_completed.connect(self._on_line_drawn)
-            self._draw_tool.drawing_cancelled.connect(self._on_drawing_cancelled)
-            canvas.setMapTool(self._draw_tool)
-            self.drawPolygonBtn.setText('Drawing…  (right-click or double-click to finish)')
-        else:
-            self._cancel_draw_tool()
 
-    def _on_line_drawn(self, geom):
-        self.drawPolygonBtn.setChecked(False)
-        self.drawPolygonBtn.setText(self._draw_btn_default_text())
-        self._leave_draw_tool()
-        crs = self.iface.mapCanvas().mapSettings().destinationCrs()
-        self._show_drawn_line(geom, crs)
-        self._set_survey_line(geom, crs)
 
-    def _show_drawn_line(self, geom, crs):
-        """Add the drawn corridor centre line as a styled temporary layer."""
-        self._remove_survey_area_layer()
 
-        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
-        xform = QgsCoordinateTransform(crs, wgs84, QgsProject.instance())
-        g = QgsGeometry(geom)
-        g.transform(xform)
 
-        layer = QgsVectorLayer('LineString?crs=EPSG:4326',
-                               'FlyPath — Corridor Centre Line', 'memory')
-        layer.setCustomProperty('flypath_internal', True)
-        feat = QgsFeature()
-        feat.setGeometry(g)
-        layer.dataProvider().addFeatures([feat])
 
-        symbol = QgsLineSymbol.createSimple({
-            'color': '#FF1493',
-            'width': '0.8',
-            'line_style': 'dash',
-        })
-        layer.renderer().setSymbol(symbol)
 
-        # Track geometry edits made via QGIS tools (same hooks as the polygon;
-        # both handlers branch on mission kind to update the right geometry).
-        layer.editingStopped.connect(self._on_survey_area_edited)
-        layer.geometryChanged.connect(self._on_survey_area_geometry_changed)
 
-        QgsProject.instance().addMapLayer(layer)
-        self._survey_area_layer_id = layer.id()
-        self.editPolygonBtn.setText('✎ Edit')
-        self.editPolygonBtn.setVisible(True)
-        self.removePolygonBtn.setVisible(True)
-        self.iface.mapCanvas().refresh()
 
-    def _clear_corridor_band(self):
-        """Remove the illustrative buffered-corridor overlay if present."""
-        if self._corridor_band_layer_id:
-            if QgsProject.instance().mapLayer(self._corridor_band_layer_id):
-                QgsProject.instance().removeMapLayer(self._corridor_band_layer_id)
-            self._corridor_band_layer_id = None
 
-    def _show_corridor_band(self):
-        """Draw the assumed mapped area as a translucent band: the centre line
-        buffered by the corridor half-width. Illustrative only (never exported);
-        it just shows roughly what ground the passes will cover. No-op unless a
-        corridor centre line is defined."""
-        self._clear_corridor_band()
-        if (self._mission_kind() != 'corridor' or self._survey_line is None
-                or self._survey_line_crs is None):
-            return
-        buffer_m = self.bufferSpin.value()
-        if buffer_m <= 0:
-            return
-        # Buffer in a metric UTM CRS so the width is correct, then show in WGS84.
-        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
-        to_wgs = QgsCoordinateTransform(self._survey_line_crs, wgs84,
-                                        QgsProject.instance())
-        lw = QgsGeometry(self._survey_line)
-        lw.transform(to_wgs)
-        c = lw.centroid().asPoint()
-        zone = int((c.x() + 180.0) / 6.0) + 1
-        epsg = (32600 if c.y() >= 0 else 32700) + zone
-        utm = QgsCoordinateReferenceSystem(f'EPSG:{epsg}')
-        to_utm = QgsCoordinateTransform(self._survey_line_crs, utm,
-                                        QgsProject.instance())
-        from_utm = QgsCoordinateTransform(utm, wgs84, QgsProject.instance())
-        band = QgsGeometry(self._survey_line)
-        band.transform(to_utm)
-        # Mitred corners so the band follows the centre line's angles (not rounded).
-        band = band.buffer(buffer_m, 8, _BAND_CAP_ROUND, _BAND_JOIN_MITER, 2.0)
-        band.transform(from_utm)
 
-        layer = QgsVectorLayer('Polygon?crs=EPSG:4326',
-                               'FlyPath — Corridor Area (assumed)', 'memory')
-        layer.setCustomProperty('flypath_internal', True)
-        feat = QgsFeature()
-        feat.setGeometry(band)
-        layer.dataProvider().addFeatures([feat])
-        symbol = QgsFillSymbol.createSimple({
-            'color': '30,144,255,35',        # translucent blue fill
-            'outline_color': '#1E90FF',
-            'outline_width': '0.3',
-            'outline_style': 'dot',
-        })
-        layer.renderer().setSymbol(symbol)
-        QgsProject.instance().addMapLayer(layer)
-        self._corridor_band_layer_id = layer.id()
-
-    def _on_survey_area_edited(self):
-        """Called after the user commits edits to the drawn survey geometry
-        (polygon in 2D Mapping, centre line in Corridor Mapping)."""
-        self._finish_polygon_edit()
-        if not self._survey_area_layer_id:
-            return
-        layer = QgsProject.instance().mapLayer(self._survey_area_layer_id)
-        if not layer or layer.featureCount() == 0:
-            return
-        feat = next(layer.getFeatures())
-        if self._mission_kind() == 'corridor':
-            self._survey_line     = feat.geometry()
-            self._survey_line_crs = layer.crs()
-            self._clear_breaks()          # editing the line changes vertex indices
-            self._on_clear_preview(reset_area=False)
-            self._update_stats()          # corridor branch refreshes Length
-            return
-        self._survey_polygon     = feat.geometry()
-        self._survey_polygon_crs = layer.crs()
-        self._on_clear_preview(reset_area=False)
-        area_ha = self._area_ha()
-        self.areaLabel.setText(f'{area_ha:.2f} ha')
-        self._update_stats()
-
-    def _on_survey_area_geometry_changed(self, _fid, geom):
-        """Update the stored geometry live as it is being edited."""
-        if not self._survey_area_layer_id:
-            return
-        layer = QgsProject.instance().mapLayer(self._survey_area_layer_id)
-        if not layer:
-            return
-        if self._mission_kind() == 'corridor':
-            self._survey_line     = geom
-            self._survey_line_crs = layer.crs()
-            self._on_clear_preview(reset_area=False)
-            self._update_stats()          # corridor branch refreshes Length
-            return
-        self._survey_polygon     = geom
-        self._survey_polygon_crs = layer.crs()
-        self._on_clear_preview(reset_area=False)
-        self.areaLabel.setText(f'{self._area_ha():.2f} ha')
-        self._update_stats()
-
-    def _on_remove_drawn_polygon(self):
-        """Remove the drawn polygon and reset the survey area."""
-        # Guarantee the crosshair is gone: if a draw is somehow still active
-        # (e.g. it started with no prior tool to fall back to), drop it here.
-        self._leave_draw_tool()
-        self._remove_survey_area_layer()
-        self._on_clear_preview(reset_area=False)
-        self._survey_polygon     = None
-        self._survey_polygon_crs = None
-        self._survey_line        = None
-        self._survey_line_crs    = None
-        self._clear_breaks()
-        self._waypoints          = []
-        self._shot_spacing_m     = 0.0
-        self.removePolygonBtn.setVisible(False)
-        self._clear_stats()
-        self.iface.mapCanvas().refresh()
-
-    def _remove_survey_area_layer(self):
-        """Remove the temporary drawn-polygon layer if it exists."""
-        if self._survey_area_layer_id:
-            layer = QgsProject.instance().mapLayer(self._survey_area_layer_id)
-            if layer:
-                try:
-                    layer.editingStopped.disconnect(self._on_survey_area_edited)
-                    layer.geometryChanged.disconnect(self._on_survey_area_geometry_changed)
-                except (TypeError, RuntimeError):
-                    # Signals were never connected, or the layer's C++ object
-                    # is already gone; nothing to disconnect.
-                    pass
-                # If Edit was left on, the layer has an open edit buffer, which
-                # makes QGIS pop a "save changes?" prompt on removal. Discard the
-                # edits and leave the vertex tool first so removal is silent.
-                if layer.isEditable():
-                    layer.rollBack()
-                    self._finish_polygon_edit()
-                QgsProject.instance().removeMapLayer(self._survey_area_layer_id)
-            self._survey_area_layer_id = None
-        self.editPolygonBtn.setVisible(False)
-        self.editPolygonBtn.setText('✎ Edit')
-        self.removePolygonBtn.setVisible(False)
-
-    def _on_edit_polygon(self):
-        """Toggle vertex editing of the drawn survey polygon with QGIS tools."""
-        if not self._survey_area_layer_id:
-            return
-        layer = QgsProject.instance().mapLayer(self._survey_area_layer_id)
-        if layer is None:
-            return
-        if layer.isEditable():
-            # Finish: commit the edits. This fires editingStopped, which runs
-            # _on_survey_area_edited to sync the polygon and reset the UI.
-            layer.commitChanges()
-            return
-        # Start: make the layer active, begin editing, and switch to the QGIS
-        # Vertex Tool so the user can drag, add and delete vertices. The
-        # existing geometryChanged/editingStopped hooks keep FlyPath in sync.
-        self.iface.setActiveLayer(layer)
-        layer.startEditing()
-        self._prev_tool_before_edit = self.iface.mapCanvas().mapTool()
-        try:
-            self.iface.actionVertexTool().trigger()
-        except AttributeError:
-            try:
-                self.iface.actionNodeTool().trigger()   # older QGIS name
-            except AttributeError:
-                pass
-        self.editPolygonBtn.setText('✓ Finish Editing')
-        noun = ('corridor centre line' if self._mission_kind() == 'corridor'
-                else 'survey polygon')
-        self._set_info(
-            f'Editing the {noun}: drag a vertex to move it, click an '
-            'edge to add one, or select a vertex and press Delete to remove '
-            'it. Click Finish Editing when done.'
-        )
-
-    def _finish_polygon_edit(self):
-        """Reset the Edit button, restore the previous map tool and info bar."""
-        self.editPolygonBtn.setText('✎ Edit')
-        tool = getattr(self, '_prev_tool_before_edit', None)
-        if tool is not None:
-            self.iface.mapCanvas().setMapTool(tool)
-            self._prev_tool_before_edit = None
-        self._set_info(_INFO_IDLE)
-
-    def _on_drawing_cancelled(self):
-        self.drawPolygonBtn.setChecked(False)
-        self.drawPolygonBtn.setText(self._draw_btn_default_text())
-        self._leave_draw_tool()
-
-    def _cancel_draw_tool(self):
-        """Stop drawing, restore the previous map tool, and reset the button."""
-        self._leave_draw_tool()
-        self.drawPolygonBtn.setChecked(False)
-        self.drawPolygonBtn.setText(self._draw_btn_default_text())
 
     def _area_ha(self):
-        """Return survey polygon area in hectares (metric, via EPSG:3857)."""
+        """Return WGS84 ellipsoidal survey area in hectares."""
         if self._survey_polygon is None:
             return 0.0
-        utm = QgsCoordinateReferenceSystem('EPSG:3857')
-        xf  = QgsCoordinateTransform(
-            self._survey_polygon_crs, utm, QgsProject.instance()
-        )
-        g = QgsGeometry(self._survey_polygon)
-        g.transform(xf)
-        return g.area() / 10_000
+        return measure_survey_area(
+            self._survey_polygon, self._survey_polygon_crs
+        ) / 10_000
 
     # ── Auto direction ────────────────────────────────────────────────────
 
@@ -3922,6 +2907,80 @@ class FlyPathDialog(QWidget):
 
     # ── Statistics ────────────────────────────────────────────────────────
 
+    def _uses_shared_planning(self):
+        return (self._mission_kind() == '2d'
+                and not self.terrainFollowCheck.isChecked())
+
+    def _planning_request_from_ui(self):
+        drone = registry.get(self.droneModelCombo.currentText())
+        if not drone.website_code:
+            raise ValueError('%s has no shared engine profile.' % drone.name)
+        return planning_adapter.build_request(
+            survey_area=survey_geometry.planning_area(
+                self._survey_polygon, self._survey_polygon_crs),
+            drone_profile_id=drone.website_code,
+            altitude_m=self.altitudeSpin.value(),
+            speed_m_s=self.speedSpin.value(),
+            side_overlap_ratio=self.sideOverlapSpin.value() / 100.0,
+            margin_m=self.marginSpin.value(),
+            automatic_direction=self.autoDirectionBtn.isChecked(),
+            direction_deg=self.directionSpin.value(),
+            capture_mode=self._mission_type(),
+            front_overlap_ratio=self.frontOverlapSpin.value() / 100.0,
+            turn_style='curved' if self._path_curved() else 'straight',
+            finish_action=self.finishActionCombo.currentText(),
+            split_enabled=self.splitCheck.isChecked(),
+            requested_flights=self.splitSpin.value() if self.splitCheck.isChecked() else 1,
+            max_waypoints_per_flight=self.maxWaypointsSpin.value(),
+            cross_hatch=self.crossHatchCheck.isChecked(),
+            locations=self._planning.locations,
+        )
+
+    def _apply_planning_result(self, request, result, *, flights=None):
+        if flights is None:
+            flights = planning_adapter.consume_result(request, result)
+        route = [(row['position']['longitude_deg'], row['position']['latitude_deg'])
+                 for row in result['route']['waypoints']]
+        self._planning.record(request, result)
+        self._waypoints = route
+        self._shot_spacing_m = result['capture']['shot_spacing_m']
+        self._missions = [flight['waypoints'] for flight in flights]
+        self._gen_elevations = None
+        stats = result['statistics']
+        self.coverageLabel.setText(f"{stats['survey_area_m2'] / 10_000:.1f} ha")
+        incomplete = not stats.get('estimates_complete', False)
+        self.flightTimeLabel.setText(_format_duration(stats['known_estimated_seconds']))
+        self.distanceLabel.setText(_format_distance(stats['known_distance_m']))
+        photo_suffix = ' estimated' if stats.get('photo_count_kind') == 'estimate' else ''
+        self.photosLabel.setText(f"{stats['photo_count']:,}{photo_suffix}")
+        self.waypointsLabel.setText(f"{stats['waypoint_count']:,}")
+        self.linesLabel.setText(str(stats['strip_count']))
+        self.batteriesLabel.setText(str(stats['battery_count']))
+        self._show_hud()
+        if incomplete:
+            self._set_info('Launch/home travel is not included in these totals.')
+        self._refresh_split_part_combo()
+        if self.autoDirectionBtn.isChecked():
+            blocked = self.directionSpin.blockSignals(True)
+            self.directionSpin.setValue(result['resolved_direction']['value_deg'])
+            self.directionSpin.blockSignals(blocked)
+        return flights
+
+    def _plan_shared(self, silent=True):
+        try:
+            request = self._planning_request_from_ui()
+            result = planning_adapter.plan(request)
+            self._apply_planning_result(request, result)
+            return result
+        except (ValueError, planning_adapter.PlanningError) as exc:
+            self._planning.plan_failed()
+            self._waypoints = []
+            self._missions = []
+            self._shot_spacing_m = 0.0
+            if not silent:
+                QMessageBox.warning(self, 'Cannot Plan Mission', str(exc))
+            return None
+
     def _apply_split_default(self, max_split, default_target):
         """Set the split spin's range and, until the user overrides it, its
         default (the battery estimate). Split Missions is a minimum: the
@@ -3931,7 +2990,7 @@ class FlyPathDialog(QWidget):
         drone = self.droneModelCombo.currentText()
         enterprise = registry.has(drone) and registry.get(drone).category == 'enterprise'
         target = self.splitSpin.value()
-        if enterprise:
+        if enterprise or not self.splitCheck.isChecked():
             target = 1                       # enterprise missions are not split
         elif not self._split_overridden:
             target = default_target
@@ -3952,7 +3011,8 @@ class FlyPathDialog(QWidget):
 
         Uses the actual mission count, which in full-auto can exceed the Split
         Missions value when the waypoint cap forces extra missions."""
-        n = len(self._live_missions) if self._live_missions else self.splitSpin.value()
+        current = self._missions if self._planning.result else self._live_missions
+        n = len(current) if current else self.splitSpin.value()
         prev = self.splitPartCombo.currentData()
         self.splitPartCombo.blockSignals(True)
         self.splitPartCombo.clear()
@@ -3968,11 +3028,20 @@ class FlyPathDialog(QWidget):
     def _update_stats(self):
         self._live_waypoints = None
         self._live_missions  = None
+        self._live_statistics = None
+        if self._loading_mission:
+            return
         if not self._has_survey_area(silent=True):
             self._clear_stats()
             return
         if self._mission_kind() == 'corridor':
             self._update_stats_corridor()
+            return
+        if self._uses_shared_planning():
+            if self._planning.locked:
+                return
+            if self._plan_shared() is None:
+                self._clear_stats()
             return
         drone = self.droneModelCombo.currentText()
         if not registry.has(drone):
@@ -3983,13 +3052,7 @@ class FlyPathDialog(QWidget):
         speed = self.speedSpin.value()
 
         # Coverage area
-        webmerc = QgsCoordinateReferenceSystem('EPSG:3857')
-        xf = QgsCoordinateTransform(
-            self._survey_polygon_crs, webmerc, QgsProject.instance()
-        )
-        g = QgsGeometry(self._survey_polygon)
-        g.transform(xf)
-        self.coverageLabel.setText(f'{g.area() / 10_000:.2f} ha')
+        self.coverageLabel.setText(f'{self._area_ha():.1f} ha')
 
         # Flight-path stats are taken from the ACTUAL generated waypoints (the
         # same path the preview draws), so distance, lines, photos and time
@@ -4039,22 +3102,23 @@ class FlyPathDialog(QWidget):
         waypoints, self._live_elevations = self._apply_terrain(waypoints)
         self._live_waypoints = waypoints
 
-        dist_m     = self._path_length_m(turn_pts)
+        dist_m     = measure_route(turn_pts)
         n_lines    = len(turn_pts) // 2
-        usable_min = d.battery_time_min * (1.0 - _BATTERY_RESERVE)
-        if full:
-            # Stop-and-shoot: transit plus a stop per photo (the halt, or the
-            # camera's shutter/write time if longer).
-            n_photos   = len(waypoints)
-            per_photo  = max(_HALT_S, d.camera.min_shoot_interval_s)
-            flight_min = (dist_m / speed + n_photos * per_photo) / 60.0 if speed > 0 else 0.0
-        else:
-            n_photos   = max(0, int(dist_m / actual_spacing))
-            flight_min = dist_m / (speed * 60.0) if speed > 0 else 0.0
-        batteries  = math.ceil(flight_min / usable_min) if flight_min > 0 else 0
+        stats = mission_statistics(
+            route_distance_m=dist_m,
+            speed_m_s=speed,
+            capture_mode="full" if full else "semi",
+            photo_interval_s=d.camera.min_shoot_interval_s,
+            battery_minutes=d.battery_safe_min,
+            waypoint_count=len(waypoints),
+            stop_seconds=_HALT_S,
+        )
+        n_photos = stats["photo_count"]
+        batteries = stats["battery_count"]
+        self._live_statistics = stats
 
-        self.flightTimeLabel.setText(f'{flight_min:.1f} min')
-        self.distanceLabel.setText(f'{dist_m / 1000:.2f} km')
+        self.flightTimeLabel.setText(_format_duration(stats['flight_seconds']))
+        self.distanceLabel.setText(_format_distance(dist_m))
         self.photosLabel.setText(f'{n_photos:,}')
         self.waypointsLabel.setText(f'{len(waypoints):,}')
         self.linesLabel.setText(str(n_lines))
@@ -4110,7 +3174,7 @@ class FlyPathDialog(QWidget):
         da.setEllipsoid('WGS84')
         length_m = da.measureLength(self._survey_line)
         total_width = 2.0 * self.bufferSpin.value()
-        self.coverageLabel.setText(f'{length_m * total_width / 10_000:.2f} ha')
+        self.coverageLabel.setText(f'{length_m * total_width / 10_000:.1f} ha')
 
         full = self._mission_type() == 'full'
         usable_min = d.battery_time_min * (1.0 - _BATTERY_RESERVE)
@@ -4150,7 +3214,7 @@ class FlyPathDialog(QWidget):
             return
         waypoints = [wp for wps, _, _ in missions_h for wp in wps]
         self._live_waypoints = waypoints
-        dist_m = sum(self._path_length_m(w) for w, _, _ in missions_h if len(w) >= 2)
+        dist_m = sum(measure_route(w) for w, _, _ in missions_h if len(w) >= 2)
 
         if full:
             n_photos   = len(waypoints)
@@ -4163,8 +3227,8 @@ class FlyPathDialog(QWidget):
             flight_min = dist_m / (speed * 60.0) if speed > 0 else 0.0
         batteries = math.ceil(flight_min / usable_min) if flight_min > 0 else 0
 
-        self.flightTimeLabel.setText(f'{flight_min:.1f} min')
-        self.distanceLabel.setText(f'{dist_m / 1000:.2f} km')
+        self.flightTimeLabel.setText(_format_duration(flight_min * 60))
+        self.distanceLabel.setText(_format_distance(dist_m))
         self.photosLabel.setText(f'{n_photos:,}')
         self.waypointsLabel.setText(f'{len(waypoints):,}')
         self.linesLabel.setText(str(n_lines))
@@ -4180,7 +3244,7 @@ class FlyPathDialog(QWidget):
         """Split waypoints for the current mission type, honouring the Max
         Waypoints cap so no exported mission exceeds it. Full-automatic splits by
         waypoint count; semi-automatic splits by whole flight lines."""
-        n = self.splitSpin.value()
+        n = self.splitSpin.value() if self.splitCheck.isChecked() else 1
         maxwp = self.maxWaypointsSpin.value()
         # Corridor routes are a dense uniform point sequence (not line-endpoint
         # pairs), so they always split by waypoint count.
@@ -4199,18 +3263,11 @@ class FlyPathDialog(QWidget):
             n = max(n, -(-n_lines // max_lines))       # ceil(n_lines / max_lines)
         return split_waypoints(waypoints, n)
 
-    def _path_length_m(self, waypoints):
-        """Ellipsoidal length of the (lon, lat) flight path in metres."""
-        da = QgsDistanceArea()
-        da.setSourceCrs(QgsCoordinateReferenceSystem('EPSG:4326'),
-                        QgsProject.instance().transformContext())
-        da.setEllipsoid('WGS84')
-        return da.measureLine([QgsPointXY(lon, lat) for lon, lat in waypoints])
-
     def _clear_stats(self):
         for attr in ('flightTimeLabel', 'distanceLabel', 'photosLabel',
                      'waypointsLabel', 'linesLabel', 'batteriesLabel',
-                     'coverageLabel', 'corridorLengthLabel'):
+                     'coverageLabel', 'corridorLengthLabel',
+                     'frontOverlapStatLabel'):
             getattr(self, attr).setText('—')
         self.areaLabel.setText('—')
         self._hide_hud()
@@ -4222,7 +3279,8 @@ class FlyPathDialog(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         # Bring the HUD back when the panel reopens, if there is a live plan.
-        if self._hud is not None and self._live_waypoints:
+        if self._hud is not None and (
+                self._waypoints or self._live_waypoints or self._planning.result):
             self._show_hud()
         self._show_info_hud()   # the info card follows the panel's visibility
 
@@ -4236,6 +3294,27 @@ class FlyPathDialog(QWidget):
     def _on_preview(self):
         if not self._has_survey_area():
             return
+        action = self._planning.begin_preview(
+            has_saved_route=bool(self._missions),
+            split_choice_required=self._split_choice_required)
+        if action == 'restore':
+            self._redraw_preview_layers(
+                self._missions, self._preview_heights, self._preview_ground)
+            return
+        if action == 'unsupported':
+            QMessageBox.warning(
+                self, 'Cannot Regenerate Mission',
+                'This saved plan uses an unsupported planning version. Update '
+                'FlyPath before regenerating or exporting it.')
+            return
+        if action == 'choose_splitting':
+            QMessageBox.warning(
+                self, 'Choose Splitting',
+                'This older mission does not record whether splitting was '
+                'enabled. Choose the Splitting checkbox before regenerating it.')
+            return
+        self.previewBtn.setText('Preview on Map')
+        self._on_clear_preview(reset_area=False)
         if self._mission_kind() == 'corridor':
             missions_h = self._corridor_missions_with_heights()
             if not missions_h:
@@ -4247,142 +3326,24 @@ class FlyPathDialog(QWidget):
             if result is None:
                 return
             waypoints, shot_spacing_m = result
-            missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
+            if self._uses_shared_planning() and self._planning.result:
+                missions_h = [(part, None, None) for part in self._missions]
+            else:
+                missions_h = self._missions_with_heights(
+                    waypoints, self._gen_elevations)
         missions = [wps for wps, _, _ in missions_h]
         heights  = [h for _, h, _ in missions_h]
         ground   = [g for _, _, g in missions_h]
         self._waypoints      = waypoints
         self._shot_spacing_m = shot_spacing_m
         self._missions       = missions
-        self._on_clear_preview(reset_area=False)
+        self._preview_heights = heights
+        self._preview_ground = ground
         self._show_corridor_band()   # under the path (no-op in 2D)
-        line_layer = self._build_path_layer(missions)
-        wp_layer   = self._build_waypoints_layer(missions, heights, ground)
-        self._preview_layer_ids = [line_layer.id(), wp_layer.id()]
+        self._preview_layer_ids = preview_layers.create(
+            missions, heights, ground)
         self._update_web_buttons()
         self.iface.mapCanvas().refresh()
-
-    def _path_renderer(self, n_missions):
-        """Rule-based renderer that colours each split mission's line its own
-        colour. A single (unsplit) mission keeps the original yellow."""
-        root = QgsRuleBasedRenderer.Rule(None)
-        for m in range(max(1, n_missions)):
-            sym = QgsLineSymbol.createSimple({
-                'color': _mission_color(m), 'width': '0.8',
-                'capstyle': 'round', 'joinstyle': 'round',
-            })
-            label = 'Flight path' if n_missions <= 1 else f'Mission {m + 1}'
-            root.appendChild(QgsRuleBasedRenderer.Rule(
-                sym, filterExp=f'"mission" = {m}', label=label))
-        return QgsRuleBasedRenderer(root)
-
-    def _build_path_layer(self, missions):
-        """Create and register a LineString layer for the flight path, drawing
-        one colour-coded polyline per split mission."""
-        layer = QgsVectorLayer(
-            'LineString?crs=EPSG:4326&field=id:integer&field=mission:integer',
-            'FlyPath — Path', 'memory'
-        )
-        layer.setCustomProperty('flypath_internal', True)
-        layer.setRenderer(self._path_renderer(len(missions)))
-        self._populate_path_layer(layer, missions)
-        QgsProject.instance().addMapLayer(layer)
-        return layer
-
-    def _populate_path_layer(self, layer, missions):
-        """(Re)fill the path layer with one polyline per mission, in place.
-
-        Missions are drawn as separate polylines with no line joining one to
-        the next: the drone lands and swaps battery between them, so there is
-        no flight leg connecting them."""
-        dp = layer.dataProvider()
-        dp.truncate()
-        feats = []
-        for m, wps in enumerate(missions):
-            if len(wps) < 2:
-                continue
-            feat = QgsFeature()
-            feat.setGeometry(QgsGeometry.fromPolylineXY(
-                [QgsPointXY(lon, lat) for lon, lat in wps]
-            ))
-            feat.setAttributes([m, m])
-            feats.append(feat)
-        dp.addFeatures(feats)
-        layer.triggerRepaint()
-
-    def _build_waypoints_layer(self, missions, heights=None, ground=None):
-        """Create and register a rule-based Point layer for waypoint markers.
-        The map label is the waypoint number; with terrain follow, each waypoint's
-        attribute table also carries its ground elevation (m) and its flight
-        height H (m, relative to the launch point, as shown on the RC)."""
-        layer = QgsVectorLayer(
-            'Point?crs=EPSG:4326&field=seq:integer&field=wp_type:string(10)'
-            '&field=mission:integer&field=ground_elevation_m:double'
-            '&field=flight_height_m:double',
-            'FlyPath — Waypoints', 'memory'
-        )
-        layer.setCustomProperty('flypath_internal', True)
-        self._populate_waypoints_layer(layer, missions, heights, ground)
-
-        root = QgsRuleBasedRenderer.Rule(None)
-        for expr, color, border, size, label in [
-            ('"wp_type" = \'start\'', _COLOR_START_MARKER, _COLOR_MID_MARKER, '7.5', 'Start'),
-            ('"wp_type" = \'end\'',   _COLOR_END_MARKER,   _COLOR_MID_MARKER, '7.5', 'End'),
-            ('"wp_type" = \'mid\'',   _COLOR_MID_MARKER,   '#FFE600',         '4.0', 'Waypoint'),
-        ]:
-            sym = QgsMarkerSymbol.createSimple({
-                'name': 'circle', 'color': color,
-                'outline_color': border, 'outline_width': '0.4',
-                'size': size,
-            })
-            root.appendChild(QgsRuleBasedRenderer.Rule(sym, filterExp=expr, label=label))
-        layer.setRenderer(QgsRuleBasedRenderer(root))
-
-        lbl = QgsPalLayerSettings()
-        lbl.fieldName = 'seq'
-        try:
-            lbl.placement = Qgis.LabelPlacement.OverPoint
-        except AttributeError:
-            lbl.placement = getattr(QgsPalLayerSettings, 'OverPoint')
-        lbl.priority = 10
-        fmt = QgsTextFormat()
-        fmt.setFont(QFont('Segoe UI', 7, _FontBold))
-        fmt.setColor(QColor('#1E2128'))
-        fmt.setSize(7)
-        lbl.setFormat(fmt)
-        layer.setLabeling(QgsVectorLayerSimpleLabeling(lbl))
-        layer.setLabelsEnabled(True)
-
-        QgsProject.instance().addMapLayer(layer)
-        return layer
-
-    def _populate_waypoints_layer(self, layer, missions, heights=None, ground=None):
-        """(Re)fill the waypoint markers, in place. Each mission is numbered
-        from 1 on its own and gets its own start and end marker. With terrain
-        follow, each waypoint also carries its ground elevation and flight height
-        H (both NULL for a flat, non-terrain mission)."""
-        dp = layer.dataProvider()
-        dp.truncate()
-        wp_feats = []
-        for m, wps in enumerate(missions):
-            last_idx = len(wps) - 1
-            m_h = heights[m] if heights and m < len(heights) else None
-            m_g = ground[m] if ground and m < len(ground) else None
-            for i, (lon, lat) in enumerate(wps):
-                f = QgsFeature()
-                f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(lon, lat)))
-                if i == 0:
-                    wp_type = 'start'
-                elif i == last_idx:
-                    wp_type = 'end'
-                else:
-                    wp_type = 'mid'
-                g = m_g[i] if m_g and i < len(m_g) else None
-                h = m_h[i] if m_h and i < len(m_h) else None
-                f.setAttributes([i + 1, wp_type, m, g, h])
-                wp_feats.append(f)
-        dp.addFeatures(wp_feats)
-        layer.triggerRepaint()
 
     def _sync_preview(self):
         """Keep an already-shown preview in sync with the current parameters.
@@ -4394,52 +3355,47 @@ class FlyPathDialog(QWidget):
         """
         if not self._preview_layer_ids:
             return
-        missions = self._live_missions
-        flat     = self._live_waypoints
+        shared = bool(self._planning.result)
+        missions = self._missions if shared else self._live_missions
+        flat = self._waypoints if shared else self._live_waypoints
         if not flat or len(flat) < 2 or not missions:
             self._on_clear_preview(reset_area=False)
             return
-        self._waypoints      = flat
-        self._missions       = missions
-        self._shot_spacing_m = max(
-            self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5
-        )
-        self._redraw_preview_layers(missions, self._live_heights, self._live_ground)
+        if not shared:
+            self._waypoints = flat
+            self._missions = missions
+            self._shot_spacing_m = max(
+                self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5)
+            self._gen_elevations = self._live_elevations
+        heights = None if shared else self._live_heights
+        ground = None if shared else self._live_ground
+        self._redraw_preview_layers(missions, heights, ground)
         self._show_corridor_band()   # keep the overlay in sync with the buffer
 
     def _redraw_preview_layers(self, missions, heights=None, ground=None):
         """Refresh the existing preview layers in place from new missions."""
-        proj = QgsProject.instance()
-        line_layer = (proj.mapLayer(self._preview_layer_ids[0])
-                      if len(self._preview_layer_ids) >= 1 else None)
-        wp_layer   = (proj.mapLayer(self._preview_layer_ids[1])
-                      if len(self._preview_layer_ids) >= 2 else None)
-        if line_layer is None or wp_layer is None:
-            # Layers were removed outside the plugin — rebuild from scratch.
-            self._on_clear_preview(reset_area=False)
-            line_layer = self._build_path_layer(missions)
-            wp_layer   = self._build_waypoints_layer(missions, heights, ground)
-            self._preview_layer_ids = [line_layer.id(), wp_layer.id()]
-        else:
-            # The mission count can change between syncs (the split value or the
-            # line count moved), so rebuild the colour rules before refilling.
-            line_layer.setRenderer(self._path_renderer(len(missions)))
-            self._populate_path_layer(line_layer, missions)
-            self._populate_waypoints_layer(wp_layer, missions, heights, ground)
+        self._preview_layer_ids = preview_layers.redraw(
+            self._preview_layer_ids, missions, heights, ground)
         self.iface.mapCanvas().refresh()
 
     def _on_clear_preview(self, reset_area=True):
         # Always remove the flight-path preview layers and the corridor overlay
-        for lid in self._preview_layer_ids:
-            if QgsProject.instance().mapLayer(lid):
-                QgsProject.instance().removeMapLayer(lid)
+        preview_layers.remove(self._preview_layer_ids)
         self._preview_layer_ids = []
         self._clear_corridor_band()
+        self._waypoints = []
+        self._missions = []
+        self._preview_heights = []
+        self._preview_ground = []
+        self._planning.clear_preview()
+        self._shot_spacing_m = 0.0
+        self._gen_elevations = None
         # The takeoff zone and contours belong to the plan being cleared.
         self._on_clear_takeoff_zone()
         self._on_clear_contours()
 
         if reset_area:
+            self.previewBtn.setText('Preview on Map')
             self._website_link = None
             # Full reset — also stop any active draw and remove the boundary
             self._leave_draw_tool()
@@ -4452,9 +3408,8 @@ class FlyPathDialog(QWidget):
             self._survey_polygon_crs = None
             self._survey_line        = None
             self._survey_line_crs    = None
-            self._waypoints          = []
-            self._shot_spacing_m     = 0.0
-            self._missions           = []
+            self._split_choice_required = False
+            self._planning.reset()
             self._live_missions      = None
             self._split_overridden   = False
             self.autoDirectionBtn.setChecked(False)
@@ -4470,498 +3425,25 @@ class FlyPathDialog(QWidget):
 
     # ── FlyPath website sync ────────────────────────────────
 
-    def _forget_website_mission(self):
-        self._website_link = None
-        self._update_web_buttons()
 
-    def _current_website_link(self):
-        link = getattr(self, '_website_link', None)
-        if not link:
-            return None
-        try:
-            scope = flypath_sync.account_key(flypath_sync.load_base_url(), flypath_sync.load_token())
-        except FlypathSyncError:
-            self._website_link = None
-            return None
-        if link and link['account'] != scope:
-            self._website_link = None
-            return None
-        return link
 
-    def _remember_website_mission(self, mission):
-        try:
-            scope = flypath_sync.account_key(flypath_sync.load_base_url(), flypath_sync.load_token())
-        except FlypathSyncError:
-            self._website_link = None
-            self._update_web_buttons()
-            return
-        self._website_link = {
-            'id': mission.get('id'), 'revision': mission.get('revision'),
-            'name': mission.get('name') or 'Mission',
-            'account': scope,
-        }
-        self._update_web_buttons()
 
-    def _update_web_buttons(self):
-        library = getattr(self, '_mission_library', None)
-        if library is not None:
-            library.update_buttons()
 
-    def _web_token(self):
-        """The token stored on this machine, asking for it once if there is
-        none. Returns None when the pilot cancels the prompt."""
-        from .flypath_credentials import unlock_storage
-        parent = getattr(self, '_mission_library', None) or self
-        try:
-            origin = flypath_sync.load_base_url()
-            unlock_storage()
-            token = flypath_sync.load_token()
-            if flypath_sync.load_base_url() != origin:
-                raise FlypathSyncError('The FlyPath website changed while connecting. Retry Connect account for the new website.')
-        except FlypathSyncError as exc:
-            QMessageBox.warning(parent, 'FlyPath credentials', str(exc))
-            self._update_web_buttons()
-            return None
-        if token:
-            return token
-        try:
-            password = QLineEdit.EchoMode.Password
-        except AttributeError:
-            password = getattr(QLineEdit, 'Password')
-        token, ok = QInputDialog.getText(
-            getattr(self, '_mission_library', None) or self, 'FlyPath Token',
-            'Connect to %s.\n\nChoose Plugin token in this website\'s account menu, generate a '
-            'token, and paste it here. QGIS will store it in its encrypted '
-            'authentication vault. If a token expires or is revoked, reconnect '
-            'with a new token; your local plan is kept.\n\nToken:' % origin,
-            password)
-        token = (token or '').strip()
-        if not (ok and token):
-            return None
-        try:
-            if flypath_sync.load_base_url() != origin:
-                raise FlypathSyncError('The FlyPath website changed while entering the token. Nothing was saved. Retry Connect account for the new website.')
-            flypath_sync.save_token(token)
-        except FlypathSyncError as exc:
-            QMessageBox.warning(parent, 'FlyPath credentials', str(exc))
-            self._update_web_buttons()
-            return None
-        return token
 
-    def _run_web(self, title, work, *, raise_conflict=False):
-        """Run one website call with the token, a wait cursor and the sync
-        buttons disabled (a slow connection should look busy, not crashed).
-        Returns work()'s value, or None when it failed or was cancelled — the
-        error is shown as a message box here so flypath_sync stays Qt-free."""
-        try:
-            origin = flypath_sync.load_base_url()
-        except FlypathSyncError as exc:
-            QMessageBox.warning(self, title, str(exc))
-            return None
-        token = self._web_token()
-        if token is None:
-            return None
-        library = getattr(self, '_mission_library', None)
-        if library is not None:
-            library.setEnabled(False)
-        QApplication.setOverrideCursor(_WaitCursor)
-        # ponytail: retain synchronous HTTP; use a QGIS task if request latency disrupts planning.
-        QApplication.processEvents()     # paint the busy state before blocking
-        try:
-            if (flypath_sync.load_base_url() != origin or
-                    flypath_sync.load_token() != token):
-                raise FlypathSyncError('The FlyPath connection changed before sending. No request was made. Retry with the intended website and account.')
-            return work(token)
-        except FlypathSyncError as exc:
-            if exc.status == 401:
-                # The token is gone or was regenerated: forget it so the next
-                # attempt asks for the new one instead of failing again.
-                self._website_link = None
-                try:
-                    flypath_sync.save_token('')
-                except FlypathSyncError as storage_error:
-                    QMessageBox.warning(self, 'FlyPath credentials', str(storage_error))
-            if exc.status == 409 and raise_conflict:
-                raise
-            QMessageBox.warning(self, title, str(exc))
-            return None
-        finally:
-            QApplication.restoreOverrideCursor()
-            if library is not None:
-                library.setEnabled(True)
-            self._update_web_buttons()
 
     # ── Push ─────────────────────────────────────────────
 
-    def _on_send_to_website(self, save_as_new=False):
-        """Save the linked mission, or explicitly create and link a new one."""
-        if not (self._preview_layer_ids and self._missions):
-            QMessageBox.information(self, 'Preview First', 'Preview the mission on the map before saving it to FlyPath.')
-            return
-        link = self._current_website_link()
-        updating = bool(link and not save_as_new)
-        name = link['name'] if link else 'QGIS ' + datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
-        parent = getattr(self, '_mission_library', None) or self
-        if not updating:
-            name, ok = QInputDialog.getText(
-                parent, 'Save as new on FlyPath', 'Mission name:',
-                text=name + ' copy' if link else name)
-            if not ok or not name.strip():
-                return
-            name = name.strip()
-        try:
-            payload = self._website_payload(name)
-        except FlypathSyncError as exc:
-            QMessageBox.warning(parent, 'Cannot Save Mission', str(exc))
-            return
-        try:
-            base_url = flypath_sync.load_base_url()
-        except FlypathSyncError as exc:
-            QMessageBox.warning(parent, 'FlyPath credentials', str(exc))
-            return
-        try:
-            result = self._run_web(
-                'Save to FlyPath',
-                lambda token: flypath_sync.update_mission(base_url, token, link['id'], link['revision'], payload)
-                if updating else flypath_sync.push_mission(base_url, token, payload),
-                raise_conflict=updating)
-        except FlypathSyncError as exc:
-            if exc.status != 409:
-                raise
-            return self._resolve_website_conflict(link)
-        if not result:
-            return
-        self._remember_website_mission(result)
-        url = flypath_sync.mission_url(result.get('id'), base_url)
-        reply = QMessageBox.question(
-            parent, 'Saved to FlyPath',
-            ('Changes saved to "%s".' if updating else 'New mission "%s" saved.')
-            % (result.get('name') or 'Mission') + '\n\nOpen it in your browser?',
-            _MB_YES | _MB_NO, _MB_YES)
-        if reply == _MB_YES:
-            QDesktopServices.openUrl(QUrl(url))
-        return True
 
-    def _resolve_website_conflict(self, link):
-        from .flypath_library import conflict_choice
-        parent = getattr(self, '_mission_library', None) or self
-        choice = conflict_choice(parent)
-        if choice == 'copy':
-            return self._on_send_to_website(save_as_new=True)
-        if choice == 'reload':
-            answer = QMessageBox.question(
-                parent, 'Load Latest Mission',
-                'Discard your local edits and load the latest saved mission?',
-                _MB_YES | _MB_NO, _MB_NO)
-            if answer == _MB_YES:
-                return self._on_load_from_website(link['id'])
-        return False
 
-    def _website_payload(self, name):
-        """The mission as the website's API expects it. Points travel as
-        [lat, lon] pairs (the website's own order), the drone as the website's
-        own code. Linked saves address the mission by its API URL."""
-        corridor = self._mission_kind() == 'corridor'
-        drone = registry.get(self.droneModelCombo.currentText())
-        if not drone.website_code:
-            raise FlypathSyncError(
-                '%s is not one of the drones flypath.io offers, so this mission '
-                'cannot be sent there. Choose another drone, or export a KMZ '
-                'instead.' % drone.name)
-        area = (self._survey_line_wgs84() if corridor
-                else self._survey_polygon_wgs84())
-        if not area:
-            raise FlypathSyncError('This mission has no survey area to send.')
-        # ponytail: full-automatic routes are pushed as flown, one point per
-        # photo, while the website reads waypoints as flight-line endpoints in
-        # pairs. The area and settings it saves regenerate the route correctly
-        # there; if the drawn route on the website matters, push turn points.
-        waypoints = list(self._waypoints or [])
-        for label, points in (('survey area', area), ('waypoints', waypoints)):
-            if len(points) > flypath_sync.MAX_MISSION_POINTS:
-                raise FlypathSyncError(
-                    'This mission has %d %s; FlyPath accepts at most %d. Use '
-                    'semi-automatic capture, or a smaller area, to send it.'
-                    % (len(points), label, flypath_sync.MAX_MISSION_POINTS))
-        return {
-            'name': name,
-            'drone_model': drone.website_code,
-            'polygon':   [[lat, lon] for lon, lat in area],
-            'waypoints': [[lat, lon] for lon, lat in waypoints],
-            'settings':  self._website_settings(),
-            'estimates': self._website_estimates(),
-        }
 
-    def _website_settings(self):
-        """The mission parameters the website knows, by its own key names.
 
-        Plugin-only settings (launch offset, GSD, photo interval, gimbal angle,
-        DEM choice, takeoff-zone tolerance, corridor mission breaks) are left
-        out rather than invented as new server-side keys. Values outside the
-        website's own ranges are not clamped here: the server rejects them with
-        a message the pilot is shown as-is."""
-        corridor = self._mission_kind() == 'corridor'
-        actions = []
-        for label, combo, table in (
-                ('Finish Action', self.finishActionCombo,
-                 flypath_sync.WEBSITE_FINISH_ACTIONS),
-                ('RC Lost Action', self.rcLostActionCombo,
-                 flypath_sync.WEBSITE_RC_LOST_ACTIONS)):
-            code = table.get(combo.currentText())
-            if code is None:
-                raise FlypathSyncError(
-                    'FlyPath has no website equivalent for %s "%s". Choose '
-                    'another one to send this mission.'
-                    % (label, combo.currentText()))
-            actions.append(code)
-        settings = {
-            'mapping_style':  self._mission_kind(),
-            'capture_mode':   self._mission_type(),
-            'flight_path':    'curved' if self._path_curved() else 'straight',
-            'finish_action':  actions[0],
-            'rc_lost_action': actions[1],
-            'altitude':       round(self.altitudeSpin.value(), 1),
-            'speed':          round(self.speedSpin.value(), 1),
-            'side_overlap':   self.sideOverlapSpin.value(),
-            'terrain_follow': bool(self.terrainFollowCheck.isChecked()),
-            'split_count':    self.splitSpin.value(),
-            'split_enabled':  self.splitSpin.value() > 1,
-            'auto_direction': self.autoDirectionBtn.isChecked(),
-            'reverse_route':  False,
-            'split_max_wp':   self.maxWaypointsSpin.value(),
-        }
-        if corridor:
-            # The plugin's Buffer is the half-width each side; the website's
-            # corridor_width is the full mapped width.
-            settings['corridor_width'] = round(self.bufferSpin.value() * 2.0, 1)
-        else:
-            # Flight lines are bidirectional, so a heading and its opposite are
-            # the same grid; the website's range stops below 180.
-            settings['direction'] = round(self.directionSpin.value() % 180.0, 1)
-            settings['margin'] = round(self.marginSpin.value(), 1)
-            settings['cross_hatch'] = bool(self.crossHatchCheck.isChecked())
-        if self._mission_type() == 'full':
-            # Semi-automatic front overlap is derived from speed and interval,
-            # not a setting the pilot chose, so it is not sent as one.
-            settings['front_overlap'] = self.frontOverlapSpin.value()
-        if self.terrainFollowCheck.isChecked():
-            settings['terrain_tolerance'] = round(self.terrainToleranceSpin.value(), 1)
-        return settings
 
-    def _website_estimates(self):
-        """The figures the website's mission card shows, taken from the same
-        stats card the pilot just reviewed, so both tools report one number."""
-        return {
-            'distance_m': int(round(self._path_length_m(self._waypoints or []))),
-            'time':       self.flightTimeLabel.text(),
-            'distance':   self.distanceLabel.text(),
-            'photos':     self.photosLabel.text(),
-            'waypoints':  self.waypointsLabel.text(),
-            'batteries':  self.batteriesLabel.text(),
-            'area':       self.coverageLabel.text(),
-            'flight_count': len(self._missions or []),
-        }
 
     # ── Pull ─────────────────────────────────────────────
 
-    def _on_load_from_website(self, mission_id):
-        """Load a library selection as an independent local copy."""
-        try:
-            base_url = flypath_sync.load_base_url()
-        except FlypathSyncError as exc:
-            QMessageBox.warning(self, 'FlyPath credentials', str(exc))
-            return
-        mission = self._run_web(
-            'Load from FlyPath',
-            lambda token: flypath_sync.get_mission(base_url, token,
-                                                   mission_id))
-        if mission is None:
-            return
-        try:
-            adjusted = self._apply_website_mission(mission)
-        except FlypathSyncError as exc:
-            QMessageBox.warning(self, 'Cannot Load Mission', str(exc))
-            return
-        self._remember_website_mission(mission)
-        note = ''
-        if adjusted:
-            note = ('\n\nThese settings are outside this plugin\'s own range '
-                    'and were adjusted to the nearest value it can fly:\n  '
-                    + '\n  '.join(adjusted))
-        QMessageBox.information(
-            self, 'Loaded from FlyPath',
-            '"%s" is now a local mission in QGIS.\n\nIt is an independent '
-            'working copy linked to FlyPath. Save changes updates this mission; '
-            'Save as new creates a separate mission.%s'
-            % (mission.get('name') or 'Mission', note))
-        return True
 
-    @staticmethod
-    def _web_date(updated_at):
-        """The website's UTC update time shown in the computer's local time, e.g.
-        '2026-01-02T03:04:05.678+00:00' (UTC) -> '2026-01-02 04:04' at UTC+1.
 
-        The server stores timestamps in UTC; here they are converted to the local
-        timezone so the My missions list matches the pilot's clock. Falls back to
-        the raw value (trimmed) if it cannot be parsed, so display never fails."""
-        raw = (updated_at or '').strip()
-        if not raw:
-            return 'never saved'
-        try:
-            # fromisoformat rejects a trailing 'Z' before Python 3.11 (QGIS 3), so
-            # normalise it; a timestamp with no zone is treated as UTC.
-            dt = datetime.datetime.fromisoformat(raw.replace('Z', '+00:00'))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=datetime.timezone.utc)
-            return dt.astimezone().strftime('%Y-%m-%d %H:%M')
-        except (ValueError, TypeError):
-            return raw[:16].replace('T', ' ')
 
-    def _apply_website_mission(self, mission):
-        """Rebuild a website mission as a local one. Everything the plugin
-        cannot represent is rejected before any map state changes, so a refused
-        load leaves the current plan untouched. Returns the settings whose value
-        the plugin's own range could not hold, as lines for the caller to show:
-        those are adjusted, never silently."""
-        flypath_sync.validate_mission(mission)
-        settings = mission.get('settings') or {}
-        if not isinstance(settings, dict):
-            raise FlypathSyncError('This mission\'s settings could not be read.')
-        if settings.get('reverse_route'):
-            raise FlypathSyncError('This mission uses a reversed route, which the plugin cannot edit. Disable Reverse route on the website first.')
-        style = settings.get('mapping_style', '2d')
-        if style not in ('2d', 'corridor'):
-            raise FlypathSyncError(
-                'This mission is a "%s" survey, which this plugin cannot plan. '
-                'Only 2D and corridor missions can be loaded.' % style)
-        corridor = style == 'corridor'
-
-        drone_name = registry.name_for_website_code(mission.get('drone_model'))
-        if drone_name is None or drone_name not in registry.names():
-            raise FlypathSyncError(
-                'This mission is planned for a drone this plugin does not '
-                'offer, so its settings would not carry over.')
-
-        capture = settings.get('capture_mode', 'semi')
-        if capture not in ('semi', 'full'):
-            raise FlypathSyncError(
-                'This mission uses a capture mode this plugin does not know '
-                '(%s).' % capture)
-        finish = flypath_sync.label_for_code(
-            flypath_sync.WEBSITE_FINISH_ACTIONS, settings.get('finish_action'))
-        rc_lost = flypath_sync.label_for_code(
-            flypath_sync.WEBSITE_RC_LOST_ACTIONS, settings.get('rc_lost_action'))
-        for label, code, value in (
-                ('finish action', settings.get('finish_action'), finish),
-                ('RC lost action', settings.get('rc_lost_action'), rc_lost)):
-            if code is not None and value is None:
-                raise FlypathSyncError(
-                    'This mission uses a %s this plugin does not offer (%s).'
-                    % (label, code))
-
-        points = mission.get('polygon') or []
-        needed = 2 if corridor else 3
-        if len(points) < needed:
-            raise FlypathSyncError(
-                'This mission has no %s yet — draw one on the website first, '
-                'or plan it here.'
-                % ('centre line' if corridor else 'survey area'))
-        try:
-            vertices = [QgsPointXY(float(lon), float(lat)) for lat, lon in points]
-        except (TypeError, ValueError):
-            raise FlypathSyncError('This mission\'s survey area could not be read.')
-
-        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
-        geom = (QgsGeometry.fromPolylineXY(vertices) if corridor
-                else QgsGeometry.fromPolygonXY([vertices]))
-        if (geom.isEmpty() or not geom.isGeosValid()
-                or (geom.length() <= 0 if corridor else geom.area() <= 0)):
-            raise FlypathSyncError('This mission has an invalid survey geometry.')
-
-        # ── Nothing above changed any state; from here the load applies. ──
-        # Restore Auto only after loading: intermediate control signals must
-        # not optimise the imported heading against the previous survey area.
-        self.autoDirectionBtn.setChecked(False)
-        self.missionTypeCombo.setCurrentText(
-            'Corridor Mapping' if corridor else '2D Mapping')
-        self.droneModelCombo.setCurrentText(drone_name)
-        (self.captureFullRadio if capture == 'full'
-         else self.captureSemiRadio).setChecked(True)
-        if settings.get('flight_path') in ('curved', 'straight'):
-            (self.pathCurvedRadio if settings['flight_path'] == 'curved'
-             else self.pathStraightRadio).setChecked(True)
-        if finish:
-            self.finishActionCombo.setCurrentText(finish)
-        if rc_lost:
-            self.rcLostActionCombo.setCurrentText(rc_lost)
-
-        # Spin boxes clamp anything outside their own range, so a value the
-        # website allows but this plugin does not lands at the nearest one it
-        # can fly. Every such change is collected and reported, so the pilot is
-        # never handed a plan quietly different from the one on the website.
-        adjusted = []
-        fields = [('altitude', self.altitudeSpin, settings.get('altitude')),
-                  ('speed', self.speedSpin, settings.get('speed')),
-                  ('side overlap', self.sideOverlapSpin, settings.get('side_overlap')),
-                  ('front overlap', self.frontOverlapSpin, settings.get('front_overlap')),
-                  ('margin', self.marginSpin, settings.get('margin')),
-                  ('direction', self.directionSpin, settings.get('direction')),
-                  ('terrain tolerance', self.terrainToleranceSpin,
-                   settings.get('terrain_tolerance')),
-                  ('max waypoints', self.maxWaypointsSpin, settings.get('split_max_wp'))]
-        if isinstance(settings.get('corridor_width'), (int, float)):
-            # The website's corridor_width is the full mapped width; the
-            # plugin's Buffer is the half-width each side.
-            fields.append(('buffer (half of the corridor width)', self.bufferSpin,
-                           float(settings['corridor_width']) / 2.0))
-        for label, widget, value in fields:
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                continue
-            bounded = max(widget.minimum(), min(widget.maximum(), value))
-            widget.setValue(type(widget.value())(bounded))
-            if abs(widget.value() - float(value)) > 1e-6:
-                adjusted.append('%s: %g -> %g' % (label, value, widget.value()))
-        self.crossHatchCheck.setChecked(bool(settings.get('cross_hatch')))
-        self.terrainFollowCheck.setChecked(bool(settings.get('terrain_follow')))
-
-        # A pulled mission is a standalone local copy, like a drawn one: it is
-        # not tied to any layer feature, so it uses the Draw source and the same
-        # construction path drawing does.
-        self.sourceDrawRadio.setChecked(True)
-        self._source_mode = 'draw'
-        self._apply_source_mode()
-
-        if corridor:
-            self._show_drawn_line(geom, wgs84)
-            self._set_survey_line(geom, wgs84)
-        else:
-            self._show_drawn_polygon(geom, wgs84)
-            self._set_survey_polygon(geom, wgs84)
-        # Geometry establishes the split range. An explicit saved choice must
-        # override battery defaults even when setValue would emit no signal.
-        self._split_overridden = True
-        split_count = settings.get('split_count', 1)
-        if settings.get('split_enabled') is False:
-            split_count = 1
-        if isinstance(split_count, (int, float)) and not isinstance(split_count, bool):
-            self.splitSpin.setValue(int(max(self.splitSpin.minimum(),
-                                           min(self.splitSpin.maximum(), split_count))))
-            if self.splitSpin.value() != split_count:
-                adjusted.append('split count: %g -> %g' % (split_count, self.splitSpin.value()))
-        self._on_param_changed()
-        self.autoDirectionBtn.setChecked(bool(settings.get('auto_direction')))
-        self._zoom_to_website_geometry(geom, wgs84)
-        return adjusted
-
-    def _zoom_to_website_geometry(self, geom, crs):
-        canvas = self.iface.mapCanvas()
-        transform = QgsCoordinateTransform(
-            crs, canvas.mapSettings().destinationCrs(), QgsProject.instance())
-        extent = transform.transformBoundingBox(geom.boundingBox())
-        # Pad both axes, including a straight corridor with zero width/height.
-        extent.grow(max(extent.width(), extent.height(), 1e-6) * 0.1)
-        canvas.setExtent(extent)
-        canvas.refresh()
 
     # ── Export ────────────────────────────────────────────────────────────
 
@@ -5027,12 +3509,6 @@ class FlyPathDialog(QWidget):
             self.exportBtn.setText('Export KMZ')
 
     # ── RC mission picker ──────────────────────────────────────────────────
-
-    # DJI mission UUID folder format: 8-4-4-4-12 hex characters
-    _UUID_RE = re.compile(
-        r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}'
-        r'-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-    )
 
     @staticmethod
     def _mission_display(mission):
@@ -5175,43 +3651,6 @@ class FlyPathDialog(QWidget):
             'again.'
         )
 
-    @staticmethod
-    def _find_waypoint_on_drives():
-        """
-        Look for the DJI waypoint folder on a lettered drive (SD card, mapped
-        or removable drive). Returns the waypoint folder path, or None.
-
-        This makes auto-detect work regardless of which letter the drive gets:
-        it checks every present fixed/removable drive for the fixed DJI path
-        rather than assuming a specific letter.
-        """
-        rel = os.path.join(*_RC_REL_PARTS)
-        roots = []
-        try:
-            import ctypes
-            k32 = ctypes.windll.kernel32
-            bitmask = k32.GetLogicalDrives()
-            for i in range(26):
-                if not (bitmask >> i) & 1:
-                    continue
-                root = chr(ord('A') + i) + ':\\'
-                # 2 = removable, 3 = fixed; skip optical/network/etc. to avoid
-                # slow probes or "insert disk" prompts.
-                if k32.GetDriveTypeW(ctypes.c_wchar_p(root)) in (2, 3):
-                    roots.append(root)
-        except Exception:
-            import string
-            roots = [c + ':\\' for c in string.ascii_uppercase
-                     if os.path.isdir(c + ':\\')]
-        for root in roots:
-            candidate = os.path.join(root, rel)
-            try:
-                if os.path.isdir(candidate):
-                    return candidate
-            except (OSError, ValueError):
-                continue
-        return None
-
     def _on_refresh_rc_missions(self):
         """Auto-detect the RC (removable drive or USB/MTP) and list missions."""
         QApplication.setOverrideCursor(_WaitCursor)
@@ -5220,13 +3659,13 @@ class FlyPathDialog(QWidget):
         drive_path = None
         try:
             # 1) Fast: a lettered/removable drive holding the DJI waypoint path.
-            drive_path = self._find_waypoint_on_drives()
+            drive_path = controller_storage.find_waypoint_on_drives()
             if drive_path:
-                status, missions = self._list_missions_from_dir(drive_path)
+                status, missions = controller_storage.list_missions_from_dir(drive_path)
                 wp_path, detail = drive_path, ''
             else:
                 # 2) The usual case: an MTP device connected over USB.
-                status, wp_path, missions, detail = self._list_rc_missions()
+                status, wp_path, missions, detail = controller_storage.list_rc_missions()
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -5267,7 +3706,7 @@ class FlyPathDialog(QWidget):
         Manual fallback: browse the Windows shell namespace (This PC, including
         the MTP RC and any drives) and pick the waypoint folder yourself.
         """
-        dlg = _RcFolderBrowser(self._list_shell_children, self)
+        dlg = _RcFolderBrowser(controller_storage.list_shell_children, self)
         if not dlg.exec():
             return
         parts = dlg.selected_parts()
@@ -5276,7 +3715,7 @@ class FlyPathDialog(QWidget):
 
         QApplication.setOverrideCursor(_WaitCursor)
         try:
-            status, missions = self._list_missions_at_path(parts)
+            status, missions = controller_storage.list_missions_at_path(parts)
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -5301,362 +3740,6 @@ class FlyPathDialog(QWidget):
                 'mission UUID folders).'
             )
 
-    def _list_shell_children(self, parts):
-        """Return the child folder names of a shell path (parts from This PC)."""
-        ps_exe = os.path.join(
-            os.environ.get('SystemRoot', r'C:\Windows'),
-            r'System32\WindowsPowerShell\v1.0\powershell.exe'
-        )
-        tmp_dir = tempfile.mkdtemp(prefix='flypath_')
-        try:
-            sp = os.path.join(tmp_dir, 'children.ps1')
-            with open(sp, 'w', encoding='utf-8') as fh:
-                fh.write(self._shell_children_script(parts))
-            try:
-                r = subprocess.run(  # nosec B603
-                    [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
-                     '-ExecutionPolicy', 'Bypass', '-File', sp],
-                    capture_output=True, text=True, timeout=40,
-                    creationflags=_NO_WINDOW, startupinfo=_STARTUPINFO
-                )
-            except Exception:
-                return []
-            return [ln[2:] for ln in r.stdout.splitlines() if ln.startswith('D|')]
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    @staticmethod
-    def _shell_children_script(parts):
-        """PowerShell: list immediate child folders of a shell path (This PC root)."""
-        arr = ', '.join("'" + p.replace("'", "''") + "'" for p in parts)
-        return (
-            "$ErrorActionPreference = 'SilentlyContinue'\n"
-            '$shell = New-Object -ComObject Shell.Application\n'
-            "$folder = $shell.Namespace('::{20D04FE0-3AEA-1069-A2D8-08002B30309D}')\n"
-            '$parts = @(' + arr + ')\n'
-            'foreach ($p in $parts) {\n'
-            '    $hit = $null\n'
-            '    foreach ($i in $folder.Items()) { if ($i.Name -eq $p) { $hit = $i; break } }\n'
-            '    if (-not $hit) { exit 1 }\n'
-            '    $folder = $hit.GetFolder\n'
-            '    if (-not $folder) { exit 1 }\n'
-            '}\n'
-            'foreach ($i in $folder.Items()) {\n'
-            '    if ($i.IsFolder) { Write-Output ("D|" + $i.Name) }\n'
-            '}\n'
-        )
-
-    def _list_missions_at_path(self, parts):
-        """
-        Navigate a chosen shell path and list its waypoint missions.
-        Returns (status, missions) with status 'ok' / 'no_mission' / 'error'.
-        """
-        ps_exe = os.path.join(
-            os.environ.get('SystemRoot', r'C:\Windows'),
-            r'System32\WindowsPowerShell\v1.0\powershell.exe'
-        )
-        tmp_dir = tempfile.mkdtemp(prefix='flypath_')
-        try:
-            sp = os.path.join(tmp_dir, 'list_at.ps1')
-            with open(sp, 'w', encoding='utf-8') as fh:
-                fh.write(self._missions_at_path_script(parts, tmp_dir))
-            try:
-                r = subprocess.run(  # nosec B603
-                    [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
-                     '-ExecutionPolicy', 'Bypass', '-File', sp],
-                    capture_output=True, text=True, timeout=120,
-                    creationflags=_NO_WINDOW, startupinfo=_STARTUPINFO
-                )
-            except Exception:
-                return ('error', [])
-            if r.returncode != 0:
-                return ('error', [])
-            uuids = [ln[len('UUID='):].strip()
-                     for ln in r.stdout.splitlines() if ln.startswith('UUID=')]
-            missions = []
-            for u in uuids:
-                create_ms, n_wp, wpts = self._read_kmz_meta(
-                    os.path.join(tmp_dir, u + '.kmz'))
-                missions.append({
-                    'uuid': u, 'create_ms': create_ms,
-                    'date_str': self._fmt_ms(create_ms), 'n_wp': n_wp,
-                    'waypoints': wpts,
-                })
-            missions.sort(key=lambda m: m['create_ms'] or 0, reverse=True)
-            return ('ok' if missions else 'no_mission', missions)
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    @staticmethod
-    def _missions_at_path_script(parts, tmp_dir):
-        """PowerShell: navigate to a chosen folder, list missions, copy KMZs to tmp_dir."""
-        arr = ', '.join("'" + p.replace("'", "''") + "'" for p in parts)
-        dest = tmp_dir.replace("'", "''")
-        return (
-            "$ErrorActionPreference = 'SilentlyContinue'\n"
-            '$shell = New-Object -ComObject Shell.Application\n'
-            "$folder = $shell.Namespace('::{20D04FE0-3AEA-1069-A2D8-08002B30309D}')\n"
-            '$uuidPattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
-            '[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"\n'
-            "$dest = $shell.Namespace('" + dest + "')\n"
-            '$parts = @(' + arr + ')\n'
-            'foreach ($p in $parts) {\n'
-            '    $hit = $null\n'
-            '    foreach ($i in $folder.Items()) { if ($i.Name -eq $p) { $hit = $i; break } }\n'
-            '    if (-not $hit) { exit 1 }\n'
-            '    $folder = $hit.GetFolder\n'
-            '    if (-not $folder) { exit 1 }\n'
-            '}\n'
-            '$wp = $folder\n'
-            '$preview = @{}; $hasPreview = $false\n'
-            'foreach ($c in $wp.Items()) {\n'
-            "    if ($c.IsFolder -and $c.Name -eq 'map_preview') {\n"
-            '        $mpf = $c.GetFolder\n'
-            '        if ($mpf) { $hasPreview = $true; foreach ($pv in $mpf.Items()) { if ($pv.IsFolder) { $preview[$pv.Name] = $true } } }\n'
-            '    }\n'
-            '}\n'
-            'foreach ($item in $wp.Items()) {\n'
-            '    if ($item.IsFolder -and $item.Name -match $uuidPattern) {\n'
-            '        if ($hasPreview -and -not $preview.ContainsKey($item.Name)) { continue }\n'
-            "        Write-Output ('UUID=' + $item.Name)\n"
-            '        $mf = $item.GetFolder\n'
-            '        foreach ($f in $mf.Items()) {\n'
-            '            if (-not $f.IsFolder) { $dest.CopyHere($f, 0x10); Start-Sleep -Milliseconds 1500 }\n'
-            '        }\n'
-            '    }\n'
-            '}\n'
-            'exit 0\n'
-        )
-
-    def _list_missions_from_dir(self, wp_dir):
-        """
-        Scan a real filesystem waypoint folder (SD card, mapped drive, copy).
-
-        Returns (status, missions) with status 'ok' / 'no_mission' / 'error'.
-        Each mission dict: {uuid, create_ms, date_str, n_wp}
-        """
-        try:
-            if not os.path.isdir(wp_dir):
-                return ('error', [])
-            mp_dir  = os.path.join(wp_dir, 'map_preview')
-            has_mp  = os.path.isdir(mp_dir)
-            preview = set()
-            if has_mp:
-                preview = {d for d in os.listdir(mp_dir)
-                           if os.path.isdir(os.path.join(mp_dir, d))}
-            missions = []
-            for d in os.listdir(wp_dir):
-                full = os.path.join(wp_dir, d)
-                if not (os.path.isdir(full) and self._UUID_RE.match(d)):
-                    continue
-                # Only missions DJI Fly tracks (those with a map_preview entry);
-                # if there is no map_preview folder at all, list everything.
-                if has_mp and d not in preview:
-                    continue
-                kmz = os.path.join(full, d + '.kmz')
-                create_ms, n_wp, wpts = (self._read_kmz_meta(kmz)
-                                         if os.path.exists(kmz) else (0, 0, []))
-                missions.append({
-                    'uuid': d, 'create_ms': create_ms,
-                    'date_str': self._fmt_ms(create_ms), 'n_wp': n_wp,
-                    'waypoints': wpts,
-                })
-            missions.sort(key=lambda m: m['create_ms'] or 0, reverse=True)
-            return ('ok' if missions else 'no_mission', missions)
-        except Exception:
-            return ('error', [])
-
-    def _list_rc_missions(self):
-        """
-        Scan the connected RC and return all waypoint missions.
-
-        Returns (status, waypoint_path, missions, detail):
-          status 'ok'            -> missions is a list of dicts (newest first)
-          status 'no_mission'    -> an RC is connected but has no missions
-          status 'not_connected' -> no DJI RC detected
-          status 'error'         -> scan failed; detail holds the message
-        Each mission dict: {uuid, create_ms, date_str, n_wp}
-        """
-        ps_exe = os.path.join(
-            os.environ.get('SystemRoot', r'C:\Windows'),
-            r'System32\WindowsPowerShell\v1.0\powershell.exe'
-        )
-        tmp_dir = tempfile.mkdtemp(prefix='flypath_')
-        try:
-            list_ps = os.path.join(tmp_dir, 'list_rc.ps1')
-            with open(list_ps, 'w', encoding='utf-8') as fh:
-                fh.write(self._rc_list_script(tmp_dir))
-            try:
-                r = subprocess.run(  # nosec B603
-                    [ps_exe, '-NoProfile', '-NonInteractive', '-STA',
-                     '-ExecutionPolicy', 'Bypass', '-File', list_ps],
-                    capture_output=True, text=True, timeout=120,
-                    creationflags=_NO_WINDOW, startupinfo=_STARTUPINFO
-                )
-            except subprocess.TimeoutExpired:
-                return ('error', None, [], 'Timed out while reading the RC.')
-            except Exception as exc:
-                return ('error', None, [], f'PowerShell error: {exc}')
-
-            if r.returncode == _RC_EXIT_DEVICE_NO_WP:
-                return ('no_mission', None, [], '')
-            if r.returncode == _RC_EXIT_NONE:
-                return ('not_connected', None, [], '')
-            if r.returncode != _RC_EXIT_FOUND:
-                return ('error', None, [],
-                        r.stderr.strip() or f'Scan failed (exit {r.returncode}).')
-
-            wp_path = None
-            uuids = []
-            for line in r.stdout.splitlines():
-                line = line.strip()
-                if line.startswith('PATH='):
-                    wp_path = line[len('PATH='):]
-                elif line.startswith('UUID='):
-                    uuids.append(line[len('UUID='):])
-
-            missions = []
-            for u in uuids:
-                kmz = os.path.join(tmp_dir, u + '.kmz')
-                create_ms, n_wp, wpts = self._read_kmz_meta(kmz)
-                missions.append({
-                    'uuid': u,
-                    'create_ms': create_ms,
-                    'date_str': self._fmt_ms(create_ms),
-                    'n_wp': n_wp,
-                    'waypoints': wpts,
-                })
-            missions.sort(key=lambda m: m['create_ms'] or 0, reverse=True)
-            if not missions:
-                return ('no_mission', wp_path, [], '')
-            return ('ok', wp_path, missions, '')
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    @staticmethod
-    def _rc_list_script(tmp_dir):
-        """PowerShell: list every RC mission UUID and copy each KMZ to tmp_dir."""
-        rel = ', '.join("'" + p + "'" for p in _RC_REL_PARTS)
-        rel_join = '\\'.join(_RC_REL_PARTS)
-        dest = tmp_dir.replace("'", "''")   # single-quoted PS string
-        return (
-            "$ErrorActionPreference = 'SilentlyContinue'\n"
-            '$shell = New-Object -ComObject Shell.Application\n'
-            "$thisPC = $shell.Namespace('::{20D04FE0-3AEA-1069-A2D8-08002B30309D}')\n"
-            '$rel = @(' + rel + ')\n'
-            '$uuidPattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
-            '[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"\n'
-            "$dest = $shell.Namespace('" + dest + "')\n"
-            '$deviceSeen = $false\n'
-            'function Nav($folder, $parts) {\n'
-            '    foreach ($part in $parts) {\n'
-            '        $hit = $null\n'
-            '        foreach ($item in $folder.Items()) {\n'
-            '            if ($item.Name -eq $part) { $hit = $item; break }\n'
-            '        }\n'
-            '        if (-not $hit) { return $null }\n'
-            '        $nf = $hit.GetFolder\n'
-            '        if (-not $nf) { return $null }\n'
-            '        $folder = $nf\n'
-            '    }\n'
-            '    return $folder\n'
-            '}\n'
-            'foreach ($device in $thisPC.Items()) {\n'
-            '    if (-not $device.IsFolder) { continue }\n'
-            "    if ($device.Path -match '^[A-Za-z]:\\\\?$') { continue }\n"
-            '    $devFolder = $device.GetFolder\n'
-            '    if (-not $devFolder) { continue }\n'
-            "    if ($device.Name -match 'DJI|RC') { $deviceSeen = $true }\n"
-            '    $roots = New-Object System.Collections.ArrayList\n'
-            '    [void]$roots.Add(@($device.Name, $devFolder))\n'
-            '    foreach ($vol in $devFolder.Items()) {\n'
-            '        if ($vol.IsFolder) {\n'
-            '            $vf = $vol.GetFolder\n'
-            '            if ($vf) { [void]$roots.Add(@(($device.Name + "\\" + $vol.Name), $vf)) }\n'
-            '        }\n'
-            '    }\n'
-            '    foreach ($root in $roots) {\n'
-            '        $wp = Nav $root[1] $rel\n'
-            '        if ($wp) {\n'
-            '            $deviceSeen = $true\n'
-            "            Write-Output ('PATH=' + $root[0] + '\\" + rel_join + "')\n"
-            # DJI Fly keeps a map_preview/<UUID> thumbnail folder for every
-            # mission it actually tracks. Build that set so we only report
-            # missions DJI Fly knows about, not folders pasted in manually.
-            '            $preview = @{}\n'
-            '            $hasPreviewDir = $false\n'
-            '            $mp = $null\n'
-            "            foreach ($c in $wp.Items()) { if ($c.IsFolder -and $c.Name -eq 'map_preview') { $mp = $c; break } }\n"
-            '            if ($mp) {\n'
-            '                $mpf = $mp.GetFolder\n'
-            '                if ($mpf) {\n'
-            '                    $hasPreviewDir = $true\n'
-            '                    foreach ($pv in $mpf.Items()) { if ($pv.IsFolder) { $preview[$pv.Name] = $true } }\n'
-            '                }\n'
-            '            }\n'
-            '            foreach ($item in $wp.Items()) {\n'
-            '                if ($item.IsFolder -and $item.Name -match $uuidPattern) {\n'
-            # Skip missions with no map_preview entry (not known to DJI Fly).
-            # If map_preview is absent entirely, fall back to listing all.
-            '                    if ($hasPreviewDir -and -not $preview.ContainsKey($item.Name)) { continue }\n'
-            "                    Write-Output ('UUID=' + $item.Name)\n"
-            '                    $mf = $item.GetFolder\n'
-            '                    foreach ($f in $mf.Items()) {\n'
-            '                        if (-not $f.IsFolder) {\n'
-            '                            $dest.CopyHere($f, 0x10)\n'
-            '                            Start-Sleep -Milliseconds 1500\n'
-            '                        }\n'
-            '                    }\n'
-            '                }\n'
-            '            }\n'
-            f'            exit {_RC_EXIT_FOUND}\n'
-            '        }\n'
-            '    }\n'
-            '}\n'
-            f'if ($deviceSeen) {{ exit {_RC_EXIT_DEVICE_NO_WP} }}\n'
-            f'exit {_RC_EXIT_NONE}\n'
-        )
-
-    @staticmethod
-    def _read_kmz_meta(kmz_path):
-        """
-        Read (createTime_ms, waypoint_count, waypoints) from a mission KMZ.
-        waypoints is a list of (lon, lat) parsed from the wayline Placemarks.
-        Returns (0, 0, []) on failure.
-        """
-        try:
-            with zipfile.ZipFile(kmz_path) as z:
-                template = z.read('wpmz/template.kml').decode('utf-8', 'replace')
-                try:
-                    waylines = z.read('wpmz/waylines.wpml').decode('utf-8', 'replace')
-                except KeyError:
-                    waylines = ''
-            m = re.search(r'<wpml:createTime>(\d+)</wpml:createTime>', template)
-            create_ms = int(m.group(1)) if m else 0
-            n_wp = len(re.findall(r'<wpml:index>', waylines))
-            waypoints = []
-            for lon, lat in re.findall(
-                    r'<coordinates>\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)', waylines):
-                try:
-                    waypoints.append((float(lon), float(lat)))
-                except ValueError:
-                    pass
-            return create_ms, n_wp, waypoints
-        except Exception:
-            return 0, 0, []
-
-    @staticmethod
-    def _fmt_ms(create_ms):
-        """Format a DJI createTime (epoch ms) as the date DJI Fly shows."""
-        if not create_ms:
-            return 'unknown date'
-        try:
-            return datetime.datetime.fromtimestamp(
-                create_ms / 1000
-            ).strftime('%Y-%m-%d %H:%M:%S')
-        except Exception:
-            return 'unknown date'
-
     def _open_in_explorer(self, filepath):
         """Open File Explorer with the exported file selected."""
         explorer = os.path.join(
@@ -5669,42 +3752,25 @@ class FlyPathDialog(QWidget):
         except OSError:
             pass
 
-    def _write_mission_kmz(self, filepath, waypoints, mission, create_time_ms=None,
-                           heights=None):
-        """Write the KMZ file using current UI parameter values.
-
-        Builds the full MissionSpec; the consumer writer ignores the enterprise
-        fields (polygon, overlaps, direction, margin) and vice versa. `heights`
-        (terrain follow) is a per-waypoint executeHeight list or None.
-
-        The Launch Offset is subtracted from the written heights only (the single
-        altitude and, when present, every terrain-follow executeHeight), so a
-        raised launch spot keeps the real height above ground on plan. The
-        planning altitude that drives GSD, overlap and the flight lines is
-        untouched. This runs per mission, so every split mission gets it too, for
-        both 2D and corridor missions (they share this writer)."""
-        drone = registry.get(self.droneModelCombo.currentText())
-        offset = self.launchOffsetSpin.value()
-        spec = MissionSpec(
-            waypoints=waypoints,
-            altitude_m=self.altitudeSpin.value() - offset,
+    def _export_settings(self):
+        """Snapshot export inputs from widgets before any destination work."""
+        return mission_export.ExportSettings(
+            drone=registry.get(self.droneModelCombo.currentText()),
+            altitude_m=self.altitudeSpin.value(),
             speed_ms=self.speedSpin.value(),
             finish_action=self.finishActionCombo.currentText(),
             rc_lost_action=self.rcLostActionCombo.currentText(),
             gimbal_pitch=self.gimbalAngleSpin.value(),
-            mission_name=mission,
-            create_time_ms=create_time_ms,
-            polygon=self._survey_polygon_wgs84(),
+            polygon=survey_geometry.polygon_vertices(
+                self._survey_polygon, self._survey_polygon_crs),
             side_overlap=self.sideOverlapSpin.value() / 100.0,
             front_overlap=self._front_overlap_fraction(),
             direction_deg=self.directionSpin.value(),
             margin_m=self.marginSpin.value(),
             capture_mode=self._mission_type(),
-            heights=([h - offset for h in heights]
-                     if heights is not None else None),
             curved_path=self._path_curved(),
+            launch_offset_m=self.launchOffsetSpin.value(),
         )
-        write_mission(drone, spec, filepath)
 
     def _missions_with_heights(self, waypoints, elevations):
         """Split into missions and return [(waypoints, flight_heights, ground_elevs)].
@@ -5731,49 +3797,6 @@ class FlyPathDialog(QWidget):
                         part_elevs))
         return out
 
-    def _survey_polygon_wgs84(self):
-        """Survey boundary as [(lon, lat), ...] in WGS84, unclosed (DJI drops the
-        repeated first vertex). None if no polygon is defined."""
-        if self._survey_polygon is None or self._survey_polygon_crs is None:
-            return None
-        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
-        xform = QgsCoordinateTransform(self._survey_polygon_crs, wgs84,
-                                       QgsProject.instance())
-        g = QgsGeometry(self._survey_polygon)
-        g.transform(xform)
-        # asPolygon()/asMultiPolygon() raise TypeError on the wrong geometry
-        # type in PyQGIS (both QGIS 3 and 4), so branch on isMultipart(). For a
-        # multi-part area this returns the first part's outer ring, which is all
-        # this boundary hint needs.
-        if g.isMultipart():
-            parts = g.asMultiPolygon()
-            ring = parts[0][0] if parts and parts[0] else None
-        else:
-            poly = g.asPolygon()
-            ring = poly[0] if poly else None
-        if not ring:
-            return None
-        coords = [(pt.x(), pt.y()) for pt in ring]
-        if len(coords) > 1 and coords[0] == coords[-1]:
-            coords = coords[:-1]
-        return coords
-
-    def _survey_line_wgs84(self):
-        """Corridor centre line as [(lon, lat), ...] in WGS84, or None. The
-        website stores one line per mission, so a multi-part centre line is
-        refused rather than joined into a line the drone never flies."""
-        parts = self._corridor_line_parts()
-        if not parts or self._survey_line_crs is None:
-            return None
-        if len(parts) > 1:
-            raise FlypathSyncError(
-                'FlyPath stores one corridor centre line, but this one has %d '
-                'separate lines. Send them as separate missions.' % len(parts))
-        wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
-        xform = QgsCoordinateTransform(self._survey_line_crs, wgs84,
-                                       QgsProject.instance())
-        return [(pt.x(), pt.y()) for pt in (xform.transform(v) for v in parts[0])]
-
     def _front_overlap_fraction(self):
         """Current along-track (front) overlap as a fraction 0..0.99.
 
@@ -5797,7 +3820,32 @@ class FlyPathDialog(QWidget):
     def _on_export(self):
         if not self._has_survey_area():
             return
+        planning_issue = self._planning.export_issue()
+        if planning_issue == 'unsupported':
+            QMessageBox.warning(
+                self, 'Export Blocked',
+                'This saved plan uses an unsupported planning version. Update '
+                'FlyPath before regenerating or exporting it.')
+            return
+        if planning_issue == 'regeneration_required':
+            QMessageBox.warning(
+                self, 'Regeneration Required',
+                'Mission settings changed, but the saved route is still preserved. '
+                'Choose Preview to regenerate it before export.')
+            return
+        if self.terrainFollowCheck.isChecked() and self._terrain_failed:
+            QMessageBox.warning(
+                self, 'Terrain Export Blocked',
+                'Terrain data could not be loaded. Toggle Terrain Follow to retry '
+                'before exporting; FlyPath will not substitute a flat mission.')
+            return
+        if planning_issue == 'validation':
+            errors = '\n'.join('• ' + error['message']
+                               for error in self._planning.result['validation']['errors'])
+            QMessageBox.warning(self, 'Export Blocked', errors)
+            return
         mission = 'FlyPath Mission'
+        flight_actions = []
 
         # ── Resolve waypoints first (needed for both destinations) ────────
         if self._waypoints and self._shot_spacing_m:
@@ -5808,6 +3856,12 @@ class FlyPathDialog(QWidget):
             if result is None:
                 return
             waypoints, shot_spacing_m = result
+            if self.terrainFollowCheck.isChecked() and self._terrain_failed:
+                QMessageBox.warning(
+                    self, 'Terrain Export Blocked',
+                    'Terrain data could not be loaded during mission generation. '
+                    'FlyPath will not substitute a flat mission.')
+                return
 
         drone = registry.get(self.droneModelCombo.currentText())
 
@@ -5815,6 +3869,13 @@ class FlyPathDialog(QWidget):
         # as a single file and imported in Pilot 2. Splitting and the DJI Fly RC
         # transfer do not apply to them.
         if drone.category == 'enterprise':
+            if self._planning.result:
+                QMessageBox.warning(
+                    self, 'Export Blocked',
+                    'DJI Pilot 2 rebuilds mapping routes and cannot serialize this '
+                    'shared engine result exactly. Enterprise export remains '
+                    'available for legacy terrain and corridor plans.')
+                return
             if self.destCombo.currentData() == 'rc':
                 QMessageBox.information(
                     self, 'Enterprise Mission',
@@ -5827,12 +3888,30 @@ class FlyPathDialog(QWidget):
             return
 
         if self._mission_kind() == 'corridor':
-            missions_h = self._corridor_missions_with_heights()
+            if (self._missions and len(self._preview_heights) == len(self._missions)
+                    and len(self._preview_ground) == len(self._missions)):
+                missions_h = list(zip(self._missions, self._preview_heights,
+                                      self._preview_ground))
+            else:
+                missions_h = self._corridor_missions_with_heights()
             shot_spacing_m = self._corridor_shot_spacing()
             if not missions_h:
                 return
+        elif self._planning.result:
+            consumed = planning_adapter.consume_result(
+                self._planning.request, self._planning.result,
+                legacy_waypoints=[[lat, lon] for lon, lat in self._waypoints])
+            missions_h = [(flight['waypoints'], None, None) for flight in consumed]
+            flight_actions = [flight['actions'] for flight in consumed]
         else:
             missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
+
+        if self.terrainFollowCheck.isChecked() and self._terrain_failed:
+            QMessageBox.warning(
+                self, 'Terrain Export Blocked',
+                'Terrain data could not be loaded while preparing the mission. '
+                'FlyPath will not substitute a flat mission.')
+            return
 
         if self.destCombo.currentData() == 'rc':
             # The RC replaces one mission slot, so send just the chosen part.
@@ -5842,12 +3921,14 @@ class FlyPathDialog(QWidget):
                     part = 0
                 part_wps, part_heights, _ = missions_h[part]
                 part_name = f'{mission} {part + 1} of {len(missions_h)}'
-                self._export_rc(part_name, part_wps, shot_spacing_m, part_heights)
+                self._export_rc(part_name, part_wps, shot_spacing_m, part_heights,
+                                flight_actions[part] if flight_actions else None)
             else:
                 part_wps, part_heights, _ = missions_h[0]
-                self._export_rc(mission, part_wps, shot_spacing_m, part_heights)
+                self._export_rc(mission, part_wps, shot_spacing_m, part_heights,
+                                flight_actions[0] if flight_actions else None)
         else:
-            self._export_local(mission, missions_h)
+            self._export_local(mission, missions_h, flight_actions)
 
     def _export_local_enterprise(self, mission, waypoints):
         """Save a single enterprise (DJI Pilot 2) mapping2d KMZ from the survey
@@ -5876,7 +3957,8 @@ class FlyPathDialog(QWidget):
             return
 
         try:
-            self._write_mission_kmz(filepath, waypoints, mission)
+            mission_export.write_kmz(
+                filepath, self._export_settings(), waypoints, mission)
         except Exception as exc:
             QMessageBox.critical(self, 'Export Failed', str(exc))
             return
@@ -5894,7 +3976,7 @@ class FlyPathDialog(QWidget):
         if reply == _MB_YES:
             self._open_in_explorer(filepath)
 
-    def _export_local(self, mission, missions):
+    def _export_local(self, mission, missions, actions=None):
         """Save the mission (or each split mission) as a .kmz in the folder.
         `missions` is a list of (waypoints, heights, ground) from
         _missions_with_heights; only the flight heights are written."""
@@ -5922,33 +4004,18 @@ class FlyPathDialog(QWidget):
             return
 
         n = len(missions)
-        base, ext = os.path.splitext(filepath)
-        ext = ext or '.kmz'
-        # One file when unsplit; otherwise name them <base>_1_of_N … so they
-        # stay in order and never overwrite one another.
-        if n <= 1:
-            wps0, heights0, _ = missions[0]
-            targets = [(filepath, wps0, mission, heights0)]
-        else:
-            width = len(str(n))
-            targets = []
-            for i, (wps, heights, _) in enumerate(missions, start=1):
-                path = f'{base}_{str(i).zfill(width)}_of_{n}{ext}'
-                targets.append((path, wps, f'{mission} {i} of {n}', heights))
-
-        written = []
         try:
-            for path, wps, name, heights in targets:
-                self._write_mission_kmz(path, wps, name, heights=heights)
-                written.append(path)
+            targets = mission_export.write_local(
+                filepath, mission, missions, self._export_settings(), actions)
         except Exception as exc:
             QMessageBox.critical(self, 'Export Failed', str(exc))
             return
+        written = [target[0] for target in targets]
 
         QSettings('FlyPath', 'FlyPath').setValue(
             'local_export_dir', os.path.dirname(filepath)
         )
-        total_wp = sum(len(wps) for _, wps, _, _ in targets)
+        total_wp = sum(len(wps) for _, wps, _, _, _ in targets)
         if n <= 1:
             saved_text = f'Saved to:\n{written[0]}'
         else:
@@ -5967,7 +4034,8 @@ class FlyPathDialog(QWidget):
         if reply == _MB_YES:
             self._open_in_explorer(written[0])
 
-    def _export_rc(self, mission, waypoints, shot_spacing_m, heights=None):
+    def _export_rc(self, mission, waypoints, shot_spacing_m, heights=None,
+                   actions=None):
         """Replace the selected mission on the connected RC."""
         target = self.rcMissionCombo.currentData()
         if not target or not self._rc_waypoint_path:
@@ -5986,24 +4054,23 @@ class FlyPathDialog(QWidget):
         # Keep the mission's original createTime so its date still matches
         # DJI Fly (DJI keeps the name; only the waypoints change).
         create_ms = target.get('create_ms') or None
+        is_mtp = not os.path.isdir(self._rc_waypoint_path)
 
-        if os.path.isdir(self._rc_waypoint_path):
-            # Manually located folder (SD card / mapped drive / local copy):
-            # a plain file write, no MTP transfer needed.
-            ok, detail = self._export_to_folder_rc(target['uuid'], mission,
-                                                   waypoints, create_ms, heights)
-        else:
+        if is_mtp:
             # Auto-detected MTP device path: copy over USB via Windows Shell.
             QApplication.setOverrideCursor(_WaitCursor)
             self._set_info('Sending the mission to the RC, please wait…')
             QApplication.processEvents()
+        try:
             try:
-                ok, detail = self._export_to_mtp_rc(
-                    self._rc_waypoint_path, mission, waypoints, shot_spacing_m,
-                    target_uuid=target['uuid'], create_time_ms=create_ms,
-                    heights=heights,
-                )
-            finally:
+                ok, detail = mission_export.replace_controller(
+                    self._rc_waypoint_path, target['uuid'], self._export_settings(),
+                    waypoints, mission, create_time_ms=create_ms, heights=heights,
+                    actions=actions, mtp_copy=self._copy_kmz_to_mtp)
+            except Exception as exc:
+                ok, detail = False, str(exc)
+        finally:
+            if is_mtp:
                 QApplication.restoreOverrideCursor()
                 self._set_info(_INFO_IDLE)
 
@@ -6036,39 +4103,8 @@ class FlyPathDialog(QWidget):
         else:
             QMessageBox.critical(self, 'RC Export Failed', detail)
 
-    def _export_to_folder_rc(self, uuid, mission, waypoints, create_time_ms=None,
-                             heights=None):
-        """Replace a mission inside a real filesystem waypoint folder.
-
-        Returns (success: bool, detail: str) matching _export_to_mtp_rc.
-        """
-        folder = os.path.join(self._rc_waypoint_path, uuid)
-        if not os.path.isdir(folder):
-            return False, f'Mission folder not found:\n{folder}'
-        kmz = os.path.join(folder, uuid + '.kmz')
-        try:
-            self._write_mission_kmz(kmz, waypoints, mission, create_time_ms,
-                                    heights=heights)
-        except Exception as exc:
-            return False, str(exc)
-        return True, uuid
-
-    def _export_to_mtp_rc(self, rc_dir, mission, waypoints, shot_spacing_m,
-                          target_uuid=None, create_time_ms=None, heights=None):
-        """
-        Export the KMZ directly to a DJI RC connected as an MTP device.
-
-        Shell.Namespace() cannot resolve 'This PC\\...' paths directly.
-        Instead we navigate step-by-step from the 'This PC' CLSID using
-        GetFolder, which works with MTP virtual filesystem items.
-
-        If target_uuid is given, that mission is replaced directly; otherwise
-        the most recently modified mission folder is used.
-
-        Returns (success: bool, detail: str)
-          success=True  → detail is the UUID that was replaced
-          success=False → detail is a human-readable error message
-        """
+    def _copy_kmz_to_mtp(self, rc_dir, uuid_name, tmp_kmz, tmp_dir):
+        """Copy an assembled KMZ to its selected MTP mission folder."""
         ps_exe = os.path.join(
             os.environ.get('SystemRoot', r'C:\Windows'),
             r'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -6080,26 +4116,7 @@ class FlyPathDialog(QWidget):
         ps_parts = ', '.join("'" + p.replace("'", "''") + "'" for p in parts)
         nav      = self._mtp_nav_fragment(ps_parts)
 
-        tmp_dir = tempfile.mkdtemp(prefix='flypath_')
-        try:
-            if target_uuid:
-                # Picker already chose the mission; the copy step verifies it exists.
-                uuid_name = target_uuid
-            else:
-                uuid_name, err = self._mtp_find_uuid(ps_exe, nav, tmp_dir, rc_dir)
-                if uuid_name is None:
-                    return False, err
-
-            tmp_kmz = os.path.join(tmp_dir, uuid_name + '.kmz')
-            try:
-                self._write_mission_kmz(tmp_kmz, waypoints, mission, create_time_ms,
-                                        heights=heights)
-            except Exception as exc:
-                return False, f'Could not write KMZ: {exc}'
-
-            return self._mtp_copy_kmz(ps_exe, nav, tmp_dir, uuid_name, tmp_kmz)
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+        return self._mtp_copy_kmz(ps_exe, nav, tmp_dir, uuid_name, tmp_kmz)
 
     @staticmethod
     def _mtp_nav_fragment(ps_parts):
@@ -6124,56 +4141,6 @@ class FlyPathDialog(QWidget):
             '    $folder = $next\n'
             '}\n'
         )
-
-    @staticmethod
-    def _mtp_find_uuid(ps_exe, nav, tmp_dir, rc_dir):
-        """
-        Run Script 1: navigate to waypoint folder and return the latest UUID folder name.
-
-        Returns (uuid_name, None) on success, or (None, error_message) on failure.
-        """
-        find_ps = os.path.join(tmp_dir, 'find_uuid.ps1')
-        with open(find_ps, 'w', encoding='utf-8') as fh:
-            fh.write(
-                nav +
-                '$uuidPattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"\n'
-                '$latest = $null; $latestDate = [DateTime]::MinValue\n'
-                'foreach ($item in $folder.Items()) {\n'
-                '    if ($item.IsFolder -and $item.Name -match $uuidPattern -and $item.ModifyDate -gt $latestDate) {\n'
-                '        $latestDate = $item.ModifyDate; $latest = $item\n'
-                '    }\n'
-                '}\n'
-                f'if (-not $latest) {{ exit {_MTP_EXIT_NO_UUID} }}\n'
-                'Write-Output $latest.Name\n'
-            )
-
-        try:
-            r = subprocess.run(  # nosec B603
-                [ps_exe, '-NoProfile', '-NonInteractive',
-                 '-ExecutionPolicy', 'Bypass', '-File', find_ps],
-                capture_output=True, text=True, timeout=30,
-                creationflags=_NO_WINDOW, startupinfo=_STARTUPINFO
-            )
-        except subprocess.TimeoutExpired:
-            return None, 'Timed out reading the RC waypoint folder.\nCheck the RC is connected via USB.'
-        except Exception as exc:
-            return None, f'PowerShell error: {exc}'
-
-        if r.returncode == _MTP_EXIT_NAV_FAIL:
-            return None, (
-                'Could not navigate to the RC waypoint folder.\n\n'
-                f'Path used:\n{rc_dir}\n\n'
-                'Check that the RC is connected via USB and the path is correct.\n\n'
-                f'Details:\n{r.stderr.strip()}'
-            )
-        if r.returncode == _MTP_EXIT_NO_UUID or not r.stdout.strip():
-            return None, (
-                'No valid mission folder found on the RC.\n\n'
-                'Open DJI Fly on the RC, create a waypoint mission '
-                '(even a 3-point dummy), then export again.\n\n'
-                'FlyPath only replaces folders with a valid DJI UUID name.'
-            )
-        return r.stdout.strip().splitlines()[0].strip(), None
 
     @staticmethod
     def _mtp_copy_kmz(ps_exe, nav, tmp_dir, uuid_name, tmp_kmz):
@@ -6234,14 +4201,8 @@ class FlyPathDialog(QWidget):
         self._disconnect_layer_signals()
         self._remove_survey_area_layer()
         self._on_clear_preview(reset_area=False)
-        # Belt-and-suspenders: remove any remaining flypath_internal layers
-        # (e.g. if the user moved the panel or state got out of sync)
-        to_remove = [
-            lid for lid, layer in QgsProject.instance().mapLayers().items()
-            if layer.customProperty('flypath_internal')
-        ]
-        for lid in to_remove:
-            QgsProject.instance().removeMapLayer(lid)
+        # Belt-and-suspenders cleanup if panel state got out of sync.
+        preview_layers.remove_stale()
         try:
             QgsProject.instance().layersAdded.disconnect(self._refresh_layer_combo)
             QgsProject.instance().layersRemoved.disconnect(self._refresh_layer_combo)
@@ -6304,6 +4265,12 @@ class FlyPathDialog(QWidget):
         self._gen_elevations = None
         if self._mission_kind() == 'corridor':
             return self._generate_corridor_waypoints()
+        if self._uses_shared_planning():
+            if self._plan_shared(silent=False) is None:
+                return None
+            return list(self._waypoints), self._shot_spacing_m
+        if self.autoDirectionBtn.isChecked():
+            self._on_auto_direction()
         drone = self.droneModelCombo.currentText()
         if not registry.has(drone):
             return None
