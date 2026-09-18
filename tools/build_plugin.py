@@ -27,7 +27,8 @@ def _include(relative):
 
 def _tracked_files():
     output = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=ROOT, check=True, capture_output=True,
+        ["git", "-c", f"safe.directory={ROOT}", "ls-files", "-z"],
+        cwd=ROOT, check=True, capture_output=True,
     ).stdout
     files = {Path(value.decode()) for value in output.split(b"\0") if value}
     return sorted(path for path in files if _include(path) and (ROOT / path).is_file())

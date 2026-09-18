@@ -4,11 +4,12 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.vendor_engine import _check_package, _replace_package
-from tools.build_plugin import _include
+from tools.build_plugin import ROOT as PLUGIN_ROOT, _include, _tracked_files
 
 
 def test_replace_and_verify_package():
@@ -35,6 +36,16 @@ def test_replace_and_verify_package():
     assert _include(Path("flypath_engine/grid.py"))
     assert not _include(Path("AGENTS.md"))
     assert not _include(Path("tests/test_grid.py"))
+
+
+def test_packaging_trusts_only_its_repository():
+    with patch("tools.build_plugin.subprocess.run") as run:
+        run.return_value.stdout = b"README.md\0"
+        assert _tracked_files() == [Path("README.md")]
+    run.assert_called_once_with(
+        ["git", "-c", f"safe.directory={PLUGIN_ROOT}", "ls-files", "-z"],
+        cwd=PLUGIN_ROOT, check=True, capture_output=True,
+    )
 
 
 if __name__ == "__main__":
