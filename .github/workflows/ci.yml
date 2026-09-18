@@ -58,12 +58,9 @@ jobs:
       - name: Test ZIP in official QGIS runtime
         shell: bash
         run: |
-          docker run --detach --name qgis-runtime \
+          docker run --rm \
             --volume "$GITHUB_WORKSPACE:/tests_directory" \
-            --env DISPLAY=:99 \
-            qgis/qgis:3.44.14-noble
-          trap 'docker rm --force qgis-runtime' EXIT
-          docker exec qgis-runtime sh -lc \
-            'cd /tests_directory && python3 tools/build_plugin.py'
-          docker exec qgis-runtime sh -lc \
-            'cd /tests_directory && python3 tests/test_qgis_package.py "$(ls -1t dist/FlyPath-*.zip | head -n 1)"'
+            --workdir /tests_directory \
+            --env QT_QPA_PLATFORM=offscreen \
+            qgis/qgis:3.44.14-noble \
+            sh -lc 'python3 tools/build_plugin.py && python3 tests/test_qgis_package.py "$(ls -1t dist/FlyPath-*.zip | head -n 1)"'
