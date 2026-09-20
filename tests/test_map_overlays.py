@@ -47,6 +47,7 @@ def test_takeoff_and_contour_layers_are_registered_styled_and_removed():
         assert len(takeoff.renderer().rootRule().children()) == 2
         assert contours.featureCount() == 2
         assert contours.labelsEnabled() and contours.labeling() is not None
+        assert contours.renderer().symbol().color().name().upper() == '#4DA3FF'
         assert takeoff.customProperty('flypath_internal') is True
         assert contours.customProperty('flypath_internal') is True
         tree_ids = [node.layerId() for node in project.layerTreeRoot().children()]

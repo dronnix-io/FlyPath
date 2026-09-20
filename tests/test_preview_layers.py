@@ -37,7 +37,18 @@ def test_preview_layers_create_redraw_and_recover():
         assert rows[0] == (0, 1, 'start', 100.0, 80.0)
         assert rows[2] == (0, 3, 'end', 102.0, 82.0)
         assert rows[3][2] == 'start' and rows[4][2] == 'end'
-        assert len(path.renderer().rootRule().children()) == 2
+        path_rules = path.renderer().rootRule().children()
+        assert len(path_rules) == 2
+        assert [rule.label() for rule in path_rules] == ['Flight 1', 'Flight 2']
+        assert all(rule.symbol().symbolLayerCount() == 2 for rule in path_rules)
+        assert all(rule.symbol().symbolLayer(0).color().name().upper() == '#071018'
+                   for rule in path_rules)
+        assert [rule.symbol().symbolLayer(1).color().name().upper()
+                for rule in path_rules] == ['#FFE600', '#FF9F43']
+        point_rules = points.renderer().rootRule().children()
+        assert point_rules[0].symbol().color().name().upper() == module.START_COLOR
+        assert point_rules[1].symbol().color().name().upper() == module.END_COLOR
+        assert point_rules[2].symbol().color().name().upper() == module.MID_COLOR
 
         ordinary = module.QgsVectorLayer('Point?crs=EPSG:4326', 'User layer', 'memory')
         project.addMapLayer(ordinary)
