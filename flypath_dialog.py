@@ -5214,9 +5214,19 @@ class FlyPathDialog(QWidget):
             # a couple of debian based distributions
             gvfspath = os.path.join(os.getenv('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}'), 'gvfs')
             # because MTP devices will present individual "drives", the paths found are parents to the
-            # ones we need
-            for base in [os.path.join(gvfspath, x) for x in os.listdir(gvfspath) if x.startswith('mtp:')]:
-                roots.extend([os.path.join(base, x) for x in os.listdir(base)])
+            # ones we need. Guard every listing: no GVFS mount (or an unreadable one)
+            # means no RC on a drive, not a crash.
+            try:
+                for x in os.listdir(gvfspath):
+                    if not x.startswith('mtp:'):
+                        continue
+                    base = os.path.join(gvfspath, x)
+                    try:
+                        roots.extend([os.path.join(base, y) for y in os.listdir(base)])
+                    except OSError:
+                        continue
+            except OSError:
+                pass
         for root in roots:
             candidate = os.path.join(root, rel)
             try:
@@ -5293,9 +5303,14 @@ class FlyPathDialog(QWidget):
 
         QApplication.setOverrideCursor(_WaitCursor)
         try:
-            # ONR: will try this on windows, seems redundant to separate for linux
-            # status, missions = self._list_missions_at_path(parts)
-            status, missions = self._list_missions_from_dir(os.path.join(*parts))
+            # On Windows the browser returns shell display-name parts (an MTP
+            # device has no real filesystem path), so read them through the shell
+            # (COM). On Linux/macOS the parts are a real path, so read the folder
+            # directly.
+            if sys.platform == 'win32':
+                status, missions = self._list_missions_at_path(parts)
+            else:
+                status, missions = self._list_missions_from_dir(os.path.join(*parts))
         finally:
             QApplication.restoreOverrideCursor()
 
