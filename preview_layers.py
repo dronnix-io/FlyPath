@@ -4,13 +4,14 @@ from qgis.PyQt.QtGui import QColor, QFont
 from qgis.core import (
     Qgis, QgsFeature, QgsGeometry, QgsLineSymbol, QgsMarkerSymbol,
     QgsPalLayerSettings, QgsPointXY, QgsProject, QgsRuleBasedRenderer,
-    QgsTextFormat, QgsVectorLayer, QgsVectorLayerSimpleLabeling,
+    QgsSimpleLineSymbolLayer, QgsTextFormat, QgsVectorLayer,
+    QgsVectorLayerSimpleLabeling,
 )
 
 
-START_COLOR = '#CC2222'
-END_COLOR = '#2D6DB5'
-MID_COLOR = 'white'
+START_COLOR = '#69B7FF'
+END_COLOR = '#FF8A78'
+MID_COLOR = '#050C14'
 _FLIGHT_COLORS = ['#FFE600', '#ff9f43', '#a88bff', '#35c99a', '#ff6f91']
 try:
     _FONT_BOLD = QFont.Weight.Bold
@@ -62,10 +63,14 @@ def _path_renderer(count):
     root = QgsRuleBasedRenderer.Rule(None)
     for mission in range(max(1, count)):
         symbol = QgsLineSymbol.createSimple({
+            'color': '#071018', 'width': '1.3',
+            'capstyle': 'round', 'joinstyle': 'round',
+        })
+        symbol.appendSymbolLayer(QgsSimpleLineSymbolLayer.create({
             'color': _FLIGHT_COLORS[mission % len(_FLIGHT_COLORS)],
             'width': '0.8', 'capstyle': 'round', 'joinstyle': 'round',
-        })
-        label = 'Flight path' if count <= 1 else f'Mission {mission + 1}'
+        }))
+        label = 'Flight path' if count <= 1 else f'Flight {mission + 1}'
         root.appendChild(QgsRuleBasedRenderer.Rule(
             symbol, filterExp=f'"mission" = {mission}', label=label))
     return QgsRuleBasedRenderer(root)
@@ -110,7 +115,7 @@ def _waypoint_layer(missions, heights=None, ground=None):
     rules = [
         ('"wp_type" = \'start\'', START_COLOR, MID_COLOR, '7.5', 'Start'),
         ('"wp_type" = \'end\'', END_COLOR, MID_COLOR, '7.5', 'End'),
-        ('"wp_type" = \'mid\'', MID_COLOR, '#FFE600', '4.0', 'Waypoint'),
+        ('"wp_type" = \'mid\'', MID_COLOR, '#6FB5FF', '4.0', 'Waypoint'),
     ]
     for expression, color, border, size, label in rules:
         symbol = QgsMarkerSymbol.createSimple({
@@ -130,7 +135,7 @@ def _waypoint_layer(missions, heights=None, ground=None):
     labels.priority = 10
     text = QgsTextFormat()
     text.setFont(QFont('Segoe UI', 7, _FONT_BOLD))
-    text.setColor(QColor('#1E2128'))
+    text.setColor(QColor('#FFFFFF'))
     text.setSize(7)
     labels.setFormat(text)
     layer.setLabeling(QgsVectorLayerSimpleLabeling(labels))

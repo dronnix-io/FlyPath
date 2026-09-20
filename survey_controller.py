@@ -630,7 +630,7 @@ class SurveyLifecycleMixin:
         layer.dataProvider().addFeatures([feat])
 
         symbol = QgsFillSymbol.createSimple({
-            'color': '255,20,147,85',
+            'color': '255,20,147,46',
             'outline_color': '#FF1493',
             'outline_width': '0.8',
             'outline_style': 'dash',
@@ -773,7 +773,7 @@ class SurveyLifecycleMixin:
         feat.setGeometry(band)
         layer.dataProvider().addFeatures([feat])
         symbol = QgsFillSymbol.createSimple({
-            'color': '30,144,255,35',        # translucent blue fill
+            'color': '30,144,255,71',        # translucent blue fill
             'outline_color': '#1E90FF',
             'outline_width': '0.3',
             'outline_style': 'dot',
