@@ -3,8 +3,14 @@ name=FlyPath
 qgisMinimumVersion=3.44.14
 qgisMaximumVersion=3.44.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
-version=2.4.1
-changelog=2.4.1 - Fixed the My missions list showing the mission update time in UTC instead of
+version=2.5.0
+changelog=2.5.0 - Linux support for direct DJI controller export. FlyPath can now auto-detect a
+    DJI RC connected over USB on Linux (through GVFS), browse to and locate its waypoint folder,
+    list the missions on it, and replace a mission directly, the same as on Windows. On Linux the
+    controller appears as a normal filesystem mount, so reading and writing use direct file access;
+    Windows continues to use its shell transfer for MTP devices. Requires a desktop that mounts the
+    controller through GVFS. Contributed by ofnorelevance.
+    2.4.1 - Fixed the My missions list showing the mission update time in UTC instead of
     your computer's local time (reported by Jcomelles). The Updated column now converts the time
     to your local timezone.
     2.4.0 - New Same takeoff for all splits option for flying every split mission from one

@@ -8,6 +8,7 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from FlyPath import controller_storage
 from FlyPath.controller_storage import list_missions_from_dir
 
 
@@ -42,6 +43,17 @@ def test_lists_only_controller_tracked_missions_newest_first():
     assert [mission['uuid'] for mission in missions] == [newer, older]
     assert missions[0]['n_wp'] == 2
     assert missions[0]['waypoints'] == [(30.0, 40.0), (31.0, 41.0)]
+
+
+def test_non_windows_selected_path_uses_filesystem(monkeypatch):
+    parts = ['root', 'waypoint']
+    monkeypatch.setattr(controller_storage.sys, 'platform', 'linux')
+    monkeypatch.setattr(
+        controller_storage, 'list_missions_from_dir',
+        lambda path: ('ok', [path]))
+
+    assert controller_storage.list_missions_at_path(parts) == (
+        'ok', [os.path.join(*parts)])
 
 
 if __name__ == '__main__':

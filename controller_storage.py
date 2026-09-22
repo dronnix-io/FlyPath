@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess  # nosec B404
+import sys
 import tempfile
 import zipfile
 
@@ -30,20 +31,36 @@ def find_waypoint_on_drives():
     """Return the DJI waypoint folder on a fixed/removable drive, if present."""
     rel = os.path.join(*_RC_REL_PARTS)
     roots = []
-    try:
-        import ctypes
-        k32 = ctypes.windll.kernel32
-        bitmask = k32.GetLogicalDrives()
-        for index in range(26):
-            if not (bitmask >> index) & 1:
-                continue
-            root = chr(ord('A') + index) + ':\\'
-            if k32.GetDriveTypeW(ctypes.c_wchar_p(root)) in (2, 3):
-                roots.append(root)
-    except Exception:
-        import string
-        roots = [letter + ':\\' for letter in string.ascii_uppercase
-                 if os.path.isdir(letter + ':\\')]
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            bitmask = k32.GetLogicalDrives()
+            for index in range(26):
+                if not (bitmask >> index) & 1:
+                    continue
+                root = chr(ord('A') + index) + ':\\'
+                if k32.GetDriveTypeW(ctypes.c_wchar_p(root)) in (2, 3):
+                    roots.append(root)
+        except Exception:
+            import string
+            roots = [letter + ':\\' for letter in string.ascii_uppercase
+                     if os.path.isdir(letter + ':\\')]
+    elif sys.platform == 'linux':
+        gvfs = os.path.join(
+            os.getenv('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}'), 'gvfs')
+        try:
+            for name in os.listdir(gvfs):
+                if not name.startswith('mtp:'):
+                    continue
+                device = os.path.join(gvfs, name)
+                try:
+                    roots.extend(os.path.join(device, child)
+                                 for child in os.listdir(device))
+                except OSError:
+                    continue
+        except OSError:
+            pass
     for root in roots:
         candidate = os.path.join(root, rel)
         try:
@@ -145,7 +162,24 @@ def _run(script, *, timeout):
 
 
 def list_shell_children(parts):
-    """Return immediate child folder names for a Windows Shell path."""
+    """Return immediate child folder names for an RC browser path."""
+    if sys.platform != 'win32':
+        if not parts:
+            roots = ['/\0System Root', os.path.expanduser('~') + '\0Home']
+            gvfs = os.path.join(
+                os.getenv('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}'), 'gvfs')
+            try:
+                roots.extend(os.path.join(gvfs, name) + '\0' + name
+                             for name in os.listdir(gvfs))
+            except OSError:
+                pass
+            return roots
+        path = os.path.join(*parts)
+        try:
+            return [name for name in sorted(os.listdir(path))
+                    if os.path.isdir(os.path.join(path, name))]
+        except OSError:
+            return []
     try:
         result, temp_dir = _run(
             lambda _temp: _shell_children_script(parts), timeout=40)
@@ -179,7 +213,9 @@ def _shell_children_script(parts):
 
 
 def list_missions_at_path(parts):
-    """Return (status, missions) for a waypoint folder in Windows Shell."""
+    """Return (status, missions) for a selected waypoint folder."""
+    if sys.platform != 'win32':
+        return list_missions_from_dir(os.path.join(*parts))
     try:
         result, temp_dir = _run(
             lambda temp: _missions_at_path_script(parts, temp), timeout=120)
@@ -240,6 +276,8 @@ def _missions_at_path_script(parts, temp_dir):
 
 def list_rc_missions():
     """Return status, waypoint path, missions, and detail for an MTP controller."""
+    if sys.platform != 'win32':
+        return 'not_connected', None, [], ''
     try:
         result, temp_dir = _run(_rc_list_script, timeout=120)
     except subprocess.TimeoutExpired:

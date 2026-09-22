@@ -4,6 +4,7 @@ import math
 import os
 import shutil
 import subprocess  # nosec B404
+import sys
 import tempfile
 
 from qgis.PyQt.QtWidgets import (
@@ -688,8 +689,9 @@ class _RcFolderBrowser(QDialog):
         finally:
             QApplication.restoreOverrideCursor()
         for name in names:
-            item = QTreeWidgetItem([name])
-            item.setData(0, _ROLE_PARTS, parts + [name])
+            path, _, label = name.partition('\0')
+            item = QTreeWidgetItem([label or path])
+            item.setData(0, _ROLE_PARTS, parts + [path])
             item.setData(0, _ROLE_LOADED, False)
             item.addChild(QTreeWidgetItem(['…']))   # dummy → shows arrow
             if parent_item is None:
@@ -3719,7 +3721,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         finally:
             QApplication.restoreOverrideCursor()
 
-        display = '\\'.join(parts)
+        display = ('\\'.join(parts) if sys.platform == 'win32'
+                   else os.path.join(*parts))
         if status == 'ok':
             self._set_rc_target(display)
             self._populate_mission_combo(missions)
