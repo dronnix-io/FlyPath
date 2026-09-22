@@ -24,9 +24,10 @@ the offline plugin. Both consumer adapters and KMZ actions are compared by
 
 ## Verification and limits
 
-QGIS 3.44.14 / Python 3.12 on Windows was tested. The release metadata is
-restricted to the QGIS 3.44 line; previous 3.16/4.x and Python 3.9 claims no
-longer apply to this release. The engine itself requires Python 3.10+.
+QGIS 3.44.14 / Python 3.12 on Windows was tested, and the plugin was verified
+to load on QGIS 3.34 and 4.0.3. The release metadata supports QGIS 3.34 through
+4.99; the previous QGIS 3.16 and Python 3.9 claims no longer apply. The engine
+itself requires Python 3.10+.
 
 Twenty-one of 22 direct plugin test scripts passed. The unchanged credential
 vault suite stalled and is not counted as passed. Focused final adapter,
