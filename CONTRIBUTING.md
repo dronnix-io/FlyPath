@@ -88,7 +88,7 @@ python tools/vendor_engine.py
 ```
 
 The command fetches that exact release from the public
-[FlyPath engine repository](https://github.com/alireza7575/flypath_engine)
+[FlyPath engine repository](https://github.com/dronnix-io/flypath_engine)
 and replaces the plugin's `flypath_engine/` directory. Do not copy engine files
 manually.
 
