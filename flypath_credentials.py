@@ -42,7 +42,7 @@ def _sync(settings):
     try:
         no_error = QSettings.Status.NoError
     except AttributeError:
-        no_error = QSettings.NoError
+        no_error = getattr(QSettings, 'NoError')
     settings.sync()
     if settings.status() != no_error:
         raise FlypathSyncError('Could not update FlyPath credential settings. Check settings permissions and retry Disconnect.')

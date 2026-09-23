@@ -22,6 +22,7 @@ def _include(relative):
         and relative.as_posix() not in EXCLUDED_ROOT_FILES
         and "__pycache__" not in relative.parts
         and relative.suffix not in {".pyc", ".zip"}
+        and relative.name != "SOURCE.json"
     )
 
 
