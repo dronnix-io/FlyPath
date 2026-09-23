@@ -3,8 +3,16 @@ name=FlyPath
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
-version=2.5.0
-changelog=2.5.0 - Linux support for direct DJI controller export. FlyPath can now auto-detect a
+version=2.6.0
+changelog=2.6.0 - Planning now runs on the shared FlyPath engine, the same core used by
+    flypath.io, so a plan made on the website and one made in the plugin match. The map preview
+    is restyled to match the website: the flight path has a dark casing under a coloured line,
+    the start and end points and the waypoint labels use the website colours, and contours are
+    drawn in blue. Loading a reversed mission from your flypath.io account now previews correctly.
+    Note: the minimum supported QGIS version is now 3.34, because the shared engine needs Python
+    3.10 or newer, so older QGIS 3 versions can no longer run it. Mission planning results are
+    unchanged.
+    2.5.0 - Linux support for direct DJI controller export. FlyPath can now auto-detect a
     DJI RC connected over USB on Linux (through GVFS), browse to and locate its waypoint folder,
     list the missions on it, and replace a mission directly, the same as on Windows. On Linux the
     controller appears as a normal filesystem mount, so reading and writing use direct file access;
