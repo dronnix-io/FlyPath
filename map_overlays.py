@@ -75,7 +75,7 @@ def create_contours(result, preview_layer_ids=(), project=None):
         features.append(feature)
     layer.dataProvider().addFeatures(features)
     layer.renderer().setSymbol(QgsLineSymbol.createSimple({
-        'color': '140,90,30,180', 'width': '0.25'}))
+        'color': '#4DA3FF', 'width': '0.25'}))
     labels = QgsPalLayerSettings()
     labels.fieldName = 'level'
     try:
@@ -84,7 +84,7 @@ def create_contours(result, preview_layer_ids=(), project=None):
         labels.placement = getattr(QgsPalLayerSettings, 'Line')
     text = QgsTextFormat()
     text.setFont(QFont('Segoe UI', 6))
-    text.setColor(QColor('#5A3C1E'))
+    text.setColor(QColor('#1F7FE8'))
     text.setSize(6)
     labels.setFormat(text)
     layer.setLabeling(QgsVectorLayerSimpleLabeling(labels))
