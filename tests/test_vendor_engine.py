@@ -72,9 +72,11 @@ def test_build_includes_generated_engine_without_unrelated_untracked_files():
             cwd=root, check=True, capture_output=True,
         )
         with zipfile.ZipFile(root / "dist" / "FlyPath-1.0.zip") as archive:
+            # SOURCE.json is deliberately left out of the packaged ZIP so the
+            # plugin-repository secret scanner does not flag its commit hash.
             assert set(archive.namelist()) == {
                 "FlyPath/README.md", "FlyPath/metadata.txt",
-                "FlyPath/flypath_engine/__init__.py", "FlyPath/flypath_engine/SOURCE.json",
+                "FlyPath/flypath_engine/__init__.py",
                 "FlyPath/flypath_engine/profiles/drones.json",
                 "FlyPath/flypath_engine/LICENSE", "FlyPath/flypath_engine/NOTICE",
             }
