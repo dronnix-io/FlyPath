@@ -3,9 +3,8 @@ name=FlyPath
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
-version=2.6.1
-changelog=2.6.1 - Packaging and compatibility fixes for the QGIS plugin repository checks, with no change to how the plugin works: the settings status check now uses the same scoped enum fallback as the rest of the plugin so the Qt6 check passes, and the engine source record is no longer bundled in the ZIP so the secret scanner does not flag its commit hash and checksum.
-    2.6.0 - Planning now runs on the shared FlyPath engine, the same core used by
+version=2.6.0
+changelog=2.6.0 - Planning now runs on the shared FlyPath engine, the same core used by
     flypath.io, so a plan made on the website and one made in the plugin match. The map preview
     is restyled to match the website: the flight path has a dark casing under a coloured line,
     the start and end points and the waypoint labels use the website colours, and contours are
