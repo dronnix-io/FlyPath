@@ -11,7 +11,7 @@ Read `CONTEXT.md` for domain vocabulary. Read `docs/adr/0001-shared-planning-cor
 Important areas:
 
 - `flypath.py`, `flypath_dialog.py`: plugin entry point and main panel.
-- `planning_adapter.py`, `flypath_engine/`: adapter and vendored engine source.
+- `planning_adapter.py`, `flypath_engine/`: adapter and generated, ignored engine source.
 - `flypath_sync.py`, `flypath_library.py`, `flypath_credentials.py`: public website-sync client and credential storage.
 - `wpml/`: consumer/enterprise KMZ serialization.
 - `hardware/`: drone registry.
@@ -31,15 +31,15 @@ Run checks from this repository:
 ```powershell
 python -m pyflakes $(git ls-files '*.py')
 python tools/check_qt6_enums.py
-python tools/vendor_engine.py --check
+python tools/vendor_engine.py
 python -m pytest -q tests
 ```
 
-Build the plugin ZIP with `python tools/build_plugin.py`. For development, copy or link the repository into the QGIS plugin directory and enable FlyPath in QGIS; no standalone run command is documented.
+Build the plugin ZIP with `python tools/build_plugin.py`; it fetches the pinned engine and includes it in the ZIP. For development, run `python tools/vendor_engine.py` after cloning, then copy or link the repository into the QGIS plugin directory and enable FlyPath in QGIS. Fetching requires network access; the installed plugin works offline.
 
 ## Conventions and safety
 
-Use `qgis.PyQt` imports and preserve Qt 5/Qt 6 compatibility. Keep planning calculations in the shared engine; plugin code owns QGIS UI, map state, sync, and KMZ serialization. Update `flypath-engine.json` and run `tools/vendor_engine.py`; do not hand-edit the vendored engine copy.
+Use `qgis.PyQt` imports and preserve Qt 5/Qt 6 compatibility. Keep planning calculations in the shared engine; plugin code owns QGIS UI, map state, sync, and KMZ serialization. Update `flypath-engine.json` and run `tools/vendor_engine.py`; commit the pin, not the generated engine copy.
 
 Normally leave generated or local artifacts alone: `dist/`, `__pycache__/`, `.pytest_cache/`, `.scratch/`, `symbology-style.db`, and built ZIP files. Do not expose tokens, local settings, private service URLs, or private website implementation details. Never log or persist plaintext plugin tokens.
 

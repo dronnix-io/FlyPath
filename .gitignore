@@ -8,6 +8,7 @@ __pycache__/
 .pytest_cache/
 dist/
 build/
+/flypath_engine/
 .eggs/
 
 # QGIS
