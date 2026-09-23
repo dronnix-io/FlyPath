@@ -16,15 +16,17 @@ def test_linked_save():
     try:
         module = importlib.import_module(package + '.flypath_dialog')
         library = importlib.import_module(package + '.flypath_library')
+        controller = importlib.import_module(package + '.website_sync_controller')
     except ImportError as exc:
         raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
-    sync = module.flypath_sync
+    sync = controller.flypath_sync
     planner = SimpleNamespace(
+        _planning=module.PlanningLifecycle(),
         _website_link=None, _preview_layer_ids=['preview'], _missions=[[1]],
         _update_web_buttons=lambda: None,
         _website_payload=lambda name: {'name': name, 'settings': {'altitude': 80}},
         _run_web=lambda title, work, **kwargs: work('token-a'),
-        _apply_website_mission=lambda mission: [],
+        _apply_website_mission=lambda mission: ([], ''),
     )
     for name in ('_current_website_link', '_remember_website_mission',
                  '_on_send_to_website', '_resolve_website_conflict', '_on_load_from_website', '_forget_website_mission'):
@@ -33,10 +35,10 @@ def test_linked_save():
          patch.object(sync, 'load_base_url', return_value='https://example.test'), \
          patch.object(sync, 'push_mission', return_value={'id': 7, 'revision': 1, 'name': 'Survey'}) as create, \
          patch.object(sync, 'update_mission', return_value={'id': 7, 'revision': 2, 'name': 'Survey'}) as update, \
-         patch.object(module.QInputDialog, 'getText', return_value=('Survey', True)), \
-         patch.object(module.QMessageBox, 'question', return_value=module._MB_NO) as question, \
-         patch.object(module.QMessageBox, 'information'), \
-         patch.object(module.QMessageBox, 'warning'), \
+         patch.object(controller.QInputDialog, 'getText', return_value=('Survey', True)), \
+         patch.object(controller.QMessageBox, 'question', return_value=controller._MB_NO) as question, \
+         patch.object(controller.QMessageBox, 'information'), \
+         patch.object(controller.QMessageBox, 'warning'), \
          patch.object(library, 'conflict_choice', return_value=None) as choice:
         assert planner._on_send_to_website()
         assert planner._website_link['id'] == 7
@@ -56,10 +58,10 @@ def test_linked_save():
         with patch.object(planner, '_on_load_from_website', return_value=True) as load:
             assert not planner._on_send_to_website()
             load.assert_not_called()  # default answer preserves local edits
-            question.return_value = module._MB_YES
+            question.return_value = controller._MB_YES
             assert planner._on_send_to_website()
             load.assert_called_once_with(7)
-        question.return_value = module._MB_NO
+        question.return_value = controller._MB_NO
 
         choice.return_value = 'copy'
         create.return_value = {'id': 8, 'revision': 1, 'name': 'Survey copy'}

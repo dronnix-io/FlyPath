@@ -25,6 +25,7 @@ def test_settings_round_trip():
         'drone_model': 'mini3pro',
         'polygon': [[51.01, -114.02], [51.01, -114.015],
                     [51.013, -114.015], [51.013, -114.02]],
+        'waypoints': [[51.01, -114.02], [51.013, -114.015]],
         'settings': {
             'mapping_style': '2d', 'capture_mode': 'semi',
             'altitude': 80, 'speed': 8, 'side_overlap': 70,
@@ -60,7 +61,43 @@ def test_settings_round_trip():
         planner.autoDirectionBtn.click()
         assert planner._website_settings()['auto_direction'] is False
 
+        mission['settings'] = {
+            'mapping_style': '2d', 'capture_mode': 'semi',
+            'altitude': 80, 'speed': 8, 'side_overlap': 70,
+            'margin': 0, 'direction': 95, 'auto_direction': False,
+            'flight_path': 'curved', 'finish_action': 'goHome',
+            'cross_hatch': False, 'reverse_route': True,
+            'terrain_follow': False, 'split_enabled': False,
+            'split_count': 1, 'split_max_wp': 70,
+        }
+        area = {'exterior': [
+            {'latitude_deg': lat, 'longitude_deg': lon}
+            for lat, lon in mission['polygon']
+        ], 'holes': []}
+        request = module.planning_adapter.build_request(
+            survey_area=area, drone_profile_id=mission['drone_model'],
+            altitude_m=80, speed_m_s=8, side_overlap_ratio=.7,
+            margin_m=0, automatic_direction=False, direction_deg=95,
+            capture_mode='semi', front_overlap_ratio=.7,
+            turn_style='curved', finish_action='Return to Home',
+            split_enabled=False, requested_flights=1,
+            max_waypoints_per_flight=70, reverse_route=True,
+        )
+        result = module.planning_adapter.plan(request)
+        mission['planning_request'] = request
+        mission['planning_result'] = result
+        mission['waypoints'] = [
+            [row['position']['latitude_deg'], row['position']['longitude_deg']]
+            for row in result['route']['waypoints']
+        ]
+        planner._apply_website_mission(mission)
+        assert planner.reverseRouteCheck.isChecked()
+        assert planner._website_settings()['reverse_route'] is True
+
         # Repeated loads must clear the previous mission's split choice.
+        mission['settings']['reverse_route'] = False
+        mission['planning_request'] = {}
+        mission['planning_result'] = {}
         mission['settings'].update(auto_direction=False, split_enabled=False)
         planner._apply_website_mission(mission)
         planner._apply_website_mission(mission)

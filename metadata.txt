@@ -1,6 +1,6 @@
 [general]
 name=FlyPath
-qgisMinimumVersion=3.16
+qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
 version=2.5.0

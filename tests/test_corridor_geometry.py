@@ -156,6 +156,15 @@ def test_snake_empty():
     assert snake_passes([]) == []
 
 
+def test_snaked_corridor_has_no_consecutive_duplicate_waypoints():
+    passes = [
+        sample_polyline([(0, 0), (10, 0), (10, 10)], 4),
+        sample_polyline([(2, 0), (12, 0), (12, 10)], 4),
+    ]
+    route = snake_passes(passes)
+    assert all(a != b for a, b in zip(route, route[1:]))
+
+
 if __name__ == '__main__':
     fns = [v for k, v in sorted(globals().items())
            if k.startswith('test_') and callable(v)]

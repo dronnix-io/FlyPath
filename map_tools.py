@@ -33,169 +33,19 @@ except AttributeError:
     _IconCircle      = getattr(QgsVertexMarker, 'ICON_CIRCLE')
 
 
-class PolygonDrawTool(QgsMapTool):
-    """
-    Interactive polygon drawing tool that mimics QGIS's native digitising UX.
+class _DrawTool(QgsMapTool):
+    """Shared polygon/line digitising behaviour."""
 
-    Behaviour
-    ---------
-    Left-click        : place a vertex
-    Move mouse        : rubber band follows cursor, polygon always closes back
-                        to the first vertex so you see the full shape at all times
-    Right-click       : finish (minimum 3 vertices required)
-    Double-click      : finish using the point placed by the preceding click
-    Backspace / Delete: undo the last vertex
-    Escape            : cancel and emit drawing_cancelled
-
-    Snapping
-    --------
-    Respects the project's snapping configuration via the canvas snapping utils.
-    """
-
-    polygon_completed = pyqtSignal(object)   # QgsGeometry (Polygon)
     drawing_cancelled = pyqtSignal()
+    _geometry_type = None
+    _minimum_points = 0
 
     def __init__(self, canvas):
         super().__init__(canvas)
-        self._points  = []
-        self._markers = []          # QgsVertexMarker for each placed vertex
-        self._cursor  = None        # last known cursor position (map coords)
-
-        # Single polygon rubber band — Qt auto-closes it back to the first point
-        self._band = QgsRubberBand(canvas, _PolygonGeometry)
-        self._band.setColor(QColor(255, 20, 147, 80))         # deep pink semi-fill
-        self._band.setStrokeColor(QColor(255, 20, 147, 220))
-        self._band.setWidth(2)
-        self._band.setLineStyle(_DashLine)
-
-    # ── Snapping ──────────────────────────────────────────────────────────
-
-    def _snap(self, pos):
-        """Return the snapped map point for a canvas pixel position."""
-        try:
-            match = self.canvas().snappingUtils().snapToMap(pos)
-            if match.isValid():
-                return match.point()
-        except (RuntimeError, AttributeError):
-            pass
-        return self.toMapCoordinates(pos)
-
-    # ── Rubber-band update ────────────────────────────────────────────────
-
-    def _redraw(self, cursor_pt=None):
-        """Rebuild the rubber band from placed points + optional cursor position."""
-        self._band.reset(_PolygonGeometry)
-        pts = self._points + ([cursor_pt] if cursor_pt else [])
-        for i, pt in enumerate(pts):
-            self._band.addPoint(pt, i == len(pts) - 1)
-
-    # ── Mouse events ──────────────────────────────────────────────────────
-
-    def canvasMoveEvent(self, event):
-        if not self._points:
-            return
-        self._cursor = self._snap(event.pos())
-        self._redraw(self._cursor)
-
-    def canvasPressEvent(self, event):
-        if event.button() == _LeftButton:
-            pt = self._snap(event.pos())
-            self._points.append(pt)
-            self._add_marker(pt)
-            self._redraw(self._cursor)
-        elif event.button() == _RightButton:
-            pt = self._snap(event.pos())
-            self._points.append(pt)
-            self._add_marker(pt)
-            self._finish()
-
-    def canvasDoubleClickEvent(self, event):
-        # canvasPressEvent already fired and placed the vertex for this
-        # double-click — just finish without adding a duplicate.
-        self._finish()
-
-    # ── Keyboard events ───────────────────────────────────────────────────
-
-    def keyPressEvent(self, event):
-        key = event.key()
-        if key == _Key_Escape:
-            self._reset()
-            self.drawing_cancelled.emit()
-        elif key in (_Key_Backspace, _Key_Delete):
-            self._undo_last()
-
-    # ── Vertex markers ────────────────────────────────────────────────────
-
-    def _add_marker(self, pt):
-        m = QgsVertexMarker(self.canvas())
-        m.setCenter(pt)
-        m.setIconType(_IconBox)
-        m.setColor(QColor(255, 20, 147))
-        m.setFillColor(QColor(255, 255, 255, 200))
-        m.setIconSize(8)
-        m.setPenWidth(2)
-        self._markers.append(m)
-
-    def _remove_markers(self):
-        for m in self._markers:
-            self.canvas().scene().removeItem(m)
-        self._markers.clear()
-
-    # ── Internal ──────────────────────────────────────────────────────────
-
-    def _undo_last(self):
-        if not self._points:
-            return
-        self._points.pop()
-        if self._markers:
-            self.canvas().scene().removeItem(self._markers.pop())
-        self._redraw(self._cursor)
-
-    def _finish(self):
-        if len(self._points) >= 3:
-            geom = QgsGeometry.fromPolygonXY([list(self._points)])
-            self._reset()
-            self.polygon_completed.emit(geom)
-        else:
-            self._reset()
-
-    def _reset(self):
-        self._points.clear()
-        self._cursor = None
-        self._band.reset(_PolygonGeometry)
-        self._remove_markers()
-
-    def deactivate(self):
-        self._reset()
-        super().deactivate()
-
-
-class LineDrawTool(QgsMapTool):
-    """
-    Interactive line (polyline) drawing tool for corridor centre lines.
-
-    Shares the digitising UX of PolygonDrawTool but produces an open LineString
-    and needs a minimum of two vertices.
-
-    Left-click        : place a vertex
-    Move mouse        : rubber band follows the cursor
-    Right-click       : finish (minimum 2 vertices required)
-    Double-click      : finish using the point placed by the preceding click
-    Backspace / Delete: undo the last vertex
-    Escape            : cancel and emit drawing_cancelled
-    """
-
-    line_completed    = pyqtSignal(object)   # QgsGeometry (LineString)
-    drawing_cancelled = pyqtSignal()
-
-    def __init__(self, canvas):
-        super().__init__(canvas)
-        self._points  = []
+        self._points = []
         self._markers = []
-        self._cursor  = None
-
-        self._band = QgsRubberBand(canvas, _LineGeometry)
-        self._band.setColor(QColor(255, 20, 147, 220))        # deep pink line
+        self._cursor = None
+        self._band = QgsRubberBand(canvas, self._geometry_type)
         self._band.setWidth(2)
         self._band.setLineStyle(_DashLine)
 
@@ -209,53 +59,50 @@ class LineDrawTool(QgsMapTool):
         return self.toMapCoordinates(pos)
 
     def _redraw(self, cursor_pt=None):
-        self._band.reset(_LineGeometry)
-        pts = self._points + ([cursor_pt] if cursor_pt else [])
-        for i, pt in enumerate(pts):
-            self._band.addPoint(pt, i == len(pts) - 1)
+        self._band.reset(self._geometry_type)
+        points = self._points + ([cursor_pt] if cursor_pt else [])
+        for index, point in enumerate(points):
+            self._band.addPoint(point, index == len(points) - 1)
 
     def canvasMoveEvent(self, event):
-        if not self._points:
-            return
-        self._cursor = self._snap(event.pos())
-        self._redraw(self._cursor)
+        if self._points:
+            self._cursor = self._snap(event.pos())
+            self._redraw(self._cursor)
 
     def canvasPressEvent(self, event):
-        if event.button() == _LeftButton:
-            pt = self._snap(event.pos())
-            self._points.append(pt)
-            self._add_marker(pt)
-            self._redraw(self._cursor)
-        elif event.button() == _RightButton:
-            pt = self._snap(event.pos())
-            self._points.append(pt)
-            self._add_marker(pt)
+        if event.button() not in (_LeftButton, _RightButton):
+            return
+        point = self._snap(event.pos())
+        self._points.append(point)
+        self._add_marker(point)
+        if event.button() == _RightButton:
             self._finish()
+        else:
+            self._redraw(self._cursor)
 
     def canvasDoubleClickEvent(self, event):
         self._finish()
 
     def keyPressEvent(self, event):
-        key = event.key()
-        if key == _Key_Escape:
+        if event.key() == _Key_Escape:
             self._reset()
             self.drawing_cancelled.emit()
-        elif key in (_Key_Backspace, _Key_Delete):
+        elif event.key() in (_Key_Backspace, _Key_Delete):
             self._undo_last()
 
-    def _add_marker(self, pt):
-        m = QgsVertexMarker(self.canvas())
-        m.setCenter(pt)
-        m.setIconType(_IconBox)
-        m.setColor(QColor(255, 20, 147))
-        m.setFillColor(QColor(255, 255, 255, 200))
-        m.setIconSize(8)
-        m.setPenWidth(2)
-        self._markers.append(m)
+    def _add_marker(self, point):
+        marker = QgsVertexMarker(self.canvas())
+        marker.setCenter(point)
+        marker.setIconType(_IconBox)
+        marker.setColor(QColor(255, 20, 147))
+        marker.setFillColor(QColor(255, 255, 255, 200))
+        marker.setIconSize(8)
+        marker.setPenWidth(2)
+        self._markers.append(marker)
 
     def _remove_markers(self):
-        for m in self._markers:
-            self.canvas().scene().removeItem(m)
+        for marker in self._markers:
+            self.canvas().scene().removeItem(marker)
         self._markers.clear()
 
     def _undo_last(self):
@@ -267,22 +114,59 @@ class LineDrawTool(QgsMapTool):
         self._redraw(self._cursor)
 
     def _finish(self):
-        if len(self._points) >= 2:
-            geom = QgsGeometry.fromPolylineXY(list(self._points))
+        if len(self._points) >= self._minimum_points:
+            geometry = self._geometry()
             self._reset()
-            self.line_completed.emit(geom)
+            self._emit_completed(geometry)
         else:
             self._reset()
 
     def _reset(self):
         self._points.clear()
         self._cursor = None
-        self._band.reset(_LineGeometry)
+        self._band.reset(self._geometry_type)
         self._remove_markers()
 
     def deactivate(self):
         self._reset()
         super().deactivate()
+
+
+class PolygonDrawTool(_DrawTool):
+    """Interactive snapped polygon drawing tool."""
+
+    polygon_completed = pyqtSignal(object)
+    _geometry_type = _PolygonGeometry
+    _minimum_points = 3
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self._band.setColor(QColor(255, 20, 147, 80))
+        self._band.setStrokeColor(QColor(255, 20, 147, 220))
+
+    def _geometry(self):
+        return QgsGeometry.fromPolygonXY([list(self._points)])
+
+    def _emit_completed(self, geometry):
+        self.polygon_completed.emit(geometry)
+
+
+class LineDrawTool(_DrawTool):
+    """Interactive snapped line drawing tool."""
+
+    line_completed = pyqtSignal(object)
+    _geometry_type = _LineGeometry
+    _minimum_points = 2
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self._band.setColor(QColor(255, 20, 147, 220))
+
+    def _geometry(self):
+        return QgsGeometry.fromPolylineXY(list(self._points))
+
+    def _emit_completed(self, geometry):
+        self.line_completed.emit(geometry)
 
 
 class VertexPickTool(QgsMapTool):

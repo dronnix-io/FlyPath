@@ -64,7 +64,7 @@ A walkthrough of installing and using FlyPath in QGIS: defining a survey area, s
 - **Direct RC export**: auto-detects the connected DJI RC (over USB, or as a removable drive), lists the missions DJI Fly tracks, and replaces the one you pick, transferred silently over USB with no prompts or pop-up windows
 - **Mission preview in the RC picker**: every mission on the RC is drawn as a live flight-path thumbnail rendered from its own waypoints and labelled with its waypoint count, so you can see exactly which mission to replace before sending the new one; click a preview to open a zoomable viewer, and the list and preview refresh instantly after each replace
 - **Local folder export**: pick a folder and FlyPath saves a dated `.kmz` file there, then offers to open the folder
-- **FlyPath mission library**: open **FlyPath** and select the **My missions** tab. The **Planner** tab opens by default; opening a website mission returns to it and centers the map. **Open mission** loads a linked working copy; **Save changes** updates that same website mission. A first save creates a mission and links subsequent saves to it. **Save as new…** creates a separate mission. If the website changed since loading, saving stops and offers **Load latest…**, **Save as new…**, or **Cancel**; local edits stay intact unless you confirm reloading. Website-only settings are preserved on updates; reversed routes must be disabled on the website before loading. Links last for this plugin session and are cleared on a full planner reset, project close, or account change. Requires the website revision API and its database migration.
+- **FlyPath mission library**: open **FlyPath** and select the **My missions** tab. The **Planner** tab opens by default; opening a website mission returns to it and centers the map. **Open mission** loads a linked working copy; **Save changes** updates that same website mission. A first save creates a mission and links subsequent saves to it. **Save as new…** creates a separate mission. If the website changed since loading, saving stops and offers **Load latest…**, **Save as new…**, or **Cancel**; local edits stay intact unless you confirm reloading. Website-only settings are preserved on updates. Reversed 2D routes planned by the shared engine can be loaded and edited; reversed corridor, terrain-follow, and older routes remain website-only. Links last for this plugin session and are cleared on a full planner reset, project close, or account change. Requires a compatible website revision API.
 - Contextual hints shown in a card on the map, hover over any parameter to see what it does
 - Dark-themed dock panel, designed to complement the QGIS interface
 
@@ -75,12 +75,12 @@ A walkthrough of installing and using FlyPath in QGIS: defining a survey area, s
 | Requirement | Details |
 |---|---|
 | Operating System | Windows 10 / 11 |
-| QGIS | 3.16 or later (4.x supported) |
-| Python | 3.9+ (bundled with QGIS) |
+| QGIS | 3.34 or later (4.x supported); tested on 3.34, 3.44.14, and 4.0.3 |
+| Python | 3.10+ required by the engine; tested with QGIS Python 3.12 |
 | Drone | DJI Mini 3 Pro, Mini 4 Pro, Mini 5 Pro, Air 3, Air 3S, Mavic 3 Classic, or Mavic 4 Pro |
 | Controller | DJI RC2 (for direct USB export) |
 
-> Linux and macOS support is planned for a future release.
+> This engine release was tested on Windows with QGIS 3.44.14 and verified to load on QGIS 3.34 and 4.0.3. Other QGIS versions and platforms require validation. The engine requires Shapely 2.1+ and pyproj 3.7+.
 
 ---
 
@@ -168,6 +168,7 @@ The gimbal is fixed at nadir (-90 degrees) for both mission types, so there is n
 | Split Missions / Min Flights | Minimum number of separate missions, one per battery; defaults to the estimated batteries. The Max Waypoints cap can raise the actual count above this, never below. In **Corridor Mapping** this is labelled **Min Flights** and splits the corridor into that many contiguous stretches along the line (rather than chopping the waypoint route) |
 | Max Waypoints | Maximum waypoints per mission (DJI caps a mission at about 200); the mission is split so none exceeds it. Applies to both mission types |
 | Cross-hatch | 2D Mapping only. Flies the grid and then again perpendicular to the flight direction (double coverage; roughly doubles flight time, photos and battery use) |
+| Reverse route | 2D Mapping without terrain follow. Starts the mission from the opposite end |
 | Set Mission Breaks | Corridor Mapping only. Click centre-line vertices (the cursor snaps to them) to force a mission boundary there; click again to remove it. Breaks combine with Min Flights and Max Waypoints, so you can hand-place exact section boundaries (for example at safe landing points) and still cap each mission |
 | Terrain Follow | Optional. Vary each waypoint's height so the drone holds a constant height above ground, using free global elevation data fetched into memory only (never saved to disk). Needs an internet connection while planning, unless you pick a local DEM (below) |
 | DEM | Optional, in the Survey Area section, shown when Terrain Follow is on. Sample ground heights from a loaded single-band elevation raster instead of the online data. Leave it on "none" to use the online source. Points outside the selected raster raise a warning rather than producing invalid heights |
@@ -274,9 +275,10 @@ FlyPath/
 ├── flypath_dialog.py     # Main UI panel and export logic
 ├── map_tools.py          # Interactive polygon drawing tool
 ├── grid_planner.py       # Flight grid generation (QGIS geometry)
-├── grid_route.py         # Concave-safe route ordering, densify, split (pure Python)
+├── flypath_engine/       # Generated engine (ignored by Git, bundled in ZIP)
 ├── wpml/                 # DJI WPML KMZ writers (consumer / enterprise) via a factory
 ├── hardware/             # Drone registry (drones.json + models)
+├── tools/                # Engine refresh, plugin packaging, and repository checks
 ├── tests/                # Pure-Python unit tests
 ├── metadata.txt          # QGIS plugin metadata
 ├── icon.png              # Plugin icon

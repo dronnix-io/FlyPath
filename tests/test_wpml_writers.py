@@ -9,6 +9,7 @@ import os
 import sys
 import tempfile
 import zipfile
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -16,6 +17,7 @@ from hardware import registry              # noqa: E402
 from hardware.models import Camera, Drone  # noqa: E402
 from wpml import MissionSpec, write_mission  # noqa: E402
 from wpml import factory                   # noqa: E402
+from wpml.base import package_kmz          # noqa: E402
 
 WPS = [(-114.0, 51.0), (-114.0, 51.001), (-113.999, 51.001), (-113.999, 51.0)]
 
@@ -73,6 +75,25 @@ def test_factory_rejects_unknown_category():
         assert False, 'expected ValueError for unknown category'
     except ValueError:
         pass
+
+
+def test_failed_replace_preserves_existing_kmz():
+    with tempfile.TemporaryDirectory() as directory:
+        path = os.path.join(directory, 'mission.kmz')
+        original = b'existing mission'
+        with open(path, 'wb') as output:
+            output.write(original)
+
+        with patch('wpml.base.os.replace', side_effect=OSError('disk unavailable')):
+            try:
+                package_kmz(path, [('mission.txt', 'new mission')])
+                assert False, 'expected the replacement to fail'
+            except OSError:
+                pass
+
+        with open(path, 'rb') as saved:
+            assert saved.read() == original
+        assert os.listdir(directory) == ['mission.kmz']
 
 
 def test_consumer_is_registered():

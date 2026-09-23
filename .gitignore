@@ -8,6 +8,7 @@ __pycache__/
 .pytest_cache/
 dist/
 build/
+/flypath_engine/
 .eggs/
 
 # QGIS
@@ -44,3 +45,16 @@ desktop.ini
 
 # Local implementation notes and private cross-repository artifacts
 .scratch/
+
+# Local secrets and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.json
+credentials.*.json
+secrets.json
+secrets.*.json

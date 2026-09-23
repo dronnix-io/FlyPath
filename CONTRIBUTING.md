@@ -51,6 +51,7 @@ maintainer (Salar Ghaffarian) only.
 5. **Run the checks locally** before pushing:
 
    ```bash
+   python tools/vendor_engine.py
    python -m pyflakes $(git ls-files '*.py')
    python tools/check_qt6_enums.py
    python -m pytest -q tests
@@ -78,6 +79,30 @@ git fetch upstream
 git rebase upstream/main
 git push origin my-change --force-with-lease
 ```
+
+## Updating the shared engine
+
+Set the engine tag and commit in `flypath-engine.json`, then run:
+
+```bash
+python tools/vendor_engine.py
+```
+
+The command fetches that exact release from the public
+[FlyPath engine repository](https://github.com/dronnix-io/flypath_engine)
+and replaces the plugin's ignored `flypath_engine/` directory. Run it after
+cloning, before tests or loading the checkout in QGIS. Commit only the pin
+change, not the generated engine files. Do not copy engine files manually.
+
+Building the plugin ZIP fetches and verifies the pinned release before packaging
+it, including the ignored engine directory:
+
+```bash
+python tools/build_plugin.py
+```
+
+Fetching and building require network access. The installed ZIP includes the
+engine and continues to work offline.
 
 ## Guidelines
 

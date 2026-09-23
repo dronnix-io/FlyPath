@@ -277,6 +277,18 @@ def test_updates_without_valid_revision_never_reach_the_network():
         assert fake.request is None
 
 
+def test_download_accepts_blank_legacy_source_without_changing_route():
+    mission = {'id': 3, 'revision': 1, 'source_product': '',
+               'polygon': [[50, 12], [50, 12.01], [50.01, 12]],
+               'waypoints': [[50, 12], [50, 12.01]], 'settings': {}}
+    result, _ = _run({'ok': True, 'mission': mission}, lambda: get_mission(BASE, TOKEN, 3))
+    assert result == mission
+    for source in ('unknown', 0, False, [], {}):
+        result, _ = _run({'ok': True, 'mission': {**mission, 'source_product': source}},
+                         lambda: get_mission(BASE, TOKEN, 3))
+        assert isinstance(result, FlypathSyncError)
+
+
 if __name__ == '__main__':
     fns = [v for k, v in sorted(globals().items())
            if k.startswith('test_') and callable(v)]

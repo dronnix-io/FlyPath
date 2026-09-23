@@ -78,7 +78,7 @@ def write(drone, spec, filepath):
     # back scrambled (issue #13).
     placemarks = _placemark_blocks(spec.waypoints, spec.altitude_m, spec.speed_ms,
                                    spec.gimbal_pitch, spec.capture_mode, spec.heights,
-                                   spec.curved_path)
+                                   spec.curved_path, spec.actions)
     template_kml   = _build_template_kml(mission_config, ts_ms, spec.mission_name,
                                          spec.speed_ms, spec.altitude_m, height_mode,
                                          placemarks)
@@ -147,7 +147,7 @@ def _build_template_kml(mission_config, ts_ms, mission_name,
 
 
 def _placemark_blocks(waypoints, altitude_m, speed_ms, gimbal_pitch,
-                      capture_mode='semi', heights=None, curved=True):
+                      capture_mode='semi', heights=None, curved=True, actions=None):
     """Build the waypoint Placemark list shared by template.kml and waylines.wpml.
 
     In 'full' capture mode every waypoint also carries a takePhoto action, so
@@ -161,21 +161,27 @@ def _placemark_blocks(waypoints, altitude_m, speed_ms, gimbal_pitch,
     placemark_blocks = []
     group_id = 1                                     # unique per action group
     full = capture_mode == 'full'
+    planned = None
+    if actions is not None:
+        planned = {index: [] for index in range(len(waypoints))}
+        for action in actions:
+            index = action.get('waypoint_index') if isinstance(action, dict) else None
+            if type(index) is not int or index not in planned:
+                raise ValueError('Planned action does not match the flight waypoints.')
+            planned[index].append(action)
 
     for idx, (lon, lat) in enumerate(waypoints):
-        action_groups = ''
-        if idx == 0 and full:
-            action_groups += _first_capture_action_group(group_id=group_id,
-                                                          pitch_angle=gimbal_pitch)
-            group_id += 1
+        if planned is not None:
+            waypoint_actions = planned[idx]
         else:
-            if idx == 0:
-                action_groups += _gimbal_action_group(group_id=group_id,
-                                                      pitch_angle=gimbal_pitch)
-                group_id += 1
+            waypoint_actions = [{'type': 'rotate_camera', 'pitch_deg': gimbal_pitch}] if idx == 0 else []
             if full:
-                action_groups += _take_photo_action_group(group_id=group_id, index=idx)
-                group_id += 1
+                waypoint_actions.append({'type': 'take_photo'})
+        action_groups = ''
+        if waypoint_actions:
+            action_groups = _planned_action_group(
+                group_id, idx, waypoint_actions, gimbal_pitch, legacy=planned is None)
+            group_id += 1
         wp_height = heights[idx] if heights is not None else altitude_m
         placemark_blocks.append(
             _placemark(idx, lon, lat, wp_height, speed_ms,
@@ -183,6 +189,62 @@ def _placemark_blocks(waypoints, altitude_m, speed_ms, gimbal_pitch,
         )
 
     return '\n'.join(placemark_blocks)
+
+
+def _planned_action_group(group_id, index, actions, gimbal_pitch, *, legacy=False):
+    # Retain the legacy writer's timing and IDs.
+    sequence = not legacy or len(actions) > 1
+    first_id = 0 if sequence else group_id
+    blocks = []
+    for action_id, action in enumerate(actions, start=first_id):
+        kind = action.get('type')
+        if kind == 'rotate_camera':
+            pitch = action.get('pitch_deg', gimbal_pitch)
+            # Legacy full-auto waits during rotation; engine plans emit a hover.
+            timed = legacy and sequence
+            roll = '<wpml:gimbalRollRotateAngle>0</wpml:gimbalRollRotateAngle>' if legacy else ''
+            yaw = '<wpml:gimbalYawRotateAngle>0</wpml:gimbalYawRotateAngle>' if legacy else ''
+            duration = f'{_GIMBAL_SETTLE_S:.1f}' if timed else '0'
+            rotation_time = f'<wpml:gimbalRotateTime>{duration}</wpml:gimbalRotateTime>' if legacy else ''
+            body = f'''            <wpml:actionActuatorFunc>gimbalRotate</wpml:actionActuatorFunc>
+            <wpml:actionActuatorFuncParam>
+              <wpml:gimbalHeadingYawBase>aircraft</wpml:gimbalHeadingYawBase>
+              <wpml:gimbalRotateMode>absoluteAngle</wpml:gimbalRotateMode>
+              <wpml:gimbalPitchRotateEnable>1</wpml:gimbalPitchRotateEnable>
+              <wpml:gimbalPitchRotateAngle>{pitch}</wpml:gimbalPitchRotateAngle>
+              <wpml:gimbalRollRotateEnable>0</wpml:gimbalRollRotateEnable>{roll}
+              <wpml:gimbalYawRotateEnable>0</wpml:gimbalYawRotateEnable>{yaw}
+              <wpml:gimbalRotateTimeEnable>{int(timed)}</wpml:gimbalRotateTimeEnable>{rotation_time}
+              <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
+            </wpml:actionActuatorFuncParam>'''
+        elif kind == 'hover':
+            body = f'''            <wpml:actionActuatorFunc>hover</wpml:actionActuatorFunc>
+            <wpml:actionActuatorFuncParam>
+              <wpml:hoverTime>{float(action['duration_s']):.1f}</wpml:hoverTime>
+            </wpml:actionActuatorFuncParam>'''
+        elif kind == 'take_photo':
+            body = '''            <wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>
+            <wpml:actionActuatorFuncParam>
+              <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
+            </wpml:actionActuatorFuncParam>'''
+        else:
+            raise ValueError('Unsupported planned action: %s.' % kind)
+        blocks.append(f'''          <wpml:action>
+            <wpml:actionId>{action_id}</wpml:actionId>
+{body}
+          </wpml:action>''')
+    mode = 'sequence' if sequence else 'parallel'
+    return f'''        <wpml:actionGroup>
+          <wpml:actionGroupId>{group_id}</wpml:actionGroupId>
+          <wpml:actionGroupStartIndex>{index}</wpml:actionGroupStartIndex>
+          <wpml:actionGroupEndIndex>{index}</wpml:actionGroupEndIndex>
+          <wpml:actionGroupMode>{mode}</wpml:actionGroupMode>
+          <wpml:actionTrigger>
+            <wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>
+          </wpml:actionTrigger>
+{chr(10).join(blocks)}
+        </wpml:actionGroup>
+'''
 
 
 def _build_waylines_wpml(mission_config, speed_ms, height_mode, placemarks):
@@ -240,100 +302,3 @@ def _placemark(idx, lon, lat, altitude_m, speed_ms, action_groups_xml,
           <wpml:waypointGimbalYawAngle>0</wpml:waypointGimbalYawAngle>
         </wpml:waypointGimbalHeadingParam>
       </Placemark>'''
-
-
-def _take_photo_action_group(group_id, index):
-    """Take one photo on reaching this waypoint (full-automatic capture)."""
-    return f'''        <wpml:actionGroup>
-          <wpml:actionGroupId>{group_id}</wpml:actionGroupId>
-          <wpml:actionGroupStartIndex>{index}</wpml:actionGroupStartIndex>
-          <wpml:actionGroupEndIndex>{index}</wpml:actionGroupEndIndex>
-          <wpml:actionGroupMode>parallel</wpml:actionGroupMode>
-          <wpml:actionTrigger>
-            <wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>
-          </wpml:actionTrigger>
-          <wpml:action>
-            <wpml:actionId>{group_id}</wpml:actionId>
-            <wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>
-            <wpml:actionActuatorFuncParam>
-              <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
-            </wpml:actionActuatorFuncParam>
-          </wpml:action>
-        </wpml:actionGroup>
-'''
-
-
-def _first_capture_action_group(group_id, pitch_angle=-90):
-    """Waypoint 0, full-auto: rotate the gimbal to nadir, then take the first
-    photo, in one 'sequence' group.
-
-    Running the two actions in sequence (not parallel) makes the takePhoto wait
-    for the gimbalRotate to finish, and the rotate is given an explicit
-    _GIMBAL_SETTLE_S duration so the gimbal has physically reached -90 before the
-    shutter fires. Without this the opening frame is captured mid-rotation and
-    comes out oblique (reported by Jcomelles, issue #8)."""
-    return f'''        <wpml:actionGroup>
-          <wpml:actionGroupId>{group_id}</wpml:actionGroupId>
-          <wpml:actionGroupStartIndex>0</wpml:actionGroupStartIndex>
-          <wpml:actionGroupEndIndex>0</wpml:actionGroupEndIndex>
-          <wpml:actionGroupMode>sequence</wpml:actionGroupMode>
-          <wpml:actionTrigger>
-            <wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>
-          </wpml:actionTrigger>
-          <wpml:action>
-            <wpml:actionId>0</wpml:actionId>
-            <wpml:actionActuatorFunc>gimbalRotate</wpml:actionActuatorFunc>
-            <wpml:actionActuatorFuncParam>
-              <wpml:gimbalHeadingYawBase>aircraft</wpml:gimbalHeadingYawBase>
-              <wpml:gimbalRotateMode>absoluteAngle</wpml:gimbalRotateMode>
-              <wpml:gimbalPitchRotateEnable>1</wpml:gimbalPitchRotateEnable>
-              <wpml:gimbalPitchRotateAngle>{pitch_angle}</wpml:gimbalPitchRotateAngle>
-              <wpml:gimbalRollRotateEnable>0</wpml:gimbalRollRotateEnable>
-              <wpml:gimbalRollRotateAngle>0</wpml:gimbalRollRotateAngle>
-              <wpml:gimbalYawRotateEnable>0</wpml:gimbalYawRotateEnable>
-              <wpml:gimbalYawRotateAngle>0</wpml:gimbalYawRotateAngle>
-              <wpml:gimbalRotateTimeEnable>1</wpml:gimbalRotateTimeEnable>
-              <wpml:gimbalRotateTime>{_GIMBAL_SETTLE_S:.1f}</wpml:gimbalRotateTime>
-              <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
-            </wpml:actionActuatorFuncParam>
-          </wpml:action>
-          <wpml:action>
-            <wpml:actionId>1</wpml:actionId>
-            <wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>
-            <wpml:actionActuatorFuncParam>
-              <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
-            </wpml:actionActuatorFuncParam>
-          </wpml:action>
-        </wpml:actionGroup>
-'''
-
-
-def _gimbal_action_group(group_id, pitch_angle=-90):
-    """Set gimbal pitch at waypoint 0."""
-    return f'''        <wpml:actionGroup>
-          <wpml:actionGroupId>{group_id}</wpml:actionGroupId>
-          <wpml:actionGroupStartIndex>0</wpml:actionGroupStartIndex>
-          <wpml:actionGroupEndIndex>0</wpml:actionGroupEndIndex>
-          <wpml:actionGroupMode>parallel</wpml:actionGroupMode>
-          <wpml:actionTrigger>
-            <wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>
-          </wpml:actionTrigger>
-          <wpml:action>
-            <wpml:actionId>{group_id}</wpml:actionId>
-            <wpml:actionActuatorFunc>gimbalRotate</wpml:actionActuatorFunc>
-            <wpml:actionActuatorFuncParam>
-              <wpml:gimbalHeadingYawBase>aircraft</wpml:gimbalHeadingYawBase>
-              <wpml:gimbalRotateMode>absoluteAngle</wpml:gimbalRotateMode>
-              <wpml:gimbalPitchRotateEnable>1</wpml:gimbalPitchRotateEnable>
-              <wpml:gimbalPitchRotateAngle>{pitch_angle}</wpml:gimbalPitchRotateAngle>
-              <wpml:gimbalRollRotateEnable>0</wpml:gimbalRollRotateEnable>
-              <wpml:gimbalRollRotateAngle>0</wpml:gimbalRollRotateAngle>
-              <wpml:gimbalYawRotateEnable>0</wpml:gimbalYawRotateEnable>
-              <wpml:gimbalYawRotateAngle>0</wpml:gimbalYawRotateAngle>
-              <wpml:gimbalRotateTimeEnable>0</wpml:gimbalRotateTimeEnable>
-              <wpml:gimbalRotateTime>0</wpml:gimbalRotateTime>
-              <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
-            </wpml:actionActuatorFuncParam>
-          </wpml:action>
-        </wpml:actionGroup>
-'''
