@@ -17,8 +17,10 @@ def test_replace_and_verify_package():
     config = {"tag": "v1.2.3", "commit": "abc123"}
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
-        source, destination = root / "source", root / "destination"
-        source.mkdir()
+        source, destination = root / "src" / "flypath_engine", root / "destination"
+        source.mkdir(parents=True)
+        for name in ("LICENSE", "NOTICE"):
+            (root / name).write_text(name, encoding="utf-8")
         (source / "__init__.py").write_text('__version__ = "1.2.3"\n', encoding="utf-8")
         (source / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
         destination.mkdir()
@@ -26,6 +28,8 @@ def test_replace_and_verify_package():
 
         _replace_package(source, destination, config)
         _check_package(destination, config)
+        for name in ("LICENSE", "NOTICE"):
+            assert (destination / name).read_text() == name
 
         cache = destination / "__pycache__"
         cache.mkdir()
@@ -49,6 +53,8 @@ def test_build_includes_generated_engine_without_unrelated_untracked_files():
         engine.mkdir()
         (engine / "__init__.py").write_text('__version__ = "1.2.3"\n', encoding="utf-8")
         (engine / "SOURCE.json").write_text("{}", encoding="utf-8")
+        for name in ("LICENSE", "NOTICE"):
+            (engine / name).write_text(name, encoding="utf-8")
         (engine / "profiles").mkdir()
         (engine / "profiles" / "drones.json").write_text("{}", encoding="utf-8")
         (engine / "__pycache__").mkdir()
@@ -70,6 +76,7 @@ def test_build_includes_generated_engine_without_unrelated_untracked_files():
                 "FlyPath/README.md", "FlyPath/metadata.txt",
                 "FlyPath/flypath_engine/__init__.py", "FlyPath/flypath_engine/SOURCE.json",
                 "FlyPath/flypath_engine/profiles/drones.json",
+                "FlyPath/flypath_engine/LICENSE", "FlyPath/flypath_engine/NOTICE",
             }
 
 

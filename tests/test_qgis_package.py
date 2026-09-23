@@ -26,7 +26,7 @@ def main(archive_path):
         import pyproj
         import shapely
 
-        assert engine_version == "0.4.0"
+        assert engine_version == "1.0.0"
         assert tuple(map(int, pyproj.__version__.split(".")[:2])) >= (3, 7)
         assert tuple(map(int, shapely.__version__.split(".")[:2])) >= (2, 1)
 

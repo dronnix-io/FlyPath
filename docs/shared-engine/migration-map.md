@@ -2,9 +2,13 @@
 
 ## First phase — v0.4.0
 
-The bundled engine is pinned to released tag `v0.4.0`, source commit
-`32a946a9ff5c9777a3b865b122145ca382ed20a8`. Engine changes must still go
+The bundled engine is pinned to released tag `v1.0.0`, source commit
+`ba32f5be4d417eceb462e3edc98239232f6d5496`. Engine changes must still go
 through release/pin/vendor tooling.
+
+The v1.0.0 release retains v0.4.0 planning behavior and contract version 1.
+Saved v0.4.0 results remain supported without changing their provenance.
+The generated engine bundle includes its Apache-2.0 LICENSE and NOTICE.
 
 | Capability | Owner | Status |
 | --- | --- | --- |
