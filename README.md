@@ -275,7 +275,7 @@ FlyPath/
 ├── flypath_dialog.py     # Main UI panel and export logic
 ├── map_tools.py          # Interactive polygon drawing tool
 ├── grid_planner.py       # Flight grid generation (QGIS geometry)
-├── flypath_engine/       # Vendored route planning, measurements, and profiles
+├── flypath_engine/       # Generated engine (ignored by Git, bundled in ZIP)
 ├── wpml/                 # DJI WPML KMZ writers (consumer / enterprise) via a factory
 ├── hardware/             # Drone registry (drones.json + models)
 ├── tools/                # Engine refresh, plugin packaging, and repository checks

@@ -79,7 +79,7 @@ def _replace_package(source, destination, config):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--check", action="store_true", help="verify the committed vendored copy")
+    parser.add_argument("--check", action="store_true", help="verify the generated engine copy")
     parser.add_argument("--repository", help="override the repository URL with a local checkout")
     args = parser.parse_args()
     config = _config()

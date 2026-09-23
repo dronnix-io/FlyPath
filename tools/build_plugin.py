@@ -25,12 +25,13 @@ def _include(relative):
     )
 
 
-def _tracked_files():
+def _package_files():
     output = subprocess.run(
         ["git", "-c", f"safe.directory={ROOT}", "ls-files", "-z"],
         cwd=ROOT, check=True, capture_output=True,
     ).stdout
     files = {Path(value.decode()) for value in output.split(b"\0") if value}
+    files.update(path.relative_to(ROOT) for path in (ROOT / "flypath_engine").rglob("*"))
     return sorted(path for path in files if _include(path) and (ROOT / path).is_file())
 
 
@@ -42,7 +43,7 @@ def _version():
 
 def main():
     subprocess.run(
-        [sys.executable, str(ROOT / "tools" / "vendor_engine.py"), "--check"],
+        [sys.executable, str(ROOT / "tools" / "vendor_engine.py")],
         cwd=ROOT,
         check=True,
     )
@@ -50,7 +51,7 @@ def main():
     output = ROOT / "dist" / f"FlyPath-{_version()}.zip"
     output.parent.mkdir(exist_ok=True)
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-        for relative in _tracked_files():
+        for relative in _package_files():
             archive.write(ROOT / relative, Path("FlyPath") / relative)
     print(output)
 
