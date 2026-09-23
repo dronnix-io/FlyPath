@@ -27,7 +27,7 @@ def build_request(*, survey_area, drone_profile_id, altitude_m, speed_m_s,
                   direction_deg, capture_mode, front_overlap_ratio,
                   turn_style, finish_action, split_enabled,
                   requested_flights, max_waypoints_per_flight,
-                  cross_hatch=False, locations=None):
+                  cross_hatch=False, reverse_route=False, locations=None):
     """Translate current plugin controls into one engine request."""
     capture = {'mode': 'full_auto' if capture_mode == 'full' else 'semi_auto'}
     if capture['mode'] == 'full_auto':
@@ -57,7 +57,7 @@ def build_request(*, survey_area, drone_profile_id, altitude_m, speed_m_s,
             'max_waypoints_per_flight': max_waypoints_per_flight,
         },
         'cross_hatch': bool(cross_hatch),
-        'reverse_route': False,
+        'reverse_route': bool(reverse_route),
         'terrain_follow': False,
     }
     if locations is not None:

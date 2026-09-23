@@ -346,7 +346,7 @@ class WebsiteSyncLifecycleMixin:
             'split_count':    self.splitSpin.value(),
             'split_enabled':  self.splitCheck.isChecked(),
             'auto_direction': self.autoDirectionBtn.isChecked(),
-            'reverse_route':  False,
+            'reverse_route':  self.reverseRouteCheck.isChecked(),
             'split_max_wp':   self.maxWaypointsSpin.value(),
         }
         if corridor:
@@ -523,14 +523,19 @@ class WebsiteSyncLifecycleMixin:
             mission = {**mission, 'planning_request': {}, 'planning_result': {},
                        'waypoints': []}
             provenance = None
-        if settings.get('reverse_route'):
-            raise FlypathSyncError('This mission uses a reversed route, which the plugin cannot edit. Disable Reverse route on the website first.')
         style = settings.get('mapping_style', '2d')
         if style not in ('2d', 'corridor'):
             raise FlypathSyncError(
                 'This mission is a "%s" survey, which this plugin cannot plan. '
                 'Only 2D and corridor missions can be loaded.' % style)
         corridor = style == 'corridor'
+        if settings.get('reverse_route') and (
+                corridor or settings.get('terrain_follow')
+                or not mission.get('planning_result')):
+            raise FlypathSyncError(
+                'This reversed route cannot be edited by the plugin. Reverse '
+                'route is supported for 2D missions planned by the shared '
+                'engine without terrain follow.')
 
         drone_name = registry.name_for_website_code(mission.get('drone_model'))
         if drone_name is None or drone_name not in registry.names():
@@ -621,6 +626,7 @@ class WebsiteSyncLifecycleMixin:
                 adjusted.append('%s: %g -> %g' % (label, value, widget.value()))
         self.crossHatchCheck.setChecked(bool(settings.get('cross_hatch')))
         self.terrainFollowCheck.setChecked(bool(settings.get('terrain_follow')))
+        self.reverseRouteCheck.setChecked(bool(settings.get('reverse_route')))
 
         # A pulled mission is a standalone local copy, like a drawn one: it is
         # not tied to any layer feature, so it uses the Draw source and the same

@@ -1353,6 +1353,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
             'direction. The double coverage improves 3D reconstruction and, for '
             'LiDAR, point-cloud stability. It roughly doubles flight time, photos '
             'and battery use.')
+        self.reverseRouteCheck = QCheckBox('Reverse route')
+        self._tip(self.reverseRouteCheck,
+            'Start the mission from the opposite end. Available for 2D '
+            'missions without terrain follow.')
         self.terrainFollowCheck = QCheckBox('Terrain follow')
         self._tip(self.terrainFollowCheck,
             'Vary each waypoint height to hold a constant height above ground, '
@@ -1361,7 +1365,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
             'semi-automatic adds waypoints along the flight lines where the '
             'ground rises or falls by more than the tolerance. It follows the '
             'bare-earth terrain, not trees or buildings, so keep a safe margin.')
-        # Cross-hatch and Terrain follow share one row to keep the panel compact.
+        # Route options share one row to keep the panel compact.
         # Add the layout directly (not wrapped in a QWidget) so no background is
         # painted behind the checkboxes; they then blend into the section card
         # like the other controls. Spanning both columns also left-aligns them
@@ -1370,6 +1374,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         cover_layout.setContentsMargins(0, 0, 0, 0)
         cover_layout.setSpacing(12)
         cover_layout.addWidget(self.crossHatchCheck)
+        cover_layout.addWidget(self.reverseRouteCheck)
         cover_layout.addWidget(self.terrainFollowCheck)
         cover_layout.addStretch()
         form.addRow(cover_layout)
@@ -2120,6 +2125,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         self.bufferSpin.valueChanged.connect(self._on_param_changed)
         self.setBreaksBtn.toggled.connect(self._on_set_breaks_toggled)
         self.crossHatchCheck.toggled.connect(self._on_param_changed)
+        self.reverseRouteCheck.toggled.connect(self._on_param_changed)
         self.sameTakeoffCheck.toggled.connect(self._on_param_changed)
         self.sameTakeoffCheck.toggled.connect(self._refresh_takeoff_zone_if_shown)
         self.terrainFollowCheck.toggled.connect(self._on_terrain_toggled)
@@ -2275,9 +2281,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         # Adv. Mission Organizers: cross-hatch is meaningless for a corridor; the
         # Mission Breaks tool only applies to corridors. Split Missions is a
         # minimum-flight count in both modes; corridor labels it 'Min Flights'.
-        # Cross-hatch shares a row with Terrain follow, so hide just the
-        # checkbox for corridors (terrain follow works with corridors and stays).
+        # The route options share a row, so hide only the 2D-only checkboxes for
+        # corridors (terrain follow works with corridors and stays).
         self.crossHatchCheck.setVisible(not corridor)
+        self.reverseRouteCheck.setVisible(not corridor)
+        if corridor:
+            self.reverseRouteCheck.setChecked(False)
         self._set_row_visible(self._organizer_form, self.setBreaksBtn, corridor)
         split_lbl = self._organizer_form.labelForField(self.splitSpin)
         if split_lbl is not None:
@@ -2343,6 +2352,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
     # ── Terrain follow ────────────────────────────────────────────────────
 
     def _on_terrain_toggled(self):
+        if self.terrainFollowCheck.isChecked():
+            self.reverseRouteCheck.setChecked(False)
+        self.reverseRouteCheck.setEnabled(
+            not self.terrainFollowCheck.isChecked())
         # Retry a fresh network the next time it is turned on, and re-apply.
         self._terrain.clear()
         self._terrain_warned = False
@@ -2935,6 +2948,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
             requested_flights=self.splitSpin.value() if self.splitCheck.isChecked() else 1,
             max_waypoints_per_flight=self.maxWaypointsSpin.value(),
             cross_hatch=self.crossHatchCheck.isChecked(),
+            reverse_route=self.reverseRouteCheck.isChecked(),
             locations=self._planning.locations,
         )
 

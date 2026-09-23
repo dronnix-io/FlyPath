@@ -16,6 +16,8 @@ def test_import_preserves_planner():
         from qgis.core import QgsApplication, QgsProject
         from qgis.gui import QgsMapCanvas
         module = importlib.import_module(Path(__file__).resolve().parents[1].name + '.flypath_dialog')
+        sync_module = importlib.import_module(
+            Path(__file__).resolve().parents[1].name + '.flypath_sync')
     except ImportError as exc:
         raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
     app = QgsApplication.instance() or QgsApplication([], False)
@@ -41,11 +43,12 @@ def test_import_preserves_planner():
                    dict(mission, polygon=[[51, 13], [51.001, 13.001], [51, 13.001], [51.001, 13]]),
                    dict(mission, polygon=[[51, 13]] * 3),
                    dict(mission, polygon=[[91, 13], [51, 13.001], [51.001, 13]]),
+                   dict(mission, settings={'reverse_route': True}),
                    dict(mission, waypoints=[[0, float('inf')]])]
         for bad in invalid:
             try:
                 planner._apply_website_mission(bad)
-            except module.FlypathSyncError:
+            except sync_module.FlypathSyncError:
                 pass
             else:
                 raise AssertionError('Invalid mission accepted')

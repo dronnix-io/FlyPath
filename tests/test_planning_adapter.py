@@ -62,6 +62,15 @@ def test_locations_survive_the_adapter_request():
     assert planning_adapter.plan(planned_request)['statistics']['estimates_complete']
 
 
+def test_reverse_route_reverses_engine_waypoints():
+    normal = planning_adapter.plan(request())
+    reversed_result = planning_adapter.plan(request(reverse_route=True))
+    normal_points = [row['position'] for row in normal['route']['waypoints']]
+    reversed_points = [row['position']
+                       for row in reversed_result['route']['waypoints']]
+    assert reversed_points == normal_points[::-1]
+
+
 def test_saved_result_mismatch_is_rejected():
     planned_request = request()
     result = planning_adapter.plan(planned_request)
