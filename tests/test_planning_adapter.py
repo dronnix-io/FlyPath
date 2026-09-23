@@ -107,13 +107,30 @@ def test_older_result_keeps_view_only_provenance():
         'planning_request': planned_request,
         'planning_result': result,
     }
-    planning_adapter.validate_mission_provenance(mission)
+    supported, _ = planning_adapter.validate_mission_provenance(mission)
+    assert not supported
     try:
         planning_adapter.consume_result(planned_request, result)
     except ValueError:
         pass
     else:
         raise AssertionError('older engine results must remain view-only')
+
+    for version in ('0.4.0', '1.0.0'):
+        result['engine_version'] = version
+        saved = deepcopy(mission)
+        supported, _ = planning_adapter.validate_mission_provenance(mission)
+        assert supported
+        assert planning_adapter.consume_result(planned_request, result)
+        assert mission == saved
+        result['statistics']['known_distance_m'] += 1
+        try:
+            planning_adapter.validate_mission_provenance(mission)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('compatible engine versions must still reject forged results')
+        result['statistics']['known_distance_m'] -= 1
 
 
 def test_engine_actions_are_written_to_wpml():

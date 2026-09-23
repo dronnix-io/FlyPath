@@ -64,6 +64,8 @@ def _replace_package(source, destination, config):
     shutil.rmtree(staging, ignore_errors=True)
     shutil.rmtree(backup, ignore_errors=True)
     shutil.copytree(source, staging, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    for name in ("LICENSE", "NOTICE"):
+        shutil.copyfile(source.parents[1] / name, staging / name)
     record = {"tag": config["tag"], "commit": config["commit"], "sha256": _digest(staging)}
     (staging / SOURCE_RECORD).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     if destination.exists():

@@ -2,7 +2,6 @@
 
 import math
 
-from .flypath_engine import __version__ as ENGINE_VERSION
 from .flypath_engine.planning import (
     CONTRACT_VERSION, DIRECTION_CONVENTION, PlanningError as _PlanningError, plan_2d,
 )
@@ -10,6 +9,8 @@ from .flypath_engine.profiles import PROFILE_VERSION
 
 
 PlanningError = _PlanningError
+# These releases have identical planning behavior; revisit on engine upgrades.
+SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0')
 
 
 FINISH_ACTIONS = {
@@ -78,7 +79,7 @@ def consume_result(request, result, *, require_supported=True,
     if require_supported and (request.get('contract_version') != CONTRACT_VERSION
                               or result.get('contract_version') != CONTRACT_VERSION):
         raise ValueError('This saved planning contract version is not supported.')
-    if require_supported and result.get('engine_version') != ENGINE_VERSION:
+    if require_supported and result.get('engine_version') not in SUPPORTED_ENGINE_VERSIONS:
         raise ValueError('This saved engine version is not supported.')
     if any(result.get(key) != request.get(key)
            for key in ('profile_version', 'drone_profile_id')):
@@ -235,8 +236,8 @@ def validate_mission_provenance(mission):
                              legacy_waypoints=mission.get('waypoints') or None)
     supported = (request.get('contract_version') == CONTRACT_VERSION
                  and result.get('contract_version') == CONTRACT_VERSION
-                 and result.get('engine_version') == ENGINE_VERSION)
-    if supported and plan_2d(request) != result:
+                 and result.get('engine_version') in SUPPORTED_ENGINE_VERSIONS)
+    if supported and {**plan_2d(request), 'engine_version': result['engine_version']} != result:
         raise ValueError('The saved planning result does not match its request.')
     return supported, flights
 
