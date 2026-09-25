@@ -144,6 +144,9 @@ class WebsiteSyncLifecycleMixin:
         except FlypathSyncError as exc:
             QMessageBox.warning(self, title, str(exc))
             return None
+        if getattr(self, '_sync_incompatible', False):
+            QMessageBox.warning(self, title, flypath_sync.SYNC_MISMATCH_MESSAGE)
+            return None
         token = self._web_token()
         if token is None:
             return None
@@ -169,6 +172,8 @@ class WebsiteSyncLifecycleMixin:
                 raise call.error
             return call.result
         except FlypathSyncError as exc:
+            if exc.status == 426:
+                self._sync_incompatible = True
             if exc.status == 401:
                 # The token is gone or was regenerated: forget it so the next
                 # attempt asks for the new one instead of failing again.

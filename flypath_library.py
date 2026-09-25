@@ -95,6 +95,7 @@ class MissionLibrary(QWidget):
             connected = False
             storage_error = str(exc)
         storage_locked = bool(storage_error and 'storage is locked' in storage_error)
+        incompatible = getattr(self.planner, '_sync_incompatible', False)
         link = self.planner._current_website_link()
         self.link_label.setText('Editing: %s' % link['name'] if link else 'Current mission is not linked to FlyPath.')
         self.send_button.setText('Save changes' if link else 'Save to FlyPath…')
@@ -106,8 +107,8 @@ class MissionLibrary(QWidget):
         self.disconnect_button.setToolTip(
             'Forget access on this device and unlink the mission. This does not '
             'revoke the token on the website. Rotate old tokens to invalidate backups.')
-        self.refresh_button.setEnabled(connected)
-        self.import_button.setEnabled(connected and self.missions.currentItem() is not None)
+        self.refresh_button.setEnabled(connected and not incompatible)
+        self.import_button.setEnabled(connected and not incompatible and self.missions.currentItem() is not None)
         # Saving stays clickable without a preview: the planner answers a
         # click with the reason, which a disabled button cannot do (Qt
         # shows no tooltip on a disabled widget).
@@ -121,6 +122,10 @@ class MissionLibrary(QWidget):
         self.import_button.setToolTip('Open the selected mission in the planner.' if
                                       self.import_button.isEnabled() else
                                       'Select a mission in the list first.')
+        self.send_button.setEnabled(not incompatible)
+        self.copy_button.setEnabled(not incompatible)
+        if incompatible:
+            self.status.setText(flypath_sync.SYNC_MISMATCH_MESSAGE)
         if not connected:
             self.status.setText(storage_error or 'Connect your FlyPath account to browse missions.')
 
@@ -136,6 +141,7 @@ class MissionLibrary(QWidget):
             error = str(exc)
         finally:
             self.planner._website_link = None
+            self.planner._sync_incompatible = False
             self.missions.clear()
             self.update_buttons()
         if error:

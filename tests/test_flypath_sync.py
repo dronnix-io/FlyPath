@@ -31,6 +31,10 @@ TOKEN = 'tok-123'
 class _FakeResponse:
     def __init__(self, payload):
         self._body = json.dumps(payload).encode('utf-8')
+        self.version = payload.get('_sync_version', '1')
+
+    def getheader(self, name, default=None):
+        return self.version if name == flypath_sync.SYNC_VERSION_HEADER else default
 
     def read(self, limit):
         return self._body[:limit]
@@ -50,13 +54,16 @@ class _Urlopen:
         self._result = result
         self.request = None
         self.timeout = None
+        self.requests = []
 
     def __call__(self, request, timeout=None):
         self.request = request
+        self.requests.append(request)
         self.timeout = timeout
-        if isinstance(self._result, Exception):
-            raise self._result
-        return _FakeResponse(self._result)
+        result = self._result.pop(0) if isinstance(self._result, list) else self._result
+        if isinstance(result, Exception):
+            raise result
+        return _FakeResponse(result)
 
 
 # Keep the production opener method to put back after each test.
@@ -101,6 +108,8 @@ def test_push_posts_json_with_the_token_in_the_header():
     assert fake.request.full_url == f'{BASE}/api/missions/'
     assert fake.request.get_method() == 'POST'
     assert fake.request.get_header('Authorization') == f'Token {TOKEN}'
+    assert dict(fake.request.header_items())['X-flypath-sync-version'] == '1'
+    assert [request.get_method() for request in fake.requests] == ['GET', 'POST']
     assert json.loads(fake.request.data.decode('utf-8')) == payload
     assert fake.timeout == flypath_sync.TIMEOUT_S
 
@@ -125,6 +134,15 @@ def test_list_returns_the_missions_and_uses_get():
     assert result == missions
     assert fake.request.get_method() == 'GET'
     assert fake.request.full_url == f'{BASE}/api/missions/'
+
+
+def test_incompatible_website_disables_sync_before_writing():
+    error, fake = _run({'ok': True, 'missions': [], '_sync_version': '2'},
+                       lambda: push_mission(BASE, TOKEN, {'name': 'Unsaved'}))
+    assert isinstance(error, FlypathSyncError)
+    assert error.status == 426
+    assert 'Update the plugin' in str(error)
+    assert [request.get_method() for request in fake.requests] == ['GET']
 
 
 def test_get_mission_hits_the_detail_url_and_unwraps_the_mission():
@@ -256,7 +274,8 @@ def test_update_uses_patch_and_revision_without_mutating_the_payload():
 
 
 def test_update_conflict_is_not_retried_as_a_new_mission():
-    fake = _patch(_http_error(409, {'error': 'Changed elsewhere'}))
+    fake = _patch([{'ok': True, 'missions': []},
+                   _http_error(409, {'error': 'Changed elsewhere'})])
     try:
         try:
             flypath_sync.update_mission(BASE, TOKEN, 3, 4, {'name': 'Updated'})
