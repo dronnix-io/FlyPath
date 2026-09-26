@@ -598,7 +598,7 @@ _BUG_URL      = _REPO_URL + '/issues/new?template=bug_report.yml'
 _FEATURE_URL  = _REPO_URL + '/issues/new?template=feature_request.yml'
 _CONTRIB_URL  = _REPO_URL + '/blob/main/CONTRIBUTING.md'
 _README_URL   = _REPO_URL + '#readme'
-_SITE_URL     = 'https://flypath.io'
+_SITE_URL     = 'https://flypath.io/?utm_source=qgis&utm_medium=plugin&utm_campaign=web_planner'
 
 # ── Map preview colour constants ───────────────────────────────────────────
 _COLOR_START_MARKER = preview_layers.START_COLOR
