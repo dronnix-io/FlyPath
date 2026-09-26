@@ -15,8 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 def test_planning_dialog_state():
     try:
-        from qgis.core import QgsApplication, QgsProject
+        from qgis.core import QgsApplication, QgsLayerTreeModel, QgsProject
         from qgis.gui import QgsMapCanvas
+        from qgis.PyQt.QtCore import Qt
         from qgis.PyQt.QtGui import QShowEvent
         module = importlib.import_module(
             Path(__file__).resolve().parents[1].name + '.flypath_dialog')
@@ -92,6 +93,30 @@ def test_planning_dialog_state():
         assert 'travel unknown' not in planner.distanceLabel.text()
         shared = planner._website_payload('Shared mission')
         saved_result = shared['planning_result']
+        project = QgsProject.instance()
+        group = project.layerTreeRoot().children()[0]
+        old_path_id, old_waypoints_id = planner._preview_layer_ids
+        model = QgsLayerTreeModel(project.layerTreeRoot())
+        model.setFlag(getattr(QgsLayerTreeModel, 'Flag', QgsLayerTreeModel)
+                      .AllowLegendChangeState, True)
+        check_role = getattr(Qt, 'ItemDataRole', Qt).CheckStateRole
+        unchecked = getattr(Qt, 'CheckState', Qt).Unchecked
+        path_node = group.findLayer(old_path_id)
+        first_flight = model.layerLegendNodes(path_node)[0]
+        assert model.setData(model.legendNode2index(first_flight),
+                             unchecked, check_role)
+        group.findLayer(old_path_id).setItemVisibilityChecked(False)
+        group.findLayer(old_waypoints_id).setItemVisibilityChecked(False)
+        group.setItemVisibilityChecked(False)
+        planner.altitudeSpin.setValue(81)
+        planner._on_preview()
+        assert planner._preview_layer_ids != [old_path_id, old_waypoints_id]
+        group = project.layerTreeRoot().children()[0]
+        assert not group.itemVisibilityChecked()
+        assert all(not group.findLayer(layer_id).itemVisibilityChecked()
+                   for layer_id in planner._preview_layer_ids)
+        path_node = group.findLayer(planner._preview_layer_ids[0])
+        assert model.layerLegendNodes(path_node)[0].data(check_role) == unchecked
         stale = deepcopy(shared)
         stale['planning_result']['statistics']['photo_count'] += 1
         adjusted, recovery_note = planner._apply_website_mission(stale)

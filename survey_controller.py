@@ -148,15 +148,14 @@ class SurveyLifecycleMixin:
         """Forget all mission breaks and remove their markers."""
         self._corridor_breaks = set()
         if self._break_layer_id:
-            if QgsProject.instance().mapLayer(self._break_layer_id):
-                QgsProject.instance().removeMapLayer(self._break_layer_id)
+            preview_layers.remove([self._break_layer_id])
             self._break_layer_id = None
 
     def _redraw_break_markers(self):
         """(Re)draw the break vertices as a styled point layer."""
+        saved = preview_layers.visibility()
         if self._break_layer_id:
-            if QgsProject.instance().mapLayer(self._break_layer_id):
-                QgsProject.instance().removeMapLayer(self._break_layer_id)
+            preview_layers.remove([self._break_layer_id])
             self._break_layer_id = None
         if not self._corridor_breaks or self._survey_line is None:
             return
@@ -180,7 +179,8 @@ class SurveyLifecycleMixin:
             'outline_color': '#000000', 'outline_width': '0.4', 'size': '4.5',
         })
         layer.renderer().setSymbol(symbol)
-        preview_layers.register(layer)
+        preview_layers.register(layer, kind='breaks')
+        preview_layers.restore_visibility(saved)
         self._break_layer_id = layer.id()
 
     def _corridor_sublines(self):
@@ -615,6 +615,7 @@ class SurveyLifecycleMixin:
 
     def _show_drawn_polygon(self, geom, crs):
         """Add the drawn survey boundary as a styled temporary layer."""
+        saved = preview_layers.visibility()
         self._remove_survey_area_layer()
 
         # Reproject to WGS84 for consistency with other preview layers
@@ -642,7 +643,8 @@ class SurveyLifecycleMixin:
         layer.editingStopped.connect(self._on_survey_area_edited)
         layer.geometryChanged.connect(self._on_survey_area_geometry_changed)
 
-        preview_layers.register(layer)
+        preview_layers.register(layer, kind='survey')
+        preview_layers.restore_visibility(saved)
         self._survey_area_layer_id = layer.id()
         self.editPolygonBtn.setText('✎ Edit')
         self.editPolygonBtn.setVisible(True)
@@ -696,6 +698,7 @@ class SurveyLifecycleMixin:
 
     def _show_drawn_line(self, geom, crs):
         """Add the drawn corridor centre line as a styled temporary layer."""
+        saved = preview_layers.visibility()
         self._remove_survey_area_layer()
 
         wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
@@ -722,7 +725,8 @@ class SurveyLifecycleMixin:
         layer.editingStopped.connect(self._on_survey_area_edited)
         layer.geometryChanged.connect(self._on_survey_area_geometry_changed)
 
-        preview_layers.register(layer)
+        preview_layers.register(layer, kind='survey')
+        preview_layers.restore_visibility(saved)
         self._survey_area_layer_id = layer.id()
         self.editPolygonBtn.setText('✎ Edit')
         self.editPolygonBtn.setVisible(True)
@@ -732,8 +736,7 @@ class SurveyLifecycleMixin:
     def _clear_corridor_band(self):
         """Remove the illustrative buffered-corridor overlay if present."""
         if self._corridor_band_layer_id:
-            if QgsProject.instance().mapLayer(self._corridor_band_layer_id):
-                QgsProject.instance().removeMapLayer(self._corridor_band_layer_id)
+            preview_layers.remove([self._corridor_band_layer_id])
             self._corridor_band_layer_id = None
 
     def _show_corridor_band(self):
@@ -741,6 +744,7 @@ class SurveyLifecycleMixin:
         buffered by the corridor half-width. Illustrative only (never exported);
         it just shows roughly what ground the passes will cover. No-op unless a
         corridor centre line is defined."""
+        saved = preview_layers.visibility()
         self._clear_corridor_band()
         if (self._mission_kind() != 'corridor' or self._survey_line is None
                 or self._survey_line_crs is None):
@@ -780,7 +784,8 @@ class SurveyLifecycleMixin:
             'outline_style': 'dot',
         })
         layer.renderer().setSymbol(symbol)
-        preview_layers.register(layer)
+        preview_layers.register(layer, kind='corridor')
+        preview_layers.restore_visibility(saved)
         self._corridor_band_layer_id = layer.id()
 
     def _on_survey_area_edited(self):
@@ -862,7 +867,7 @@ class SurveyLifecycleMixin:
                 if layer.isEditable():
                     layer.rollBack()
                     self._finish_polygon_edit()
-                QgsProject.instance().removeMapLayer(self._survey_area_layer_id)
+                preview_layers.remove([self._survey_area_layer_id])
             self._survey_area_layer_id = None
         self.editPolygonBtn.setVisible(False)
         self.editPolygonBtn.setText('✎ Edit')
