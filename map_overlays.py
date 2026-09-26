@@ -7,6 +7,8 @@ from qgis.core import (
     QgsTextFormat, QgsVectorLayer, QgsVectorLayerSimpleLabeling,
 )
 
+from . import preview_layers
+
 
 _TAKEOFF_PURPLES = [
     (74, 20, 140), (123, 31, 162), (156, 39, 176), (103, 58, 183),
@@ -51,7 +53,7 @@ def create_takeoff(result, preview_layer_ids=(), project=None):
     layer.dataProvider().addFeatures(features)
     layer.setRenderer(_takeoff_renderer(indices))
     layer.triggerRepaint()
-    _register_below_preview(layer, preview_layer_ids, project)
+    preview_layers.register(layer, project)
     return layer
 
 
@@ -89,7 +91,7 @@ def create_contours(result, preview_layer_ids=(), project=None):
     labels.setFormat(text)
     layer.setLabeling(QgsVectorLayerSimpleLabeling(labels))
     layer.setLabelsEnabled(True)
-    _register_below_preview(layer, preview_layer_ids, project)
+    preview_layers.register(layer, project)
     return layer
 
 
@@ -116,15 +118,3 @@ def _takeoff_renderer(indices):
         root.appendChild(QgsRuleBasedRenderer.Rule(
             symbol, filterExp=f'"mission" = {mission}', label=label))
     return QgsRuleBasedRenderer(root)
-
-
-def _register_below_preview(layer, preview_layer_ids, project=None):
-    project = project or QgsProject.instance()
-    project.addMapLayer(layer, False)
-    root = project.layerTreeRoot()
-    own_ids = set(preview_layer_ids)
-    insert_at = 0
-    for index, node in enumerate(root.children()):
-        if getattr(node, 'layerId', lambda: None)() in own_ids:
-            insert_at = index + 1
-    root.insertLayer(insert_at, layer)

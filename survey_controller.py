@@ -19,6 +19,7 @@ from qgis.core import (
 )
 
 from .map_tools import LineDrawTool, PolygonDrawTool, VertexPickTool
+from . import preview_layers
 _INFO_IDLE = 'ⓘ  Hover over any field to see what it does.'
 
 try:
@@ -179,7 +180,7 @@ class SurveyLifecycleMixin:
             'outline_color': '#000000', 'outline_width': '0.4', 'size': '4.5',
         })
         layer.renderer().setSymbol(symbol)
-        QgsProject.instance().addMapLayer(layer)
+        preview_layers.register(layer)
         self._break_layer_id = layer.id()
 
     def _corridor_sublines(self):
@@ -641,7 +642,7 @@ class SurveyLifecycleMixin:
         layer.editingStopped.connect(self._on_survey_area_edited)
         layer.geometryChanged.connect(self._on_survey_area_geometry_changed)
 
-        QgsProject.instance().addMapLayer(layer)
+        preview_layers.register(layer)
         self._survey_area_layer_id = layer.id()
         self.editPolygonBtn.setText('✎ Edit')
         self.editPolygonBtn.setVisible(True)
@@ -721,7 +722,7 @@ class SurveyLifecycleMixin:
         layer.editingStopped.connect(self._on_survey_area_edited)
         layer.geometryChanged.connect(self._on_survey_area_geometry_changed)
 
-        QgsProject.instance().addMapLayer(layer)
+        preview_layers.register(layer)
         self._survey_area_layer_id = layer.id()
         self.editPolygonBtn.setText('✎ Edit')
         self.editPolygonBtn.setVisible(True)
@@ -779,7 +780,7 @@ class SurveyLifecycleMixin:
             'outline_style': 'dot',
         })
         layer.renderer().setSymbol(symbol)
-        QgsProject.instance().addMapLayer(layer)
+        preview_layers.register(layer)
         self._corridor_band_layer_id = layer.id()
 
     def _on_survey_area_edited(self):

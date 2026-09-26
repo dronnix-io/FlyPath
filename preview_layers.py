@@ -3,8 +3,8 @@
 from qgis.PyQt.QtGui import QColor, QFont
 from qgis.core import (
     Qgis, QgsFeature, QgsGeometry, QgsLineSymbol, QgsMarkerSymbol,
-    QgsPalLayerSettings, QgsPointXY, QgsProject, QgsRuleBasedRenderer,
-    QgsSimpleLineSymbolLayer, QgsTextFormat, QgsVectorLayer,
+    QgsLayerTreeGroup, QgsPalLayerSettings, QgsPointXY, QgsProject,
+    QgsRuleBasedRenderer, QgsSimpleLineSymbolLayer, QgsTextFormat, QgsVectorLayer,
     QgsVectorLayerSimpleLabeling,
 )
 
@@ -24,9 +24,44 @@ def create(missions, heights=None, ground=None, project=None):
     project = project or QgsProject.instance()
     path = _path_layer(missions)
     waypoints = _waypoint_layer(missions, heights, ground)
-    project.addMapLayer(path)
-    project.addMapLayer(waypoints)
+    register(path, project, above=True)
+    register(waypoints, project, above=True)
     return [path.id(), waypoints.id()]
+
+
+def register(layer, project=None, above=False):
+    """Place a temporary FlyPath layer in the plugin-owned root group."""
+    project = project or QgsProject.instance()
+    group = _group(project)
+    project.addMapLayer(layer, False)
+    if above:
+        group.insertLayer(0, layer)
+    else:
+        group.addLayer(layer)
+
+
+def _group(project):
+    """Reuse the owned group and keep it above other project layers."""
+    root = project.layerTreeRoot()
+    groups = list(root.children())
+    group = None
+    while groups:
+        node = groups.pop()
+        if not isinstance(node, QgsLayerTreeGroup):
+            continue
+        if node.customProperty('flypath_group') is True:
+            group = node
+            break
+        groups.extend(node.children())
+    if group is None:
+        group = root.insertGroup(0, 'FlyPath')
+        group.setCustomProperty('flypath_group', True)
+    elif root.children()[0] != group:
+        moved = group.clone()
+        root.insertChildNode(0, moved)
+        group.parent().removeChildNode(group)
+        group = moved
+    return group
 
 
 def redraw(layer_ids, missions, heights=None, ground=None, project=None):
@@ -37,6 +72,7 @@ def redraw(layer_ids, missions, heights=None, ground=None, project=None):
     if path is None or waypoints is None:
         remove(layer_ids, project)
         return create(missions, heights, ground, project)
+    _group(project)
     path.setRenderer(_path_renderer(len(missions)))
     _populate_path(path, missions)
     _populate_waypoints(waypoints, missions, heights, ground)

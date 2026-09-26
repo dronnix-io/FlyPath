@@ -21,6 +21,13 @@ def test_preview_layers_create_redraw_and_recover():
     app.initQgis()
     project = QgsProject.instance()
     project.clear()
+    root = project.layerTreeRoot()
+    user_group = root.addGroup('FlyPath')
+    ordinary = module.QgsVectorLayer('Point?crs=EPSG:4326', 'User layer', 'memory')
+    project.addMapLayer(ordinary, False)
+    user_group.addLayer(ordinary)
+    bridge = project.layerTreeRegistryBridge()
+    bridge.setLayerInsertionPoint(user_group, 0)
     missions = [[(13.0, 51.0), (13.1, 51.1), (13.2, 51.2)],
                 [(14.0, 52.0), (14.1, 52.1)]]
     ids = module.create(
@@ -28,6 +35,11 @@ def test_preview_layers_create_redraw_and_recover():
         ground=[[100, 101, 102], [110, 111]], project=project)
     try:
         assert len(ids) == 2
+        group = root.children()[0]
+        assert group is not user_group and group.name() == 'FlyPath'
+        assert group.customProperty('flypath_group') is True
+        assert [node.layerId() for node in group.children()] == ids[::-1]
+        assert [node.layerId() for node in user_group.children()] == [ordinary.id()]
         path, points = [project.mapLayer(layer_id) for layer_id in ids]
         assert path.customProperty('flypath_internal') is True
         assert path.featureCount() == 2 and points.featureCount() == 5
@@ -50,8 +62,6 @@ def test_preview_layers_create_redraw_and_recover():
         assert point_rules[1].symbol().color().name().upper() == module.END_COLOR
         assert point_rules[2].symbol().color().name().upper() == module.MID_COLOR
 
-        ordinary = module.QgsVectorLayer('Point?crs=EPSG:4326', 'User layer', 'memory')
-        project.addMapLayer(ordinary)
         module.remove_stale(project)
         assert project.mapLayer(ordinary.id()) is ordinary
         assert not any(project.mapLayer(layer_id) for layer_id in ids), \
@@ -59,11 +69,43 @@ def test_preview_layers_create_redraw_and_recover():
 
         replacement = module.redraw(ids, [missions[0]], project=project)
         assert replacement != ids
+        assert root.children()[0] is group
+        assert [node.layerId() for node in group.children()] == replacement[::-1]
         assert all(project.mapLayer(layer_id) for layer_id in replacement)
         assert project.mapLayer(replacement[0]).featureCount() == 1
+        group.children()[0].setItemVisibilityChecked(False)
+        user_parent = root.insertGroup(0, 'User parent')
+        assert module.redraw(replacement, [missions[0]], project=project) == replacement
+        group = root.children()[0]
+        assert group.customProperty('flypath_group') is True
+        assert not group.children()[0].itemVisibilityChecked()
+        assert all(project.mapLayer(layer_id) for layer_id in replacement)
+        user_parent.addChildNode(group.clone())
+        root.removeChildNode(group)
+        extra = module.QgsVectorLayer('Point?crs=EPSG:4326', 'FlyPath extra', 'memory')
+        extra.setCustomProperty('flypath_internal', True)
+        extra_id = extra.id()
+        module.register(extra, project)
+        app.processEvents()
+        group = root.children()[0]
+        assert group.customProperty('flypath_group') is True
+        assert not user_parent.children()
+        assert [node.layerId() for node in group.children()] == replacement[::-1] + [extra_id]
+        assert not group.children()[0].itemVisibilityChecked()
+        assert all(project.mapLayer(layer_id) for layer_id in replacement)
+        assert project.mapLayer(extra_id) is extra
+        assert project.mapLayer(ordinary.id()) is ordinary
         module.remove(replacement, project)
         assert not any(project.mapLayer(layer_id) for layer_id in replacement)
+        module.remove_stale(project)
+        assert project.mapLayer(extra_id) is None
+        root.removeChildNode(group)
+        recreated = module.create([missions[0]], project=project)
+        assert root.children()[0].customProperty('flypath_group') is True
+        assert [node.layerId() for node in root.children()[0].children()] == recreated[::-1]
+        assert project.mapLayer(ordinary.id()) is ordinary
     finally:
+        bridge.setLayerInsertionPoint(root, 0)
         project.clear()
 
 

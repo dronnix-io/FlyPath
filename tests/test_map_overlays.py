@@ -50,9 +50,11 @@ def test_takeoff_and_contour_layers_are_registered_styled_and_removed():
         assert contours.renderer().symbol().color().name().upper() == '#4DA3FF'
         assert takeoff.customProperty('flypath_internal') is True
         assert contours.customProperty('flypath_internal') is True
-        tree_ids = [node.layerId() for node in project.layerTreeRoot().children()]
-        assert tree_ids.index(takeoff.id()) > tree_ids.index(preview_ids[-1])
-        assert tree_ids.index(contours.id()) > tree_ids.index(preview_ids[-1])
+        root = project.layerTreeRoot()
+        group = root.children()[0]
+        assert group.customProperty('flypath_group') is True
+        assert [node.layerId() for node in group.children()] == [
+            preview_ids[1], preview_ids[0], takeoff.id(), contours.id()]
         takeoff_id, contour_id = takeoff.id(), contours.id()
         overlays.remove(takeoff_id, project)
         overlays.remove(contour_id, project)
