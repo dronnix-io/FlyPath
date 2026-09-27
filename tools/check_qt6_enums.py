@@ -49,6 +49,8 @@ UNSCOPED_ENUM_PATTERNS = [
     r"\bQgsVertexMarker\.ICON_\w+\b",
     r"\bQgsPalLayerSettings\.(OverPoint|AroundPoint|OnLine|AboveLine|BelowLine|Line|Curved|Horizontal|Free)\b",
     r"\bQSettings\.(NoError|AccessError|FormatError)\b",
+    r"\bQgsSymbolLayer\.Property\w+\b",
+    r"\bQgsPalLayerSettings\.OffsetXY\b",
 ]
 
 # Directories not scanned (not shipped, or no Qt usage).

@@ -24,8 +24,8 @@ try:
     _SYMBOL_OFFSET = QgsSymbolLayer.Property.PropertyOffset
     _LABEL_OFFSET = QgsPalLayerSettings.Property.OffsetXY
 except AttributeError:
-    _SYMBOL_OFFSET = QgsSymbolLayer.PropertyOffset
-    _LABEL_OFFSET = QgsPalLayerSettings.OffsetXY
+    _SYMBOL_OFFSET = getattr(QgsSymbolLayer, 'PropertyOffset')
+    _LABEL_OFFSET = getattr(QgsPalLayerSettings, 'OffsetXY')
 
 
 def create(missions, heights=None, ground=None, project=None):
