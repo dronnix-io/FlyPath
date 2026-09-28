@@ -598,7 +598,7 @@ _BUG_URL      = _REPO_URL + '/issues/new?template=bug_report.yml'
 _FEATURE_URL  = _REPO_URL + '/issues/new?template=feature_request.yml'
 _CONTRIB_URL  = _REPO_URL + '/blob/main/CONTRIBUTING.md'
 _README_URL   = _REPO_URL + '#readme'
-_SITE_URL     = 'https://flypath.io'
+_SITE_URL     = 'https://flypath.io/?utm_source=qgis&utm_medium=plugin&utm_campaign=web_planner'
 
 # ── Map preview colour constants ───────────────────────────────────────────
 _COLOR_START_MARKER = preview_layers.START_COLOR
@@ -2604,6 +2604,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
                 'takeoff zone.')
             return False
         tolerance_m = self.takeoffToleranceSpin.value()
+        saved_visibility = preview_layers.visibility()
         self._remove_takeoff_layer()
         try:
             QApplication.setOverrideCursor(_WaitCursor)
@@ -2640,6 +2641,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
                 % (result['radius_m'], tolerance_m))
             return False
         self._takeoff_layer_id = layer.id()
+        preview_layers.restore_visibility(saved_visibility)
         self.iface.mapCanvas().refresh()
 
         n_zones = layer.featureCount()
@@ -2808,6 +2810,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
                 'contours.')
             return False
         extent = self.contourExtentCombo.currentData()
+        saved_visibility = preview_layers.visibility()
         self._remove_contour_layer()
         try:
             QApplication.setOverrideCursor(_WaitCursor)
@@ -2839,6 +2842,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
                 'a finer interval.' % result['interval'])
             return False
         self._contour_layer_id = layer.id()
+        preview_layers.restore_visibility(saved_visibility)
         self.iface.mapCanvas().refresh()
         where = ('the survey area' if extent == 'survey'
                  else 'the takeoff circles')
@@ -3330,6 +3334,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
                 'enabled. Choose the Splitting checkbox before regenerating it.')
             return
         self.previewBtn.setText('Preview on Map')
+        saved_visibility = preview_layers.visibility()
         self._on_clear_preview(reset_area=False)
         if self._mission_kind() == 'corridor':
             missions_h = self._corridor_missions_with_heights()
@@ -3358,6 +3363,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         self._show_corridor_band()   # under the path (no-op in 2D)
         self._preview_layer_ids = preview_layers.create(
             missions, heights, ground)
+        preview_layers.restore_visibility(saved_visibility)
         self._update_web_buttons()
         self.iface.mapCanvas().refresh()
 

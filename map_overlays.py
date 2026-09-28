@@ -3,9 +3,11 @@
 from qgis.PyQt.QtGui import QColor, QFont
 from qgis.core import (
     Qgis, QgsFeature, QgsFillSymbol, QgsGeometry, QgsLineSymbol,
-    QgsPalLayerSettings, QgsPointXY, QgsProject, QgsRuleBasedRenderer,
+    QgsPalLayerSettings, QgsPointXY, QgsRuleBasedRenderer,
     QgsTextFormat, QgsVectorLayer, QgsVectorLayerSimpleLabeling,
 )
+
+from . import preview_layers
 
 
 _TAKEOFF_PURPLES = [
@@ -51,7 +53,7 @@ def create_takeoff(result, preview_layer_ids=(), project=None):
     layer.dataProvider().addFeatures(features)
     layer.setRenderer(_takeoff_renderer(indices))
     layer.triggerRepaint()
-    _register_below_preview(layer, preview_layer_ids, project)
+    preview_layers.register(layer, project, kind='takeoff')
     return layer
 
 
@@ -89,7 +91,7 @@ def create_contours(result, preview_layer_ids=(), project=None):
     labels.setFormat(text)
     layer.setLabeling(QgsVectorLayerSimpleLabeling(labels))
     layer.setLabelsEnabled(True)
-    _register_below_preview(layer, preview_layer_ids, project)
+    preview_layers.register(layer, project, kind='contours')
     return layer
 
 
@@ -97,9 +99,7 @@ def remove(layer_id, project=None):
     """Remove a registered overlay and tolerate prior outside removal."""
     if not layer_id:
         return
-    project = project or QgsProject.instance()
-    if project.mapLayer(layer_id):
-        project.removeMapLayer(layer_id)
+    preview_layers.remove([layer_id], project)
 
 
 def _takeoff_renderer(indices):
@@ -116,15 +116,3 @@ def _takeoff_renderer(indices):
         root.appendChild(QgsRuleBasedRenderer.Rule(
             symbol, filterExp=f'"mission" = {mission}', label=label))
     return QgsRuleBasedRenderer(root)
-
-
-def _register_below_preview(layer, preview_layer_ids, project=None):
-    project = project or QgsProject.instance()
-    project.addMapLayer(layer, False)
-    root = project.layerTreeRoot()
-    own_ids = set(preview_layer_ids)
-    insert_at = 0
-    for index, node in enumerate(root.children()):
-        if getattr(node, 'layerId', lambda: None)() in own_ids:
-            insert_at = index + 1
-    root.insertLayer(insert_at, layer)
