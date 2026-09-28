@@ -60,29 +60,28 @@ class MissionLibrary(QWidget):
         notice_layout = QVBoxLayout(self.sync_notice)
         notice_layout.setSpacing(16)
         for text, style in (
-                ('Website sync unavailable', 'font-size: 20px; font-weight: bold;'),
-                ('This plugin and the website use incompatible sync versions.\n'
-                 'Check for a plugin update to reconnect.', 'font-size: 15px;')):
+                ('Sync unavailable', 'font-size: 20px; font-weight: bold;'),
+                ('A newer version may be available.', 'font-size: 15px;')):
             label = QLabel(text)
             label.setWordWrap(True)
             label.setAlignment(_AlignCenter)
             label.setStyleSheet(style)
             notice_layout.addWidget(label)
-        self.update_button = QPushButton('Get latest FlyPath')
+        self.update_button = QPushButton('Update plugin')
         self.update_button.setStyleSheet(
-            'QPushButton { background: #2d6fba; color: white; font-size: 15px; '
-            'font-weight: bold; padding: 10px 20px; border: 2px solid transparent; border-radius: 5px; }'
+            'QPushButton { background: #2d6fba; color: white; font-size: 14px; '
+            'font-weight: normal; min-height: 22px; padding: 8px 20px; '
+            'border: 2px solid transparent; border-radius: 5px; }'
             'QPushButton:hover { background: #367dca; }'
             'QPushButton:focus { border-color: #b8dcff; }')
         self.update_button.clicked.connect(lambda: QDesktopServices.openUrl(
             QUrl('https://plugins.qgis.org/plugins/FlyPath/')))
         notice_layout.addWidget(self.update_button, 0, _AlignCenter)
-        local_note = QLabel('You can continue planning and exporting locally.')
-        local_note.setWordWrap(True)
-        local_note.setAlignment(_AlignCenter)
-        local_note.setStyleSheet('font-size: 13px;')
-        notice_layout.addWidget(local_note)
-        layout.addWidget(self.sync_notice, 0, _AlignCenter)
+        notice_row = QHBoxLayout()
+        notice_row.addStretch()
+        notice_row.addWidget(self.sync_notice, 1)
+        notice_row.addStretch()
+        layout.addLayout(notice_row)
         layout.addStretch(0)
         self.controls = QWidget()
         layout.addWidget(self.controls, 1)

@@ -137,7 +137,44 @@ def test_incompatible_sync_notice():
     app.processEvents()
 
 
+def test_incompatible_sync_notice_wraps_without_clipping():
+    try:
+        library_module = importlib.import_module(package + '.flypath_library')
+        dialog_module = importlib.import_module(package + '.flypath_dialog')
+        from qgis.PyQt.QtGui import QFont, QFontDatabase
+        from qgis.PyQt.QtWidgets import QApplication, QWidget, QTabWidget, QLabel
+    except ImportError as exc:
+        raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
+    app = QApplication.instance() or QApplication([])
+    previous_font = QFont(app.font())
+    if os.name == 'nt':
+        font_path = Path(os.environ['WINDIR']) / 'Fonts' / 'segoeui.ttf'
+        if font_path.exists():
+            QFontDatabase.addApplicationFont(str(font_path))
+        app.setFont(QFont('Segoe UI', 9))
+    for width in (250, 400, 700):
+        dock = QTabWidget()
+        dock.setStyleSheet(dialog_module.STYLESHEET)
+        planner = QWidget(dock)
+        planner._sync_incompatible = True
+        planner._current_website_link = lambda: None
+        dock.addTab(planner, 'Planner')
+        with patch.object(library_module.flypath_sync, 'load_token', return_value='fake'):
+            library = library_module.MissionLibrary(planner, dock)
+        dock.addTab(library, 'My missions')
+        dock.resize(width, 600)
+        dock.show()
+        dock.setCurrentWidget(library)
+        app.processEvents()
+        body = next(label for label in library.sync_notice.findChildren(QLabel)
+                    if label.text() == 'A newer version may be available.')
+        assert body.height() >= body.heightForWidth(body.width()), width
+        dock.close()
+    app.setFont(previous_font)
+
+
 if __name__ == '__main__':
     test_library()
     test_incompatible_sync_notice()
+    test_incompatible_sync_notice_wraps_without_clipping()
     print('Mission library smoke check passed')
