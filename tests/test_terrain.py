@@ -112,6 +112,21 @@ def test_corridor_densifies_interior_legs():
     assert len(corridor) == len(elevations)
 
 
+def test_corridor_sampling_budget_counts_every_leg():
+    # A short first leg must not hide a long corridor leg from the sample cap.
+    wps = [(0.0, 0.0), (0.0, 0.001), (0.9, 0.001)]
+    sampled = []
+
+    def sample(lon, lat):
+        sampled.append((lon, lat))
+        return 100.0
+
+    route, elevations = densify_by_terrain(
+        wps, sample, tolerance_m=5.0, all_legs=True)
+    assert len(sampled) <= 1500
+    assert route == wps and elevations == [100.0] * len(wps)
+
+
 # ── Height calculation ──────────────────────────────────────────────────────
 
 def test_heights_hold_constant_agl():

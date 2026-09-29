@@ -91,6 +91,23 @@ def test_planning_dialog_state():
         assert planner._missions == expected
         assert 'travel unknown' not in planner.flightTimeLabel.text()
         assert 'travel unknown' not in planner.distanceLabel.text()
+        # Generated previews use every edited setting, including both directions
+        # of the exclusive route-style buttons.
+        previous_result = planner._planning.result
+        for change, field, value in (
+                (lambda: planner.marginSpin.setValue(10), 'margin_m', 10),
+                (lambda: planner.pathStraightRadio.setChecked(True), 'turn_style', 'straight'),
+                (lambda: planner.pathCurvedRadio.setChecked(True), 'turn_style', 'curved'),
+                (lambda: planner.finishActionCombo.setCurrentIndex(1), 'finish_action', 'hover')):
+            change()
+            planner._on_preview()
+            assert planner._planning.request[field] == value
+            assert planner._planning.result and planner._preview_layer_ids
+            assert planner._planning.result is not previous_result
+            previous_result = planner._planning.result
+        planner.marginSpin.setValue(0)
+        planner.finishActionCombo.setCurrentIndex(0)
+        planner._on_preview()
         shared = planner._website_payload('Shared mission')
         saved_result = shared['planning_result']
         project = QgsProject.instance()
@@ -185,6 +202,20 @@ def test_planning_dialog_state():
             planner._on_preview()
         generate.assert_not_called()
         assert planner._planning.result == saved_result
+        for change in (
+                lambda: planner.marginSpin.setValue(10),
+                lambda: planner.pathStraightRadio.setChecked(True),
+                lambda: planner.finishActionCombo.setCurrentIndex(1)):
+            change()
+            assert planner._planning.dirty
+            assert planner.previewBtn.text() == 'Regenerate on Map'
+            with patch.object(module.QMessageBox, 'warning') as warning:
+                assert planner._on_send_to_website() is False
+                planner._on_export()
+            assert [call.args[1] for call in warning.call_args_list] == [
+                'Regeneration Required', 'Regeneration Required']
+            planner._apply_website_mission(shared)
+            assert planner._planning.locked and not planner._planning.dirty
         planner.altitudeSpin.setValue(81)
         assert planner._planning.dirty
         assert planner.previewBtn.text() == 'Regenerate on Map'
@@ -245,6 +276,13 @@ def test_planning_dialog_state():
                 patch.object(module.QMessageBox, 'critical') as critical:
             planner._export_rc('Mission', [(0, 0)], 5.0)
         assert critical.call_args.args[1:] == ('RC Export Failed', 'bad geometry')
+
+        planner.cleanup()
+        planner.layerCombo.clear()
+        planner.demCombo.clear()
+        project.layersAdded.emit([])
+        project.layersRemoved.emit([])
+        assert planner.layerCombo.count() == planner.demCombo.count() == 0
     finally:
         planner.close()
         canvas.close()
