@@ -1,5 +1,7 @@
 """QGIS layers used to display a generated FlyPath route."""
 
+from contextlib import contextmanager
+
 from qgis.PyQt.QtGui import QColor, QFont
 from qgis.core import (
     Qgis, QgsFeature, QgsGeometry, QgsLineSymbol, QgsMarkerSymbol,
@@ -16,6 +18,23 @@ MID_COLOR = '#050C14'
 _FLIGHT_COLORS = ['#FFE600', '#ff9f43', '#a88bff', '#35c99a', '#ff6f91']
 _ORDER = ('waypoints', 'breaks', 'path', 'survey', 'corridor',
           'takeoff', 'contours')
+_preserved_ids = None
+_deferred_ids = None
+
+
+@contextmanager
+def preserve_during_import(layer_ids):
+    """Keep the old map layers alive until an import has fully succeeded."""
+    global _preserved_ids, _deferred_ids
+    previous, previous_deferred = _preserved_ids, _deferred_ids
+    _preserved_ids = set(layer_ids)
+    _deferred_ids = set()
+    try:
+        yield _deferred_ids
+    finally:
+        _preserved_ids, _deferred_ids = previous, previous_deferred
+
+
 try:
     _FONT_BOLD = QFont.Weight.Bold
 except AttributeError:
@@ -177,6 +196,9 @@ def remove(layer_ids, project=None):
     """Remove all registered preview layers, tolerating outside removal."""
     project = project or QgsProject.instance()
     for layer_id in layer_ids:
+        if _preserved_ids is not None and layer_id in _preserved_ids:
+            _deferred_ids.add(layer_id)
+            continue
         if project.mapLayer(layer_id):
             project.removeMapLayer(layer_id)
     _remove_empty_group(project)
@@ -198,7 +220,8 @@ def _remove_empty_group(project):
 
 
 def _path_renderer(count):
-    root = QgsRuleBasedRenderer.Rule(None)
+    # Native clones avoid deleting SIP-derived rules through QGIS's base type.
+    root = QgsRuleBasedRenderer.Rule(None).clone()
     for mission in range(max(1, count)):
         symbol = QgsLineSymbol.createSimple({
             'color': '#071018', 'width': '1.3',
@@ -210,7 +233,7 @@ def _path_renderer(count):
         }))
         label = 'Flight path' if count <= 1 else f'Flight {mission + 1}'
         root.appendChild(QgsRuleBasedRenderer.Rule(
-            symbol, filterExp=f'"mission" = {mission}', label=label))
+            symbol, filterExp=f'"mission" = {mission}', label=label).clone())
     return QgsRuleBasedRenderer(root)
 
 
@@ -249,7 +272,7 @@ def _waypoint_layer(missions, heights=None, ground=None):
     layer.setCustomProperty('flypath_internal', True)
     _populate_waypoints(layer, missions, heights, ground)
 
-    root = QgsRuleBasedRenderer.Rule(None)
+    root = QgsRuleBasedRenderer.Rule(None).clone()
     rules = [
         ('"wp_type" = \'start\'', START_COLOR, MID_COLOR, '7.5', 'Start'),
         ('"wp_type" = \'end\'', END_COLOR, MID_COLOR, '7.5', 'End'),
@@ -263,7 +286,7 @@ def _waypoint_layer(missions, heights=None, ground=None):
         symbol.symbolLayer(0).setDataDefinedProperty(
             _SYMBOL_OFFSET, QgsProperty.fromField('display_offset'))
         root.appendChild(QgsRuleBasedRenderer.Rule(
-            symbol, filterExp=expression, label=label))
+            symbol, filterExp=expression, label=label).clone())
     layer.setRenderer(QgsRuleBasedRenderer(root))
 
     labels = QgsPalLayerSettings()

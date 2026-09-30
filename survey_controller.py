@@ -852,6 +852,10 @@ class SurveyLifecycleMixin:
     def _remove_survey_area_layer(self):
         """Remove the temporary drawn-polygon layer if it exists."""
         if self._survey_area_layer_id:
+            if self._survey_area_layer_id in getattr(self, '_import_preserved_layer_ids', ()):
+                preview_layers.remove([self._survey_area_layer_id])
+                self._survey_area_layer_id = None
+                return
             layer = QgsProject.instance().mapLayer(self._survey_area_layer_id)
             if layer:
                 try:

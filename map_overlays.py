@@ -103,7 +103,8 @@ def remove(layer_id, project=None):
 
 
 def _takeoff_renderer(indices):
-    root = QgsRuleBasedRenderer.Rule(None)
+    # Transfer native clones, not SIP-derived rules, to the renderer's owner.
+    root = QgsRuleBasedRenderer.Rule(None).clone()
     single = len(indices) <= 1
     for mission in indices:
         red, green, blue = _TAKEOFF_PURPLES[mission % len(_TAKEOFF_PURPLES)]
@@ -114,5 +115,5 @@ def _takeoff_renderer(indices):
         })
         label = 'Takeoff zone' if single else f'Takeoff {mission + 1}'
         root.appendChild(QgsRuleBasedRenderer.Rule(
-            symbol, filterExp=f'"mission" = {mission}', label=label))
+            symbol, filterExp=f'"mission" = {mission}', label=label).clone())
     return QgsRuleBasedRenderer(root)

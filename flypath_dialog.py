@@ -3856,8 +3856,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         if planning_issue == 'regeneration_required':
             QMessageBox.warning(
                 self, 'Regeneration Required',
-                'Mission settings changed, but the saved route is still preserved. '
-                'Choose Preview to regenerate it before export.')
+                'Choose Preview to regenerate this mission before export.')
             return
         if self.terrainFollowCheck.isChecked() and self._terrain_failed:
             QMessageBox.warning(

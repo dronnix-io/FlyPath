@@ -1,7 +1,7 @@
 """FlyPath website save/load orchestration for the QGIS dialog."""
 import datetime
 
-from qgis.PyQt.QtCore import QEventLoop, QObject, QThread, Qt, QUrl, pyqtSignal, pyqtSlot
+from qgis.PyQt.QtCore import QEventLoop, QObject, QSettings, QThread, Qt, QUrl, pyqtSignal, pyqtSlot
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
     QApplication,
@@ -417,10 +417,11 @@ class WebsiteSyncLifecycleMixin:
             supported, flights = provenance
             self._apply_planning_result(request, result, flights=flights)
             self._planning.preserve_imported_route(supported=supported)
-        elif legacy and self._mission_type() != 'full':
+        elif legacy:
             route = [(float(lon), float(lat)) for lat, lon in legacy]
             self._waypoints = route
-            self._missions = self._split_missions(route)
+            self._missions = (self._split_missions(route)
+                              if self._mission_type() != 'full' else [route])
             self._live_waypoints = route
             self._live_missions = self._missions
             self._shot_spacing_m = max(
@@ -428,21 +429,23 @@ class WebsiteSyncLifecycleMixin:
             restore_estimates()
             self.waypointsLabel.setText(str(sum(map(len, self._missions))))
             self.linesLabel.setText(str(len(route) // 2))
-            self._set_info('Saved route and estimates. Editing settings requires '
-                           'regeneration with the installed planning engine.')
-        else:
-            self._planning.begin_preview(has_saved_route=False)
-            if not self._split_choice_required:
-                self._on_preview()
-                if not self._planning.result:
-                    restore_estimates()
-                    self.waypointsLabel.setText(str(len(self._waypoints)))
+            if self._mission_type() == 'full':
+                self._planning.require_regeneration()
+                self._set_info('This older Full-auto route has no verified capture '
+                               'actions. Choose Regenerate on Map before saving or exporting.')
             else:
-                self._set_info('Choose Splitting, then Preview on Map to generate '
-                               'this older mission’s route.')
+                self._set_info('Saved route and estimates. Editing settings requires '
+                               'regeneration with the installed planning engine.')
+        else:
+            self._planning.require_regeneration()
+            self.waypointsLabel.setText('0')
+            self._set_info('Preview on Map to generate this mission’s route.')
+            self.previewBtn.setText('Regenerate on Map')
+            self._update_web_buttons()
             return
         self._planning.preserve_imported_route()
-        self.previewBtn.setText('Preview on Map')
+        self.previewBtn.setText('Regenerate on Map' if self._planning.regeneration_required
+                                else 'Preview on Map')
         if self.terrainFollowCheck.isChecked():
             self._terrain_failed = True
         self._preview_layer_ids = preview_layers.create(self._missions)
@@ -503,26 +506,165 @@ class WebsiteSyncLifecycleMixin:
             return raw[:16].replace('T', ' ')
 
     def _apply_website_mission(self, mission):
-        """Rebuild a website mission as a local one. Everything the plugin
-        cannot represent is rejected before any map state changes, so a refused
-        load leaves the current plan untouched. Returns adjusted-setting lines
-        and an optional saved-route recovery note for the caller to show."""
+        """Apply a library mission while retaining the current one on failure."""
+        active_layer = QgsProject.instance().mapLayer(self._survey_area_layer_id) \
+            if self._survey_area_layer_id else None
+        if (self._draw_tool is not None or self._break_tool is not None
+                or (active_layer and active_layer.isEditable())):
+            raise FlypathSyncError(
+                'Finish or cancel the current survey drawing or edit before loading a mission.')
+        prepared = self._prepare_website_mission(mission)
+        project = QgsProject.instance()
+        canvas = self.iface.mapCanvas()
+        old_ids = {lid for lid, layer in project.mapLayers().items()
+                   if layer.customProperty('flypath_internal')}
+        visibility = preview_layers.visibility()
+        extent = canvas.extent()
+        destination_settings = QSettings('FlyPath', 'FlyPath')
+        destination_mode = destination_settings.value('dest_mode')
+        state_names = (
+            '_waypoints', '_missions', '_shot_spacing_m', '_gen_elevations',
+            '_terrain_failed', '_website_link', '_source_mode',
+            '_monitored_layer_id',
+            '_selected_layer_id', '_split_overridden', '_split_choice_required',
+            '_setting_split', '_loading_mission', '_survey_area_layer_id',
+            '_break_layer_id', '_corridor_band_layer_id', '_takeoff_layer_id',
+            '_contour_layer_id', '_corridor_breaks', '_live_statistics',
+        )
+        state_names += tuple(name for name in self.__dict__
+                             if name.startswith(('_survey_', '_preview_', '_live_')))
+        state = {name: getattr(self, name) for name in set(state_names)
+                 if hasattr(self, name)}
+        planning = self._planning.__dict__.copy()
+        controls = (
+            'autoDirectionBtn', 'missionTypeCombo', 'droneModelCombo',
+            'captureFullRadio', 'captureSemiRadio', 'pathCurvedRadio',
+            'pathStraightRadio', 'finishActionCombo', 'rcLostActionCombo',
+            'altitudeSpin', 'speedSpin', 'sideOverlapSpin', 'frontOverlapSpin',
+            'marginSpin', 'directionSpin', 'terrainToleranceSpin',
+            'maxWaypointsSpin', 'bufferSpin', 'crossHatchCheck',
+            'terrainFollowCheck', 'reverseRouteCheck', 'sourceDrawRadio',
+            'sourceLayerRadio', 'sourceSelectionRadio', 'splitCheck', 'splitSpin',
+            'layerCombo', 'featureCombo', 'splitPartCombo',
+            'showTakeoffZoneBtn', 'showContoursBtn',
+            'setBreaksBtn', 'drawPolygonBtn', 'editPolygonBtn',
+            'removePolygonBtn', 'photoIntervalSpin', 'gsdSpin',
+            'frontOverlapStack', 'destCombo', 'destStack',
+        )
+        widgets = {}
+        appearance = {}
+        ranges = {}
+        for name in controls:
+            widget = getattr(self, name, None)
+            if widget is None:
+                continue
+            getter = ('isChecked' if hasattr(widget, 'isChecked') else
+                      'value' if hasattr(widget, 'value') else 'currentIndex')
+            widgets[name] = (getter, getattr(widget, getter)())
+            appearance[name] = (widget.isHidden(), widget.isEnabled())
+            if hasattr(widget, 'minimum') and hasattr(widget, 'maximum'):
+                ranges[name] = (widget.minimum(), widget.maximum())
+        combo_items = {name: [(getattr(self, name).itemText(i),
+                               getattr(self, name).itemData(i))
+                              for i in range(getattr(self, name).count())]
+                       for name in ('layerCombo', 'featureCombo', 'splitPartCombo')}
+        form_labels = []
+        for form in (self._flight_form, self._organizer_form, self._area_form):
+            for name in controls:
+                label = form.labelForField(getattr(self, name, None))
+                if label is not None and label not in [item[0] for item in form_labels]:
+                    form_labels.append((label, label.text(), label.isHidden()))
+        labels = {name: getattr(self, name).text() for name in (
+            'flightTimeLabel', 'distanceLabel', 'photosLabel', 'waypointsLabel',
+            'linesLabel', 'batteriesLabel', 'coverageLabel', 'corridorLengthLabel',
+            'frontOverlapStatLabel', 'areaLabel', 'infoBar', 'previewBtn',
+            'showTakeoffZoneBtn', 'showContoursBtn', 'editPolygonBtn',
+            'cameraInfoLabel', 'frontOverlapLabel', 'takeoffGsdVarLabel',
+            'selectionInfoLabel',
+        )}
+        feature_caption_hidden = self._featureCaption.isHidden()
+        selected = (project.mapLayer(state['_selected_layer_id']).selectedFeatureIds()
+                    if state.get('_selected_layer_id') and
+                    project.mapLayer(state['_selected_layer_id']) else None)
+        self._import_preserved_layer_ids = old_ids
+        try:
+            with preview_layers.preserve_during_import(old_ids) as deferred:
+                result = self._apply_website_mission_contents(mission, prepared)
+            preview_layers.remove(deferred)
+            return result
+        except Exception as exc:
+            # Old C++ layer objects were never removed, so their IDs, geometry,
+            # renderers and legend state can be restored without recalculation.
+            preview_layers.remove(
+                lid for lid, layer in project.mapLayers().items()
+                if lid not in old_ids and layer.customProperty('flypath_internal'))
+            self._disconnect_layer_signals()
+            for name, value in state.items():
+                setattr(self, name, value)
+            if state.get('_monitored_layer_id'):
+                monitored = project.mapLayer(state['_monitored_layer_id'])
+                if monitored:
+                    self._connect_layer_signals(monitored)
+            self._planning.__dict__.update(planning)
+            blocked = []
+            try:
+                for name in widgets:
+                    widget = getattr(self, name)
+                    blocked.append((widget, widget.blockSignals(True)))
+                for name, items in combo_items.items():
+                    widget = getattr(self, name)
+                    widget.clear()
+                    for label, data in items:
+                        widget.addItem(label, data)
+                for name, (minimum, maximum) in ranges.items():
+                    getattr(self, name).setRange(minimum, maximum)
+                for name, (getter, value) in widgets.items():
+                    setter = {'isChecked': 'setChecked', 'value': 'setValue',
+                              'currentIndex': 'setCurrentIndex'}[getter]
+                    getattr(getattr(self, name), setter)(value)
+                for name, (hidden, enabled) in appearance.items():
+                    widget = getattr(self, name)
+                    widget.setHidden(hidden)
+                    widget.setEnabled(enabled)
+            finally:
+                for widget, was_blocked in blocked:
+                    widget.blockSignals(was_blocked)
+            for name, value in labels.items():
+                getattr(self, name).setText(value)
+            self._set_info(labels['infoBar'])
+            self._sourceStack.setCurrentIndex(
+                {'layer': 0, 'selection': 1, 'draw': 2}[self._source_mode])
+            for label, value, hidden in form_labels:
+                label.setText(value)
+                label.setHidden(hidden)
+            self._featureCaption.setHidden(feature_caption_hidden)
+            self.splitSpin.setEnabled(self.splitCheck.isChecked())
+            if selected is not None:
+                project.mapLayer(self._selected_layer_id).selectByIds(selected)
+            preview_layers.restore_visibility(visibility)
+            if destination_mode is None:
+                destination_settings.remove('dest_mode')
+            else:
+                destination_settings.setValue('dest_mode', destination_mode)
+            canvas.setExtent(extent)
+            canvas.refresh()
+            self._update_web_buttons()
+            if isinstance(exc, FlypathSyncError):
+                raise
+            raise FlypathSyncError('The mission could not be loaded: %s' % exc) from exc
+        finally:
+            del self._import_preserved_layer_ids
+
+    def _prepare_website_mission(self, mission):
+        """Validate all known import rejection conditions before changing UI state."""
         flypath_sync.validate_mission(mission)
         settings = mission.get('settings') or {}
         if not isinstance(settings, dict):
             raise FlypathSyncError('This mission\'s settings could not be read.')
-        recovery_note = ''
         try:
             provenance = planning_adapter.validate_mission_provenance(mission)
         except ValueError as exc:
-            if not mission.get('planning_result'):
-                raise FlypathSyncError(str(exc)) from None
-            recovery_note = (
-                'The saved route could not be verified and was regenerated from '
-                'the mission settings. Review it before saving changes.')
-            mission = {**mission, 'planning_request': {}, 'planning_result': {},
-                       'waypoints': []}
-            provenance = None
+            raise FlypathSyncError('The saved route could not be verified: %s' % exc) from None
         style = settings.get('mapping_style', '2d')
         if style not in ('2d', 'corridor'):
             raise FlypathSyncError(
@@ -579,7 +721,13 @@ class WebsiteSyncLifecycleMixin:
                 or (geom.length() <= 0 if corridor else geom.area() <= 0)):
             raise FlypathSyncError('This mission has an invalid survey geometry.')
 
-        # ── Nothing above changed any state; from here the load applies. ──
+        return settings, provenance, corridor, drone_name, capture, finish, rc_lost, geom, wgs84
+
+    def _apply_website_mission_contents(self, mission, prepared):
+        """Apply validated settings and route as an independent local mission."""
+        (settings, provenance, corridor, drone_name, capture, finish, rc_lost,
+         geom, wgs84) = prepared
+        recovery_note = ''
         self._loading_mission = True
         self._planning.begin_import()
         # Restore Auto only after loading: intermediate control signals must
@@ -625,7 +773,11 @@ class WebsiteSyncLifecycleMixin:
             if abs(widget.value() - float(value)) > 1e-6:
                 adjusted.append('%s: %g -> %g' % (label, value, widget.value()))
         self.crossHatchCheck.setChecked(bool(settings.get('cross_hatch')))
+        blocked = self.terrainFollowCheck.blockSignals(True)
         self.terrainFollowCheck.setChecked(bool(settings.get('terrain_follow')))
+        self.terrainFollowCheck.blockSignals(blocked)
+        self.reverseRouteCheck.setEnabled(not self.terrainFollowCheck.isChecked())
+        self._apply_mission_type_capabilities()
         self.reverseRouteCheck.setChecked(bool(settings.get('reverse_route')))
 
         # A pulled mission is a standalone local copy, like a drawn one: it is
@@ -669,6 +821,12 @@ class WebsiteSyncLifecycleMixin:
         self.autoDirectionBtn.setChecked(bool(settings.get('auto_direction')))
         self._loading_mission = False
         self._restore_imported_route(mission, provenance)
+        if capture == 'full' and mission.get('waypoints') and not mission.get('planning_result'):
+            recovery_note = ('This older Full-auto route has no verified capture '
+                             'actions. Choose Regenerate on Map before saving or exporting.')
+        if adjusted:
+            self._planning.require_regeneration()
+            self.previewBtn.setText('Regenerate on Map')
         self._zoom_to_website_geometry(geom, wgs84)
         return adjusted, recovery_note
 
