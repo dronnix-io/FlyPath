@@ -54,15 +54,17 @@ def create(missions, heights=None, ground=None, project=None):
     waypoints = _waypoint_layer(missions, heights, ground)
     register(path, project, kind='path')
     register(waypoints, project, kind='waypoints')
-    waypoints_id = waypoints.id()
+    path_id, waypoints_id = path.id(), waypoints.id()
     path.repaintRequested.connect(
-        lambda: _sync_waypoint_flights(path, project.mapLayer(waypoints_id)))
+        lambda: _sync_waypoint_flights(
+            QgsProject.instance().mapLayer(path_id),
+            QgsProject.instance().mapLayer(waypoints_id)))
     return [path.id(), waypoints.id()]
 
 
 def _sync_waypoint_flights(path, waypoints):
     """Follow the checked flight rules without changing waypoint categories."""
-    if waypoints is None:
+    if path is None or waypoints is None:
         return
     renderer = path.renderer()
     if not isinstance(renderer, QgsRuleBasedRenderer):
