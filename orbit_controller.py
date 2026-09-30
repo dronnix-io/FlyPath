@@ -6,13 +6,18 @@ orbit planning call. The dialog routes here wherever the mission kind is
 'orbit'; planning itself runs in the shared engine (plan_orbit).
 """
 
+import math
+
+from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QComboBox, QDoubleSpinBox, QHBoxLayout, QLabel, QMessageBox, QPushButton,
     QSpinBox, QWidget,
 )
 from qgis.core import (
-    QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsFeature, QgsGeometry,
-    QgsMarkerSymbol, QgsPointXY, QgsProject, QgsVectorLayer,
+    Qgis, QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsDistanceArea,
+    QgsFeature, QgsFillSymbol, QgsGeometry, QgsLineSymbol, QgsMarkerSymbol,
+    QgsPalLayerSettings, QgsPointXY, QgsProject, QgsTextBufferSettings, QgsTextFormat,
+    QgsVectorLayer, QgsVectorLayerSimpleLabeling,
 )
 from qgis.gui import QgsMapToolEmitPoint
 
@@ -30,6 +35,10 @@ DEFAULT_ORBIT_OVERLAP = 90      # % between neighbouring photos around the ring
 ORBIT_MIN_ALTITUDE_M = 10.0
 MAPPING_MIN_ALTITUDE_M = 30.0
 NO_CENTRE_TEXT = '— no centre —'
+try:
+    _LINE_PLACEMENT = Qgis.LabelPlacement.Line
+except AttributeError:
+    _LINE_PLACEMENT = getattr(QgsPalLayerSettings, 'Line')
 
 
 class OrbitMixin:
@@ -38,6 +47,8 @@ class OrbitMixin:
     def _orbit_init_state(self):
         self._orbit_centre = None           # (lon, lat) in WGS84
         self._orbit_centre_layer_id = None
+        self._orbit_ring_layer_id = None    # the circle the drone flies, shown at once
+        self._orbit_radius_layer_id = None  # centre to start point, labelled with the radius
         self._orbit_tool = None
         self._orbit_prev_tool = None
         self._orbit_saved_overlap = None    # mapping side overlap, restored on leaving
@@ -102,6 +113,7 @@ class OrbitMixin:
 
     def _orbit_connect_signals(self):
         self.pickCentreBtn.toggled.connect(self._on_pick_centre_toggled)
+        self.orbitRadiusSpin.valueChanged.connect(self._show_orbit_centre)
         self.orbitRadiusSpin.valueChanged.connect(self._on_param_changed)
         self.orbitTiltSpin.valueChanged.connect(self._on_param_changed)
         self.orbitDirectionCombo.currentIndexChanged.connect(self._on_param_changed)
@@ -208,11 +220,67 @@ class OrbitMixin:
         self.orbitCentreLabel.setText(f'{latitude:.6f}, {longitude:.6f}')
         self._show_orbit_centre()
 
+    def _orbit_ring_points(self):
+        """Points on the flight circle every 3°, starting north like the engine."""
+        area = QgsDistanceArea()
+        area.setSourceCrs(QgsCoordinateReferenceSystem('EPSG:4326'),
+                          QgsProject.instance().transformContext())
+        area.setEllipsoid('WGS84')
+        centre = QgsPointXY(*self._orbit_centre)
+        radius = self.orbitRadiusSpin.value()
+        return [area.computeSpheroidProject(centre, radius, math.radians(bearing))
+                for bearing in range(0, 360, 3)]
+
+    def _add_orbit_radius_layer(self, start):
+        """A line from the centre to the start point, labelled with the radius."""
+        layer = QgsVectorLayer('LineString?crs=EPSG:4326&field=label:string',
+                               'FlyPath — Orbit Radius', 'memory')
+        layer.setCustomProperty('flypath_internal', True)
+        feature = QgsFeature(layer.fields())
+        feature.setGeometry(QgsGeometry.fromPolylineXY(
+            [QgsPointXY(*self._orbit_centre), start]))
+        feature.setAttribute('label', f'R {self.orbitRadiusSpin.value():g} m')
+        layer.dataProvider().addFeatures([feature])
+        layer.renderer().setSymbol(QgsLineSymbol.createSimple({
+            'line_color': '#FF1493', 'line_width': '0.6', 'line_style': 'dash',
+        }))
+        text = QgsTextFormat()
+        text.setColor(QColor('#FF1493'))
+        text.setSize(10)
+        buffer = QgsTextBufferSettings()
+        buffer.setEnabled(True)
+        buffer.setColor(QColor('white'))
+        buffer.setSize(1)
+        text.setBuffer(buffer)
+        settings = QgsPalLayerSettings()
+        settings.fieldName = 'label'
+        settings.placement = _LINE_PLACEMENT
+        settings.setFormat(text)
+        layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
+        layer.setLabelsEnabled(True)
+        preview_layers.register(layer, kind='orbit_radius')
+        self._orbit_radius_layer_id = layer.id()
+
     def _show_orbit_centre(self):
+        """Draw the orbit circle, radius and centre as soon as the centre is set."""
         self._remove_orbit_centre_layer()
         if self._orbit_centre is None:
             return
-        layer = QgsVectorLayer('Point?crs=EPSG:4326', 'FlyPath — Orbit Centre', 'memory')
+        points = self._orbit_ring_points()
+        ring = QgsVectorLayer('Polygon?crs=EPSG:4326', 'FlyPath — Orbit Circle', 'memory')
+        ring.setCustomProperty('flypath_internal', True)
+        feature = QgsFeature()
+        feature.setGeometry(QgsGeometry.fromPolygonXY([points + [points[0]]]))
+        ring.dataProvider().addFeatures([feature])
+        ring.renderer().setSymbol(QgsFillSymbol.createSimple({
+            'color': '255,20,147,46', 'outline_color': '#FF1493',
+            'outline_width': '0.8', 'outline_style': 'dash',
+        }))
+        preview_layers.register(ring, kind='orbit_ring')
+        self._orbit_ring_layer_id = ring.id()
+        self._add_orbit_radius_layer(points[0])
+
+        layer =QgsVectorLayer('Point?crs=EPSG:4326', 'FlyPath — Orbit Centre', 'memory')
         layer.setCustomProperty('flypath_internal', True)
         feature = QgsFeature()
         feature.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(*self._orbit_centre)))
@@ -226,9 +294,15 @@ class OrbitMixin:
         self.iface.mapCanvas().refresh()
 
     def _remove_orbit_centre_layer(self):
-        if self._orbit_centre_layer_id:
-            preview_layers.remove([self._orbit_centre_layer_id])
-            self._orbit_centre_layer_id = None
+        """Remove the orbit circle, radius and centre marker layers."""
+        layer_ids = [layer_id for layer_id in (
+            self._orbit_centre_layer_id, self._orbit_ring_layer_id,
+            self._orbit_radius_layer_id) if layer_id]
+        if layer_ids:
+            preview_layers.remove(layer_ids)
+        self._orbit_centre_layer_id = None
+        self._orbit_ring_layer_id = None
+        self._orbit_radius_layer_id = None
 
     def _clear_orbit_centre(self):
         if self.pickCentreBtn.isChecked():
