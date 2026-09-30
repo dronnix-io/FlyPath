@@ -17,8 +17,8 @@ START_COLOR = '#69B7FF'
 END_COLOR = '#FF8A78'
 MID_COLOR = '#050C14'
 _FLIGHT_COLORS = ['#FFE600', '#ff9f43', '#a88bff', '#35c99a', '#ff6f91']
-_ORDER = ('waypoints', 'breaks', 'path', 'survey', 'corridor',
-          'takeoff', 'contours')
+_ORDER = ('waypoints', 'orbit_centre', 'breaks', 'path', 'orbit_radius', 'survey',
+          'orbit_ring', 'corridor', 'takeoff', 'contours')
 _preserved_ids = None
 _deferred_ids = None
 
