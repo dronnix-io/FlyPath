@@ -8,6 +8,7 @@ orbit planning call. The dialog routes here wherever the mission kind is
 
 import math
 
+from qgis.PyQt.QtCore import QPoint, Qt
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QComboBox, QDoubleSpinBox, QHBoxLayout, QLabel, QMessageBox, QPushButton,
@@ -19,7 +20,7 @@ from qgis.core import (
     QgsPalLayerSettings, QgsPointXY, QgsProject, QgsTextBufferSettings, QgsTextFormat,
     QgsVectorLayer, QgsVectorLayerSimpleLabeling,
 )
-from qgis.gui import QgsMapToolEmitPoint
+from qgis.gui import QgsMapTool, QgsRubberBand
 
 try:
     from . import planning_adapter, preview_layers
@@ -39,6 +40,117 @@ try:
     _LINE_PLACEMENT = Qgis.LabelPlacement.Line
 except AttributeError:
     _LINE_PLACEMENT = getattr(QgsPalLayerSettings, 'Line')
+_WGS84 = QgsCoordinateReferenceSystem('EPSG:4326')
+
+
+class OrbitMapTool(QgsMapTool):
+    """Click the orbit centre, or press and drag to draw the circle.
+
+    Pressing on the edge of the current circle and dragging resizes it and
+    keeps the centre. on_drag(radius) follows the drag; on_done(centre,
+    radius) reports the result, with radius None for a plain click and both
+    None when cancelled (right click or Esc).
+    """
+
+    EDGE_TOLERANCE_PX = 10
+    DRAG_THRESHOLD_PX = 4
+
+    def __init__(self, canvas, centre, radius, radius_range, ring_points, on_drag, on_done):
+        super().__init__(canvas)
+        self._centre = QgsPointXY(*centre) if centre is not None else None
+        self._radius = radius
+        self._radius_range = radius_range
+        self._ring_points = ring_points
+        self._on_drag = on_drag
+        self._on_done = on_done
+        self._press = None
+        self._drag_centre = None
+        self._resizing = False
+        self._area = QgsDistanceArea()
+        self._area.setSourceCrs(_WGS84, QgsProject.instance().transformContext())
+        self._area.setEllipsoid('WGS84')
+        self._ring_band = QgsRubberBand(canvas, Qgis.GeometryType.Polygon)
+        self._ring_band.setFillColor(QColor(255, 20, 147, 46))
+        self._ring_band.setStrokeColor(QColor('#FF1493'))
+        self._ring_band.setWidth(2)
+        self._ring_band.setLineStyle(Qt.PenStyle.DashLine)
+        self._radius_band = QgsRubberBand(canvas, Qgis.GeometryType.Line)
+        self._radius_band.setColor(QColor('#FF1493'))
+        self._radius_band.setWidth(2)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+
+    def _to_wgs84(self, point):
+        transform = QgsCoordinateTransform(
+            self.canvas().mapSettings().destinationCrs(), _WGS84, QgsProject.instance())
+        return transform.transform(point)
+
+    def _metres(self, first, second):
+        return self._area.measureLine(QgsPointXY(first), QgsPointXY(second))
+
+    def _dragged(self, pos):
+        return (pos - self._press).manhattanLength() > self.DRAG_THRESHOLD_PX
+
+    def _radius_to(self, pos):
+        point = self._to_wgs84(self.toMapCoordinates(pos))
+        low, high = self._radius_range
+        return min(high, max(low, self._metres(self._drag_centre, point))), point
+
+    def canvasPressEvent(self, event):
+        if event.button() == Qt.MouseButton.RightButton:
+            self._on_done(None, None)
+            return
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        pos = event.pos()
+        point = self._to_wgs84(self.toMapCoordinates(pos))
+        self._press = pos
+        self._resizing = False
+        if self._centre is not None:
+            near = self._to_wgs84(self.toMapCoordinates(
+                pos + QPoint(self.EDGE_TOLERANCE_PX, 0)))
+            tolerance = self._metres(point, near)
+            self._resizing = abs(self._metres(self._centre, point) - self._radius) <= tolerance
+        self._drag_centre = QgsPointXY(self._centre) if self._resizing else point
+
+    def canvasMoveEvent(self, event):
+        if self._press is None or not self._dragged(event.pos()):
+            return
+        radius, point = self._radius_to(event.pos())
+        ring = self._ring_points((self._drag_centre.x(), self._drag_centre.y()), radius)
+        self._ring_band.setToGeometry(QgsGeometry.fromPolygonXY([ring + [ring[0]]]), _WGS84)
+        self._radius_band.setToGeometry(
+            QgsGeometry.fromPolylineXY([self._drag_centre, point]), _WGS84)
+        self._on_drag(radius)
+
+    def canvasReleaseEvent(self, event):
+        if self._press is None or event.button() != Qt.MouseButton.LeftButton:
+            return
+        dragged = self._dragged(event.pos())
+        radius = self._radius_to(event.pos())[0] if dragged else None
+        centre = (self._drag_centre.x(), self._drag_centre.y())
+        self._press = None
+        self._clear_bands()
+        if self._resizing and not dragged:
+            self._on_done(centre, self._radius)     # a click on the edge changes nothing
+        else:
+            self._on_done(centre, radius)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self._on_done(None, None)
+
+    def _clear_bands(self):
+        if self._ring_band is not None:
+            self._ring_band.reset(Qgis.GeometryType.Polygon)
+            self._radius_band.reset(Qgis.GeometryType.Line)
+
+    def deactivate(self):
+        self._press = None
+        for band in (self._ring_band, self._radius_band):
+            if band is not None:
+                self.canvas().scene().removeItem(band)
+        self._ring_band = self._radius_band = None
+        super().deactivate()
 
 
 class OrbitMixin:
@@ -66,8 +178,10 @@ class OrbitMixin:
         self.pickCentreBtn.setCheckable(True)
         self.pickCentreBtn.setMinimumHeight(28)
         self._tip(self.pickCentreBtn,
-            'Click the object to orbit on the map. The drone flies a circle '
-            'around this point, always facing it.')
+            'Click the object to orbit on the map, or press and drag to draw the '
+            'circle. Press on the edge of the circle and drag to resize it. The '
+            'drone flies this circle, always facing the centre. Right click or '
+            'Esc cancels.')
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -187,10 +301,12 @@ class OrbitMixin:
         canvas = self.iface.mapCanvas()
         if checked:
             self._orbit_prev_tool = canvas.mapTool()
-            self._orbit_tool = QgsMapToolEmitPoint(canvas)
-            self._orbit_tool.canvasClicked.connect(self._on_orbit_centre_clicked)
+            self._orbit_tool = OrbitMapTool(
+                canvas, self._orbit_centre, self.orbitRadiusSpin.value(),
+                (self.orbitRadiusSpin.minimum(), self.orbitRadiusSpin.maximum()),
+                self._orbit_ring_points, self._on_orbit_drag, self._on_orbit_drawn)
             canvas.setMapTool(self._orbit_tool)
-            self.pickCentreBtn.setText('Click the centre on the map…')
+            self.pickCentreBtn.setText('Click the centre, drag for the radius…')
         else:
             self._leave_orbit_tool()
 
@@ -205,13 +321,19 @@ class OrbitMixin:
         self._orbit_prev_tool = None
         self.pickCentreBtn.setText('Pick Centre on Map')
 
-    def _on_orbit_centre_clicked(self, point, _button):
-        canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
-        to_wgs84 = QgsCoordinateTransform(
-            canvas_crs, QgsCoordinateReferenceSystem('EPSG:4326'), QgsProject.instance())
-        wgs84 = to_wgs84.transform(point)
-        self.set_orbit_centre(wgs84.x(), wgs84.y())
-        self.pickCentreBtn.setChecked(False)    # turns the pick tool off
+    def _on_orbit_drag(self, radius):
+        self.pickCentreBtn.setText(f'Radius {radius:.1f} m')
+
+    def _on_orbit_drawn(self, centre, radius):
+        """Apply a centre (and a dragged radius) from the map tool."""
+        self.pickCentreBtn.setChecked(False)    # turns the map tool off
+        if centre is None:
+            return
+        if radius is not None:
+            blocked = self.orbitRadiusSpin.blockSignals(True)
+            self.orbitRadiusSpin.setValue(radius)
+            self.orbitRadiusSpin.blockSignals(blocked)
+        self.set_orbit_centre(*centre)
         self._on_param_changed()
 
     def set_orbit_centre(self, longitude, latitude):
@@ -220,14 +342,13 @@ class OrbitMixin:
         self.orbitCentreLabel.setText(f'{latitude:.6f}, {longitude:.6f}')
         self._show_orbit_centre()
 
-    def _orbit_ring_points(self):
+    def _orbit_ring_points(self, centre=None, radius=None):
         """Points on the flight circle every 3°, starting north like the engine."""
         area = QgsDistanceArea()
-        area.setSourceCrs(QgsCoordinateReferenceSystem('EPSG:4326'),
-                          QgsProject.instance().transformContext())
+        area.setSourceCrs(_WGS84, QgsProject.instance().transformContext())
         area.setEllipsoid('WGS84')
-        centre = QgsPointXY(*self._orbit_centre)
-        radius = self.orbitRadiusSpin.value()
+        centre = QgsPointXY(*(centre or self._orbit_centre))
+        radius = self.orbitRadiusSpin.value() if radius is None else radius
         return [area.computeSpheroidProject(centre, radius, math.radians(bearing))
                 for bearing in range(0, 360, 3)]
 
