@@ -335,6 +335,9 @@ class OrbitMixin:
             self.orbitRadiusSpin.blockSignals(blocked)
         self.set_orbit_centre(*centre)
         self._on_param_changed()
+        # Show the waypoints right away; once shown, they follow later edits.
+        if not self._preview_layer_ids:
+            self._on_preview()
 
     def set_orbit_centre(self, longitude, latitude):
         """Set the orbit centre (WGS84) and draw its marker."""
