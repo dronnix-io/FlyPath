@@ -3,8 +3,10 @@ name=FlyPath
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
-version=2.7.1
-changelog=2.7.1 - Small update: the flypath.io link in the panel now carries a source tag, so we can see how many visitors reach the website from the plugin. Nothing else changed, and no personal data is sent.
+version=2.7.2
+changelog=2.7.2 - Website sync now checks API compatibility and pauses until the plugin is
+    updated when the website requires a different sync version. Local planning remains available.
+    2.7.1 - Small update: the flypath.io link in the panel now carries a source tag, so we can see how many visitors reach the website from the plugin. Nothing else changed, and no personal data is sent.
     2.7.0 - FlyPath now places all of its preview layers (waypoints, flight path, survey area, corridor, mission breaks, takeoff zones and contours) in a single FlyPath group at the top of the QGIS layer tree, so they stay above your other layers and you can show or hide the whole mission preview at once, no matter which layer or group is selected when you build it (requested by Jcomelles).
     2.6.0 - Planning now runs on the shared FlyPath engine, the same core used by
     flypath.io, so a plan made on the website and one made in the plugin match. The map preview

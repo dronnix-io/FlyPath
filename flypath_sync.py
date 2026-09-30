@@ -44,6 +44,10 @@ MAX_JSON_DEPTH = 32
 # The website controller runs these calls on a worker thread. The timeout still
 # bounds cleanup and how long the controls remain busy on a dead connection.
 TIMEOUT_S = 20
+SYNC_API_VERSION = 1
+SYNC_VERSION_HEADER = 'X-FlyPath-Sync-Version'
+SYNC_MISMATCH_MESSAGE = ('Website sync is incompatible with this FlyPath plugin. '
+                         'Update the plugin to reconnect.')
 
 NO_TOKEN_MESSAGE = (           # nosec B105
     'No FlyPath token set.\n\n'
@@ -301,10 +305,14 @@ def _call(base_url, token, path, data=None, method=None):
     JSON object, raising FlypathSyncError on anything else."""
     if not (token or '').strip():
         raise FlypathSyncError(NO_TOKEN_MESSAGE)
+    if data is not None:
+        # Check before writing: an older website may ignore our version header.
+        _call(base_url, token, '')
 
     url = _api_url(base_url, path)
     headers = {'Authorization': 'Token %s' % token.strip(),
-               'Accept': 'application/json'}
+               'Accept': 'application/json',
+               SYNC_VERSION_HEADER: str(SYNC_API_VERSION)}
     body = None
     if data is not None:
         try:
@@ -317,6 +325,7 @@ def _call(base_url, token, path, data=None, method=None):
     try:
         with _opener.open(request, timeout=TIMEOUT_S) as response:
             payload = _read_json(response, MAX_RESPONSE_BYTES)
+            server_version = response.getheader(SYNC_VERSION_HEADER, '1')
     except urllib.error.HTTPError as exc:
         try:
             message = _server_message(exc)
@@ -331,6 +340,8 @@ def _call(base_url, token, path, data=None, method=None):
         raise FlypathSyncError('FlyPath did not answer properly (%s).' %
                                str(exc).replace(token.strip(), '[redacted]')) from None
 
+    if server_version != str(SYNC_API_VERSION):
+        raise FlypathSyncError(SYNC_MISMATCH_MESSAGE, status=426)
     if not isinstance(payload, dict) or payload.get('ok') is not True:
         raise FlypathSyncError(
             (_error_text(payload) or 'FlyPath rejected the request.').replace(token.strip(), '[redacted]'))

@@ -23,9 +23,14 @@ TOKEN = 'synthetic-secret-token'
 BASE = 'https://example.test'
 
 
+class Response(io.BytesIO):
+    def getheader(self, name, default=None):
+        return str(sync.SYNC_API_VERSION) if name == sync.SYNC_VERSION_HEADER else default
+
+
 class TransportValidation(unittest.TestCase):
     def call_body(self, body):
-        with patch.object(sync._opener, 'open', return_value=io.BytesIO(body)):
+        with patch.object(sync._opener, 'open', return_value=Response(body)):
             return sync.list_missions(BASE, TOKEN)
 
     def test_origins(self):
@@ -88,7 +93,7 @@ class TransportValidation(unittest.TestCase):
                    'waypoints': [[51.12345678901234, -114.12345678901234]] * 2000}
         body = json.dumps({'ok': True, 'mission': mission}).encode()
         self.assertLess(len(body), 256 * 1024)
-        with patch.object(sync._opener, 'open', return_value=io.BytesIO(body)):
+        with patch.object(sync._opener, 'open', return_value=Response(body)):
             self.assertEqual(sync.get_mission(BASE, TOKEN, 1), mission)
         for field, value in (('polygon', [[91, 0]]), ('polygon', [[0, 181]]),
                              ('polygon', [[True, 1]]), ('polygon', [[1, '2']]),
