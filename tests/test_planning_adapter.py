@@ -116,7 +116,7 @@ def test_older_result_keeps_view_only_provenance():
     else:
         raise AssertionError('older engine results must remain view-only')
 
-    for version in ('0.4.0', '1.0.0'):
+    for version in ('0.4.0', '1.0.0', '1.1.0'):
         result['engine_version'] = version
         saved = deepcopy(mission)
         supported, _ = planning_adapter.validate_mission_provenance(mission)
