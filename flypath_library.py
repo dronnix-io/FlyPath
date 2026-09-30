@@ -1,9 +1,10 @@
 """Website mission library embedded in the FlyPath dock."""
 
-from qgis.PyQt.QtCore import Qt, pyqtSignal
+from qgis.PyQt.QtCore import Qt, QUrl, pyqtSignal
+from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
-    QWidget, QHBoxLayout, QLabel, QPushButton, QTreeWidget, QTreeWidgetItem,
-    QVBoxLayout, QMessageBox,
+    QWidget, QHBoxLayout, QLabel, QPushButton, QTabWidget, QTreeWidget,
+    QTreeWidgetItem, QVBoxLayout, QMessageBox,
 )
 
 from . import flypath_sync
@@ -11,12 +12,14 @@ from . import flypath_sync
 try:
     _UserRole = Qt.ItemDataRole.UserRole
     _PlainText = Qt.TextFormat.PlainText
+    _AlignCenter = Qt.AlignmentFlag.AlignCenter
     _ActionRole = QMessageBox.ButtonRole.ActionRole
     _Cancel = QMessageBox.StandardButton.Cancel
     _Descending = Qt.SortOrder.DescendingOrder
 except AttributeError:
     _UserRole = getattr(Qt, 'UserRole')
     _PlainText = getattr(Qt, 'PlainText')
+    _AlignCenter = getattr(Qt, 'AlignCenter')
     _ActionRole = getattr(QMessageBox, 'ActionRole')
     _Cancel = getattr(QMessageBox, 'Cancel')
     _Descending = getattr(Qt, 'DescendingOrder')
@@ -46,11 +49,44 @@ class MissionLibrary(QWidget):
         super().__init__(parent or planner)
         self.planner = planner
         layout = QVBoxLayout(self)
+        layout.addStretch(0)
         header = QHBoxLayout()
         self.status = QLabel()
         self.status.setTextFormat(_PlainText)
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.sync_notice = QWidget()
+        self.sync_notice.setMaximumWidth(480)
+        notice_layout = QVBoxLayout(self.sync_notice)
+        notice_layout.setSpacing(16)
+        for text, style in (
+                ('Sync unavailable', 'font-size: 20px; font-weight: bold;'),
+                ('A newer version may be available.', 'font-size: 15px;')):
+            label = QLabel(text)
+            label.setWordWrap(True)
+            label.setAlignment(_AlignCenter)
+            label.setStyleSheet(style)
+            notice_layout.addWidget(label)
+        self.update_button = QPushButton('Update plugin')
+        self.update_button.setStyleSheet(
+            'QPushButton { background: #2d6fba; color: white; font-size: 14px; '
+            'font-weight: normal; min-height: 22px; padding: 8px 20px; '
+            'border: 2px solid transparent; border-radius: 5px; }'
+            'QPushButton:hover { background: #367dca; }'
+            'QPushButton:focus { border-color: #b8dcff; }')
+        self.update_button.clicked.connect(lambda: QDesktopServices.openUrl(
+            QUrl('https://plugins.qgis.org/plugins/FlyPath/')))
+        notice_layout.addWidget(self.update_button, 0, _AlignCenter)
+        notice_row = QHBoxLayout()
+        notice_row.addStretch()
+        notice_row.addWidget(self.sync_notice, 1)
+        notice_row.addStretch()
+        layout.addLayout(notice_row)
+        layout.addStretch(0)
+        self.controls = QWidget()
+        layout.addWidget(self.controls, 1)
+        layout = QVBoxLayout(self.controls)
+        layout.setContentsMargins(0, 0, 0, 0)
         self.connect_button = QPushButton('Connect account…')
         self.connect_button.clicked.connect(self.connect_account)
         header.addWidget(self.connect_button)
@@ -95,6 +131,7 @@ class MissionLibrary(QWidget):
             connected = False
             storage_error = str(exc)
         storage_locked = bool(storage_error and 'storage is locked' in storage_error)
+        incompatible = getattr(self.planner, '_sync_incompatible', False)
         link = self.planner._current_website_link()
         self.link_label.setText('Editing: %s' % link['name'] if link else 'Current mission is not linked to FlyPath.')
         self.send_button.setText('Save changes' if link else 'Save to FlyPath…')
@@ -106,8 +143,8 @@ class MissionLibrary(QWidget):
         self.disconnect_button.setToolTip(
             'Forget access on this device and unlink the mission. This does not '
             'revoke the token on the website. Rotate old tokens to invalidate backups.')
-        self.refresh_button.setEnabled(connected)
-        self.import_button.setEnabled(connected and self.missions.currentItem() is not None)
+        self.refresh_button.setEnabled(connected and not incompatible)
+        self.import_button.setEnabled(connected and not incompatible and self.missions.currentItem() is not None)
         # Saving stays clickable without a preview: the planner answers a
         # click with the reason, which a disabled button cannot do (Qt
         # shows no tooltip on a disabled widget).
@@ -121,8 +158,25 @@ class MissionLibrary(QWidget):
         self.import_button.setToolTip('Open the selected mission in the planner.' if
                                       self.import_button.isEnabled() else
                                       'Select a mission in the list first.')
-        if not connected:
+        self.send_button.setEnabled(not incompatible)
+        self.copy_button.setEnabled(not incompatible)
+        if incompatible:
+            self.status.setText(flypath_sync.SYNC_MISMATCH_MESSAGE)
+        elif not connected:
             self.status.setText(storage_error or 'Connect your FlyPath account to browse missions.')
+        self.sync_notice.setVisible(bool(incompatible))
+        self.status.setVisible(not incompatible)
+        self.controls.setVisible(not incompatible)
+        self.layout().setStretch(0, 1 if incompatible else 0)
+        self.layout().setStretch(3, 1 if incompatible else 0)
+
+    def show_sync_incompatible(self):
+        self.update_buttons()
+        parent = self.parentWidget()
+        while parent is not None and not isinstance(parent, QTabWidget):
+            parent = parent.parentWidget()
+        if parent is not None:
+            parent.setCurrentWidget(self)
 
     def connect_account(self):
         if self.planner._web_token():
@@ -136,6 +190,7 @@ class MissionLibrary(QWidget):
             error = str(exc)
         finally:
             self.planner._website_link = None
+            self.planner._sync_incompatible = False
             self.missions.clear()
             self.update_buttons()
         if error:
