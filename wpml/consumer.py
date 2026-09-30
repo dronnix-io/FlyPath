@@ -69,6 +69,8 @@ def write(drone, spec, filepath):
 
     if spec.heights is not None and len(spec.heights) != len(spec.waypoints):
         raise ValueError('Terrain heights do not match the waypoints.')
+    if spec.headings is not None and len(spec.headings) != len(spec.waypoints):
+        raise ValueError('Waypoint headings do not match the waypoints.')
 
     mission_config = _mission_config_xml(drone.drone_enum, finish_action,
                                          spec.speed_ms, exit_on_rc_lost, rc_lost_action)
@@ -78,7 +80,7 @@ def write(drone, spec, filepath):
     # back scrambled (issue #13).
     placemarks = _placemark_blocks(spec.waypoints, spec.altitude_m, spec.speed_ms,
                                    spec.gimbal_pitch, spec.capture_mode, spec.heights,
-                                   spec.curved_path, spec.actions)
+                                   spec.curved_path, spec.actions, spec.headings)
     template_kml   = _build_template_kml(mission_config, ts_ms, spec.mission_name,
                                          spec.speed_ms, spec.altitude_m, height_mode,
                                          placemarks)
@@ -147,7 +149,8 @@ def _build_template_kml(mission_config, ts_ms, mission_name,
 
 
 def _placemark_blocks(waypoints, altitude_m, speed_ms, gimbal_pitch,
-                      capture_mode='semi', heights=None, curved=True, actions=None):
+                      capture_mode='semi', heights=None, curved=True, actions=None,
+                      headings=None):
     """Build the waypoint Placemark list shared by template.kml and waylines.wpml.
 
     In 'full' capture mode every waypoint also carries a takePhoto action, so
@@ -183,9 +186,10 @@ def _placemark_blocks(waypoints, altitude_m, speed_ms, gimbal_pitch,
                 group_id, idx, waypoint_actions, gimbal_pitch, legacy=planned is None)
             group_id += 1
         wp_height = heights[idx] if heights is not None else altitude_m
+        heading = headings[idx] if headings is not None else None
         placemark_blocks.append(
             _placemark(idx, lon, lat, wp_height, speed_ms,
-                       action_groups, gimbal_pitch, curved)
+                       action_groups, gimbal_pitch, curved, heading)
         )
 
     return '\n'.join(placemark_blocks)
@@ -272,9 +276,14 @@ def _build_waylines_wpml(mission_config, speed_ms, height_mode, placemarks):
 # ── Element helpers ────────────────────────────────────────────────────────
 
 def _placemark(idx, lon, lat, altitude_m, speed_ms, action_groups_xml,
-               gimbal_pitch=-90, curved=True):
+               gimbal_pitch=-90, curved=True, heading=None):
     turn_mode = _CURVED_TURN_MODE if curved else _STRAIGHT_TURN_MODE
     use_straight_line = 0 if curved else 1
+    # No heading: face along the path (2D, corridor). A heading turns the
+    # aircraft smoothly to that angle at this waypoint (orbit faces the centre).
+    heading_mode, heading_angle, heading_enable = (
+        ('followWayline', '0', 0) if heading is None
+        else ('smoothTransition', f'{float(heading):.1f}', 1))
     return f'''      <Placemark>
         <Point>
           <coordinates>
@@ -285,10 +294,10 @@ def _placemark(idx, lon, lat, altitude_m, speed_ms, action_groups_xml,
         <wpml:executeHeight>{altitude_m:.1f}</wpml:executeHeight>
         <wpml:waypointSpeed>{speed_ms:.1f}</wpml:waypointSpeed>
         <wpml:waypointHeadingParam>
-          <wpml:waypointHeadingMode>followWayline</wpml:waypointHeadingMode>
-          <wpml:waypointHeadingAngle>0</wpml:waypointHeadingAngle>
+          <wpml:waypointHeadingMode>{heading_mode}</wpml:waypointHeadingMode>
+          <wpml:waypointHeadingAngle>{heading_angle}</wpml:waypointHeadingAngle>
           <wpml:waypointPoiPoint>0.000000,0.000000,0.000000</wpml:waypointPoiPoint>
-          <wpml:waypointHeadingAngleEnable>0</wpml:waypointHeadingAngleEnable>
+          <wpml:waypointHeadingAngleEnable>{heading_enable}</wpml:waypointHeadingAngleEnable>
           <wpml:waypointHeadingPathMode>followBadArc</wpml:waypointHeadingPathMode>
           <wpml:waypointHeadingPoiIndex>0</wpml:waypointHeadingPoiIndex>
         </wpml:waypointHeadingParam>

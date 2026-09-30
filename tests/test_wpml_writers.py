@@ -162,6 +162,40 @@ def test_terrain_heights_length_mismatch_raises():
 
 # ── Full-automatic capture (takePhoto per waypoint) ─────────────────────────
 
+def test_without_headings_the_aircraft_follows_the_wayline():
+    drone = registry.get('DJI Mini 4 Pro')
+    with zipfile.ZipFile(_write(drone, _spec())) as z:
+        wl = z.read('wpmz/waylines.wpml').decode('utf-8')
+    assert wl.count('<wpml:waypointHeadingMode>followWayline</wpml:waypointHeadingMode>') == len(WPS)
+    assert 'smoothTransition' not in wl
+    assert wl.count('<wpml:waypointHeadingAngleEnable>0</wpml:waypointHeadingAngleEnable>') == len(WPS)
+
+
+def test_headings_turn_the_aircraft_per_waypoint():
+    # Orbit missions face the centre: each waypoint carries its own heading.
+    drone = registry.get('DJI Mini 4 Pro')
+    headings = [180.0, -90.0, 0.0, 90.5]
+    with zipfile.ZipFile(_write(drone, _spec(headings=headings, gimbal_pitch=-35))) as z:
+        tpl = z.read('wpmz/template.kml').decode('utf-8')
+        wl = z.read('wpmz/waylines.wpml').decode('utf-8')
+    for text in (tpl, wl):
+        assert text.count('<wpml:waypointHeadingMode>smoothTransition</wpml:waypointHeadingMode>') == len(WPS)
+        assert text.count('<wpml:waypointHeadingAngleEnable>1</wpml:waypointHeadingAngleEnable>') == len(WPS)
+        for heading in ('180.0', '-90.0', '0.0', '90.5'):
+            assert f'<wpml:waypointHeadingAngle>{heading}</wpml:waypointHeadingAngle>' in text
+        assert text.count('<wpml:waypointGimbalPitchAngle>-35</wpml:waypointGimbalPitchAngle>') == len(WPS)
+
+
+def test_headings_length_mismatch_raises():
+    drone = registry.get('DJI Mini 4 Pro')
+    try:
+        _write(drone, _spec(headings=[0.0]))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('mismatched headings must be rejected')
+
+
 def test_semi_auto_has_no_take_photo():
     drone = registry.get('DJI Mini 4 Pro')
     path = _write(drone, _spec())                     # capture_mode defaults to 'semi'
