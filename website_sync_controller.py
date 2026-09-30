@@ -200,6 +200,13 @@ class WebsiteSyncLifecycleMixin:
             self._update_web_buttons()
 
     def _on_send_to_website(self, save_as_new=False):
+        if self._mission_kind() == 'orbit':
+            QMessageBox.information(
+                self, 'Coming Soon',
+                'Orbit missions can be planned, previewed and sent to your drone '
+                'from the plugin. Saving them to FlyPath.io is coming soon, once '
+                'the website supports orbits.')
+            return False
         if self._planning.save_requires_regeneration():
             QMessageBox.warning(
                 self, 'Regeneration Required',
