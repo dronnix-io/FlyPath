@@ -1,7 +1,7 @@
-"""Orbit (3D model) missions: pick a centre, fly one ring facing it.
+"""Orbit (3D model) missions: draw a circle, fly one ring facing its centre.
 
 A mixin for FlyPathDialog, in the same style as SurveyLifecycleMixin. It owns
-the orbit controls, the centre pick tool, the centre marker layer and the
+the orbit controls, the circle draw and edit tool, the circle layers and the
 orbit planning call. The dialog routes here wherever the mission kind is
 'orbit'; planning itself runs in the shared engine (plan_orbit).
 """
@@ -36,6 +36,15 @@ DEFAULT_ORBIT_OVERLAP = 90      # % between neighbouring photos around the ring
 ORBIT_MIN_ALTITUDE_M = 10.0
 MAPPING_MIN_ALTITUDE_M = 30.0
 NO_CENTRE_TEXT = '— no centre —'
+DRAW_TEXT = 'Draw Circle on Map'
+EDIT_TEXT = '✎ Edit'
+_INFO_IDLE = 'ⓘ  Hover over any field to see what it does.'
+try:
+    _MB_YES = QMessageBox.StandardButton.Yes
+    _MB_NO = QMessageBox.StandardButton.No
+except AttributeError:
+    _MB_YES = getattr(QMessageBox, 'Yes')
+    _MB_NO = getattr(QMessageBox, 'No')
 try:
     _LINE_PLACEMENT = Qgis.LabelPlacement.Line
 except AttributeError:
@@ -44,28 +53,33 @@ _WGS84 = QgsCoordinateReferenceSystem('EPSG:4326')
 
 
 class OrbitMapTool(QgsMapTool):
-    """Click the orbit centre, or press and drag to draw the circle.
+    """Draw or edit the orbit circle on the map.
 
-    Pressing on the edge of the current circle and dragging resizes it and
-    keeps the centre. on_drag(radius) follows the drag; on_done(centre,
-    radius) reports the result, with radius None for a plain click and both
-    None when cancelled (right click or Esc).
+    Drawing: click the centre (the radius stays), or press and drag to set the
+    radius as well. Editing: drag inside the circle to move it, or drag its
+    edge to resize it; the tool stays on for more edits. on_drag(radius)
+    follows a resize drag, on_done(centre, radius) reports each result, and
+    on_done(None, None) means right click or Esc (cancel or finish).
     """
 
     EDGE_TOLERANCE_PX = 10
     DRAG_THRESHOLD_PX = 4
 
-    def __init__(self, canvas, centre, radius, radius_range, ring_points, on_drag, on_done):
+    def __init__(self, canvas, circle, radius_range, ring_points, on_drag, on_done,
+                 editing=False):
         super().__init__(canvas)
-        self._centre = QgsPointXY(*centre) if centre is not None else None
-        self._radius = radius
+        self.editing = editing
+        self._circle = circle           # returns ((lon, lat) or None, radius)
         self._radius_range = radius_range
         self._ring_points = ring_points
         self._on_drag = on_drag
         self._on_done = on_done
         self._press = None
+        self._press_point = None
+        self._mode = None               # 'draw', 'resize' or 'move'
+        self._centre = None
+        self._radius = None
         self._drag_centre = None
-        self._resizing = False
         self._area = QgsDistanceArea()
         self._area.setSourceCrs(_WGS84, QgsProject.instance().transformContext())
         self._area.setEllipsoid('WGS84')
@@ -79,10 +93,10 @@ class OrbitMapTool(QgsMapTool):
         self._radius_band.setWidth(2)
         self.setCursor(Qt.CursorShape.CrossCursor)
 
-    def _to_wgs84(self, point):
+    def _to_wgs84(self, pos):
         transform = QgsCoordinateTransform(
             self.canvas().mapSettings().destinationCrs(), _WGS84, QgsProject.instance())
-        return transform.transform(point)
+        return transform.transform(self.toMapCoordinates(pos))
 
     def _metres(self, first, second):
         return self._area.measureLine(QgsPointXY(first), QgsPointXY(second))
@@ -90,10 +104,20 @@ class OrbitMapTool(QgsMapTool):
     def _dragged(self, pos):
         return (pos - self._press).manhattanLength() > self.DRAG_THRESHOLD_PX
 
-    def _radius_to(self, pos):
-        point = self._to_wgs84(self.toMapCoordinates(pos))
+    def _radius_to(self, point):
         low, high = self._radius_range
-        return min(high, max(low, self._metres(self._drag_centre, point))), point
+        return min(high, max(low, self._metres(self._drag_centre, point)))
+
+    def _moved_centre(self, point):
+        return QgsPointXY(self._centre.x() + point.x() - self._press_point.x(),
+                          self._centre.y() + point.y() - self._press_point.y())
+
+    def _result(self, pos):
+        """The (centre, radius) a drag to pos gives, for the current mode."""
+        point = self._to_wgs84(pos)
+        if self._mode == 'move':
+            return self._moved_centre(point), self._radius, None
+        return self._drag_centre, self._radius_to(point), point
 
     def canvasPressEvent(self, event):
         if event.button() == Qt.MouseButton.RightButton:
@@ -102,38 +126,48 @@ class OrbitMapTool(QgsMapTool):
         if event.button() != Qt.MouseButton.LeftButton:
             return
         pos = event.pos()
-        point = self._to_wgs84(self.toMapCoordinates(pos))
+        point = self._to_wgs84(pos)
+        centre, self._radius = self._circle()
+        self._centre = QgsPointXY(*centre) if centre is not None else None
+        self._mode = 'draw'
+        if self.editing:
+            if self._centre is None:
+                return
+            tolerance = self._metres(point, self._to_wgs84(pos + QPoint(self.EDGE_TOLERANCE_PX, 0)))
+            distance = self._metres(self._centre, point)
+            if abs(distance - self._radius) <= tolerance:
+                self._mode = 'resize'
+            elif distance < self._radius:
+                self._mode = 'move'
+            else:
+                return                  # outside the circle: nothing to edit
         self._press = pos
-        self._resizing = False
-        if self._centre is not None:
-            near = self._to_wgs84(self.toMapCoordinates(
-                pos + QPoint(self.EDGE_TOLERANCE_PX, 0)))
-            tolerance = self._metres(point, near)
-            self._resizing = abs(self._metres(self._centre, point) - self._radius) <= tolerance
-        self._drag_centre = QgsPointXY(self._centre) if self._resizing else point
+        self._press_point = point
+        self._drag_centre = point if self._mode == 'draw' else QgsPointXY(self._centre)
 
     def canvasMoveEvent(self, event):
         if self._press is None or not self._dragged(event.pos()):
             return
-        radius, point = self._radius_to(event.pos())
-        ring = self._ring_points((self._drag_centre.x(), self._drag_centre.y()), radius)
+        centre, radius, edge = self._result(event.pos())
+        ring = self._ring_points((centre.x(), centre.y()), radius)
         self._ring_band.setToGeometry(QgsGeometry.fromPolygonXY([ring + [ring[0]]]), _WGS84)
         self._radius_band.setToGeometry(
-            QgsGeometry.fromPolylineXY([self._drag_centre, point]), _WGS84)
-        self._on_drag(radius)
+            QgsGeometry.fromPolylineXY([centre, edge or ring[0]]), _WGS84)
+        if self._mode != 'move':
+            self._on_drag(radius)
 
     def canvasReleaseEvent(self, event):
         if self._press is None or event.button() != Qt.MouseButton.LeftButton:
             return
         dragged = self._dragged(event.pos())
-        radius = self._radius_to(event.pos())[0] if dragged else None
-        centre = (self._drag_centre.x(), self._drag_centre.y())
+        centre, radius = self._result(event.pos())[:2]
+        mode = self._mode
         self._press = None
         self._clear_bands()
-        if self._resizing and not dragged:
-            self._on_done(centre, self._radius)     # a click on the edge changes nothing
-        else:
-            self._on_done(centre, radius)
+        if dragged:
+            self._on_done((centre.x(), centre.y()), radius)
+        elif mode == 'draw':
+            self._on_done((centre.x(), centre.y()), None)   # a click keeps the radius
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
@@ -169,28 +203,42 @@ class OrbitMixin:
     # ── Building the controls ─────────────────────────────────────────────
 
     def _build_orbit_area_row(self, form):
-        """Centre row for the Survey Area group (replaces Source for orbits)."""
+        """Centre and Draw rows for the Survey Area group (replace Source)."""
         self.orbitCentreLabel = QLabel(NO_CENTRE_TEXT)
         self.orbitCentreLabel.setObjectName('selectionInfo')
         self._tip(self.orbitCentreLabel, 'Latitude and longitude of the orbit centre.')
-        self.pickCentreBtn = QPushButton('Pick Centre on Map')
-        self.pickCentreBtn.setObjectName('pickCentreBtn')
-        self.pickCentreBtn.setCheckable(True)
-        self.pickCentreBtn.setMinimumHeight(28)
-        self._tip(self.pickCentreBtn,
-            'Click the object to orbit on the map, or press and drag to draw the '
-            'circle. Press on the edge of the circle and drag to resize it. The '
-            'drone flies this circle, always facing the centre. Right click or '
-            'Esc cancels.')
+        form.addRow('Centre', self.orbitCentreLabel)
+        self._set_row_visible(form, self.orbitCentreLabel, False)
+
+        # Draw / edit / remove, like the Draw source of 2D mapping.
+        self.drawCircleBtn = QPushButton(DRAW_TEXT)
+        self.drawCircleBtn.setObjectName('drawCircleBtn')
+        self.drawCircleBtn.setCheckable(True)
+        self._tip(self.drawCircleBtn,
+            'Click the object to orbit, or press on it and drag out to set the '
+            'radius too. The drone flies this circle, always facing the centre. '
+            'Right click or Escape cancels.')
+        self.editCircleBtn = QPushButton(EDIT_TEXT)
+        self.editCircleBtn.setObjectName('editCircleBtn')
+        self.editCircleBtn.setCheckable(True)
+        self._tip(self.editCircleBtn,
+            'Edit the circle: drag inside it to move it, or drag its edge to '
+            'resize it. Click Finish Editing when done.')
+        self.editCircleBtn.setVisible(False)
+        self.removeCircleBtn = QPushButton('✕ Remove')
+        self.removeCircleBtn.setObjectName('removeCircleBtn')
+        self._tip(self.removeCircleBtn, 'Remove the circle and its waypoints.')
+        self.removeCircleBtn.setVisible(False)
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-        layout.addWidget(self.orbitCentreLabel, 1)
-        layout.addWidget(self.pickCentreBtn)
-        self._orbitCentreRow = row
-        form.addRow('Centre', row)
-        self._set_row_visible(form, row, False)
+        layout.setSpacing(4)
+        layout.addWidget(self.drawCircleBtn)
+        layout.addWidget(self.editCircleBtn)
+        layout.addWidget(self.removeCircleBtn)
+        self._orbitDrawRow = row
+        form.addRow(row)
+        row.setVisible(False)
 
     def _build_orbit_flight_rows(self, form):
         """Radius, camera tilt and direction rows for the Flight Parameters."""
@@ -226,7 +274,9 @@ class OrbitMixin:
             self._set_row_visible(form, widget, False)
 
     def _orbit_connect_signals(self):
-        self.pickCentreBtn.toggled.connect(self._on_pick_centre_toggled)
+        self.drawCircleBtn.toggled.connect(self._on_draw_circle_toggled)
+        self.editCircleBtn.toggled.connect(self._on_edit_circle_toggled)
+        self.removeCircleBtn.clicked.connect(self._on_remove_orbit_circle)
         self.orbitRadiusSpin.valueChanged.connect(self._show_orbit_centre)
         self.orbitRadiusSpin.valueChanged.connect(self._on_param_changed)
         self.orbitTiltSpin.valueChanged.connect(self._on_param_changed)
@@ -239,7 +289,8 @@ class OrbitMixin:
         for widget in (self.orbitRadiusSpin, self.orbitTiltSpin, self.orbitDirectionCombo):
             self._set_row_visible(self._flight_form, widget, orbit)
         self._set_row_visible(self._flight_form, self.gsdSpin, not orbit)
-        self._set_row_visible(self._area_form, self._orbitCentreRow, orbit)
+        self._set_row_visible(self._area_form, self.orbitCentreLabel, orbit)
+        self._orbitDrawRow.setVisible(orbit)
         self._set_row_visible(self._area_form, self._sourceRow, not orbit)
         self._sourceStack.setVisible(not orbit)
 
@@ -295,38 +346,90 @@ class OrbitMixin:
         if label is not None:
             label.setText('Front Overlap')
 
-    # ── Centre pick tool and marker ───────────────────────────────────────
+    # ── Circle draw / edit tool ───────────────────────────────────────────
 
-    def _on_pick_centre_toggled(self, checked):
+    def _orbit_circle(self):
+        return self._orbit_centre, self.orbitRadiusSpin.value()
+
+    def _start_orbit_tool(self, editing):
+        """Switch the map to the circle tool, in draw or edit mode."""
         canvas = self.iface.mapCanvas()
-        if checked:
+        if self._orbit_tool is None:
             self._orbit_prev_tool = canvas.mapTool()
-            self._orbit_tool = OrbitMapTool(
-                canvas, self._orbit_centre, self.orbitRadiusSpin.value(),
-                (self.orbitRadiusSpin.minimum(), self.orbitRadiusSpin.maximum()),
-                self._orbit_ring_points, self._on_orbit_drag, self._on_orbit_drawn)
-            canvas.setMapTool(self._orbit_tool)
-            self.pickCentreBtn.setText('Click the centre, drag for the radius…')
-        else:
+        other = self.drawCircleBtn if editing else self.editCircleBtn
+        self._reset_orbit_button(other)
+        self._orbit_tool = OrbitMapTool(
+            canvas, self._orbit_circle,
+            (self.orbitRadiusSpin.minimum(), self.orbitRadiusSpin.maximum()),
+            self._orbit_ring_points, self._on_orbit_drag, self._on_orbit_drawn,
+            editing=editing)
+        canvas.setMapTool(self._orbit_tool)
+
+    def _reset_orbit_button(self, button):
+        blocked = button.blockSignals(True)
+        button.setChecked(False)
+        button.setText(DRAW_TEXT if button is self.drawCircleBtn else EDIT_TEXT)
+        button.blockSignals(blocked)
+
+    def _on_draw_circle_toggled(self, checked):
+        if not checked:
             self._leave_orbit_tool()
+            return
+        if self._orbit_centre is not None:
+            reply = QMessageBox.question(
+                self, 'Replace Orbit Circle?',
+                'An orbit circle is already defined.\n\n'
+                'Do you want to discard it and draw a new one?',
+                _MB_YES | _MB_NO, _MB_NO)
+            if reply != _MB_YES:
+                self._reset_orbit_button(self.drawCircleBtn)
+                return
+            self._on_remove_orbit_circle()
+            blocked = self.drawCircleBtn.blockSignals(True)
+            self.drawCircleBtn.setChecked(True)
+            self.drawCircleBtn.blockSignals(blocked)
+        self._start_orbit_tool(editing=False)
+        self.drawCircleBtn.setText('Click the centre, drag for the radius…')
+
+    def _on_edit_circle_toggled(self, checked):
+        if not checked:
+            self._leave_orbit_tool()
+            return
+        if self._orbit_centre is None:
+            self._reset_orbit_button(self.editCircleBtn)
+            return
+        self._start_orbit_tool(editing=True)
+        self.editCircleBtn.setText('✓ Finish Editing')
+        self._set_info(
+            'Editing the orbit circle: drag inside it to move it, or drag its '
+            'edge to resize it. Click Finish Editing when done.')
 
     def _leave_orbit_tool(self):
+        """Turn the circle tool off and restore the earlier map tool."""
         canvas = self.iface.mapCanvas()
-        if self._orbit_tool is not None:
+        tool, self._orbit_tool = self._orbit_tool, None
+        if tool is not None:
             if self._orbit_prev_tool is not None:
                 canvas.setMapTool(self._orbit_prev_tool)
-            elif canvas.mapTool() is self._orbit_tool:
-                canvas.unsetMapTool(self._orbit_tool)
-        self._orbit_tool = None
+            elif canvas.mapTool() is tool:
+                canvas.unsetMapTool(tool)
+            if tool.editing:
+                self._set_info(_INFO_IDLE)
         self._orbit_prev_tool = None
-        self.pickCentreBtn.setText('Pick Centre on Map')
+        self._reset_orbit_button(self.drawCircleBtn)
+        self._reset_orbit_button(self.editCircleBtn)
 
     def _on_orbit_drag(self, radius):
-        self.pickCentreBtn.setText(f'Radius {radius:.1f} m')
+        button = self.editCircleBtn if self.editCircleBtn.isChecked() else self.drawCircleBtn
+        button.setText(f'Radius {radius:.1f} m')
 
     def _on_orbit_drawn(self, centre, radius):
-        """Apply a centre (and a dragged radius) from the map tool."""
-        self.pickCentreBtn.setChecked(False)    # turns the map tool off
+        """Apply a circle from the map tool; drawing ends, editing goes on."""
+        editing = self._orbit_tool is not None and self._orbit_tool.editing
+        if centre is None or not editing:
+            self._leave_orbit_tool()
+        else:
+            self.editCircleBtn.setText('✓ Finish Editing')
         if centre is None:
             return
         if radius is not None:
@@ -338,6 +441,10 @@ class OrbitMixin:
         # Show the waypoints right away; once shown, they follow later edits.
         if not self._preview_layer_ids:
             self._on_preview()
+
+    def _on_remove_orbit_circle(self):
+        """Remove the circle and its waypoints, like Remove in 2D Draw."""
+        self._on_clear_preview(reset_area=True)
 
     def set_orbit_centre(self, longitude, latitude):
         """Set the orbit centre (WGS84) and draw its marker."""
@@ -415,6 +522,8 @@ class OrbitMixin:
         }))
         preview_layers.register(layer, kind='orbit_centre')
         self._orbit_centre_layer_id = layer.id()
+        self.editCircleBtn.setVisible(True)
+        self.removeCircleBtn.setVisible(True)
         self.iface.mapCanvas().refresh()
 
     def _remove_orbit_centre_layer(self):
@@ -429,19 +538,20 @@ class OrbitMixin:
         self._orbit_radius_layer_id = None
 
     def _clear_orbit_centre(self):
-        if self.pickCentreBtn.isChecked():
-            self.pickCentreBtn.setChecked(False)
+        self._leave_orbit_tool()
         self._orbit_centre = None
         self._orbit_headings = None
         self.orbitCentreLabel.setText(NO_CENTRE_TEXT)
         self._remove_orbit_centre_layer()
+        self.editCircleBtn.setVisible(False)
+        self.removeCircleBtn.setVisible(False)
 
     def _has_orbit_centre(self, silent=False):
         if self._orbit_centre is None:
             if not silent:
                 QMessageBox.information(
                     self, 'No Orbit Centre',
-                    'Click Pick Centre on Map, then click the object to orbit.')
+                    'Click Draw Circle on Map, then click the object to orbit.')
             return False
         return True
 
