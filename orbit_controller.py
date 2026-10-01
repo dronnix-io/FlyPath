@@ -11,7 +11,7 @@ import math
 from qgis.PyQt.QtCore import QPoint, Qt
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
-    QComboBox, QDoubleSpinBox, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+    QDoubleSpinBox, QHBoxLayout, QLabel, QMessageBox, QPushButton,
     QSpinBox, QWidget,
 )
 from qgis.core import (
@@ -248,6 +248,7 @@ class OrbitMixin:
         self._orbit_prev_tool = None
         self._orbit_saved_overlap = None    # mapping side overlap, restored on leaving
         self._orbit_headings = None
+        self._mapping_reverse_tip = None    # Reverse route tooltip outside orbits
 
     # ── Building the controls ─────────────────────────────────────────────
 
@@ -315,14 +316,7 @@ class OrbitMixin:
             'angles between -30° and -45° suit 3D models.')
         form.addRow('Camera Tilt', self.orbitTiltSpin)
 
-        self.orbitDirectionCombo = QComboBox()
-        self.orbitDirectionCombo.addItem('Clockwise')
-        self.orbitDirectionCombo.addItem('Counterclockwise')
-        self._tip(self.orbitDirectionCombo,
-            'Which way the drone flies around the centre, seen from above.')
-        form.addRow('Orbit Direction', self.orbitDirectionCombo)
-
-        for widget in (self.orbitRadiusSpin, self.orbitTiltSpin, self.orbitDirectionCombo):
+        for widget in (self.orbitRadiusSpin, self.orbitTiltSpin):
             self._set_row_visible(form, widget, False)
 
     def _orbit_connect_signals(self):
@@ -332,13 +326,12 @@ class OrbitMixin:
         self.orbitRadiusSpin.valueChanged.connect(self._show_orbit_centre)
         self.orbitRadiusSpin.valueChanged.connect(self._on_param_changed)
         self.orbitTiltSpin.valueChanged.connect(self._on_param_changed)
-        self.orbitDirectionCombo.currentIndexChanged.connect(self._on_param_changed)
 
     # ── Layout ────────────────────────────────────────────────────────────
 
     def _apply_orbit_layout(self, orbit):
         """Show the orbit controls and hide the mapping ones, or the reverse."""
-        for widget in (self.orbitRadiusSpin, self.orbitTiltSpin, self.orbitDirectionCombo):
+        for widget in (self.orbitRadiusSpin, self.orbitTiltSpin):
             self._set_row_visible(self._flight_form, widget, orbit)
         self._set_row_visible(self._flight_form, self.gsdSpin, not orbit)
         self._set_row_visible(self._area_form, self.orbitCentreLabel, orbit)
@@ -352,13 +345,27 @@ class OrbitMixin:
         for widget in (self._pathInlineLabel, self.pathCurvedRadio, self.pathStraightRadio):
             widget.setVisible(not orbit)
 
-        # One ring, no splitting, breaks, cross-hatch, reverse or terrain follow.
+        # One ring, no splitting, breaks, cross-hatch or terrain follow.
         if orbit:
             self.splitCheck.setChecked(False)
             self.terrainFollowCheck.setChecked(False)
         self._set_row_visible(self._organizer_form, self.splitCheck, not orbit)
         self._set_row_visible(self._organizer_form, self.splitSpin, not orbit)
         self.terrainFollowCheck.setVisible(not orbit)
+        # Reverse route sets the orbit direction: clockwise, or reversed to
+        # counterclockwise. It keeps its usual place in the route options row.
+        hint = next((child for child in self.reverseRouteCheck.children()
+                     if hasattr(child, '_text')), None)     # the panel's hover hint
+        if hint is not None and self._mapping_reverse_tip is None:
+            self._mapping_reverse_tip = hint._text
+        if orbit:
+            self.reverseRouteCheck.setVisible(True)
+            self.reverseRouteCheck.setEnabled(True)
+        if hint is not None:
+            hint._text = ((
+                'Fly the ring counterclockwise (seen from above) instead of '
+                'clockwise. The drone starts at the north point of the circle '
+                'either way.') if orbit else self._mapping_reverse_tip)
         # The takeoff zone and contours are built for mapping grids.
         if orbit:
             for button in (self.showTakeoffZoneBtn, self.showContoursBtn):
@@ -623,7 +630,7 @@ class OrbitMixin:
             radius_m=self.orbitRadiusSpin.value(),
             altitude_m=self.altitudeSpin.value(),
             gimbal_pitch_deg=self.orbitTiltSpin.value(),
-            clockwise=self.orbitDirectionCombo.currentIndex() == 0,
+            clockwise=not self.reverseRouteCheck.isChecked(),
             speed_m_s=self.speedSpin.value(),
             capture_mode=self._mission_type(),
             side_overlap_ratio=self.sideOverlapSpin.value() / 100.0,
