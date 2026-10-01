@@ -471,12 +471,12 @@ QPushButton#clearPreviewBtn {
     background-color: #3A3D45; color: #D0D0D0; font-weight: normal;
 }
 QPushButton#clearPreviewBtn:hover { background-color: #4A4D55; }
-QPushButton#drawPolygonBtn {
+QPushButton#drawPolygonBtn, QPushButton#drawCircleBtn {
     background-color: #1E3A1E; color: #80C880;
     border: 1px solid #2E5A2E; font-weight: bold;
 }
-QPushButton#drawPolygonBtn:hover   { background-color: #2A4D2A; }
-QPushButton#drawPolygonBtn:checked {
+QPushButton#drawPolygonBtn:hover, QPushButton#drawCircleBtn:hover { background-color: #2A4D2A; }
+QPushButton#drawPolygonBtn:checked, QPushButton#drawCircleBtn:checked {
     background-color: #2A6A2A; border: 1px solid #40A040; color: #AAFAAA;
 }
 QPushButton#autoDirectionBtn {
@@ -485,18 +485,19 @@ QPushButton#autoDirectionBtn {
 }
 QPushButton#autoDirectionBtn:hover { background-color: #4A4D55; }
 QPushButton#autoDirectionBtn:checked { background-color: #2A6A2A; color: #AAFAAA; }
-QPushButton#removePolygonBtn {
+QPushButton#removePolygonBtn, QPushButton#removeCircleBtn {
     background-color: #5A2020; color: #FF8888;
     border: 1px solid #7A3030; border-radius: 3px;
     font-weight: bold; padding: 3px 6px;
 }
-QPushButton#removePolygonBtn:hover { background-color: #7A2525; color: #FFAAAA; }
-QPushButton#editPolygonBtn {
+QPushButton#removePolygonBtn:hover, QPushButton#removeCircleBtn:hover { background-color: #7A2525; color: #FFAAAA; }
+QPushButton#editPolygonBtn, QPushButton#editCircleBtn,
+QPushButton#editCircleBtn:checked {
     background-color: #203A5A; color: #88BBFF;
     border: 1px solid #305A7A; border-radius: 3px;
     font-weight: bold; padding: 3px 6px;
 }
-QPushButton#editPolygonBtn:hover { background-color: #254A7A; color: #AACCFF; }
+QPushButton#editPolygonBtn:hover, QPushButton#editCircleBtn:hover { background-color: #254A7A; color: #AACCFF; }
 QPushButton#useSelectionBtn {
     background-color: #2A3A2A; color: #80C880;
     border: 1px solid #3A5A3A; border-radius: 3px;
