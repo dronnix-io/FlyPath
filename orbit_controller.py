@@ -50,14 +50,20 @@ try:
 except AttributeError:
     _LINE_PLACEMENT = getattr(QgsPalLayerSettings, 'Line')
 _WGS84 = QgsCoordinateReferenceSystem('EPSG:4326')
+try:
+    _ICON_BOX = QgsRubberBand.IconType.ICON_BOX
+except AttributeError:
+    _ICON_BOX = getattr(QgsRubberBand, 'ICON_BOX')
+_HANDLE_INDEXES = (0, 30, 60, 90)   # north, east, south, west on the 3° ring
 
 
 class OrbitMapTool(QgsMapTool):
     """Draw or edit the orbit circle on the map.
 
     Drawing: click the centre (the radius stays), or press and drag to set the
-    radius as well. Editing: drag inside the circle to move it, or drag its
-    edge to resize it; the tool stays on for more edits. on_drag(radius)
+    radius as well. Editing: drag inside the circle to move it, or drag a
+    handle or the outline to resize it; the pointer shows which one applies,
+    and the tool stays on for more edits. on_drag(radius)
     follows a resize drag, on_done(centre, radius) reports each result, and
     on_done(None, None) means right click or Esc (cancel or finish).
     """
@@ -91,7 +97,42 @@ class OrbitMapTool(QgsMapTool):
         self._radius_band = QgsRubberBand(canvas, Qgis.GeometryType.Line)
         self._radius_band.setColor(QColor('#FF1493'))
         self._radius_band.setWidth(2)
+        self._handle_band = None
+        if editing:
+            # Square resize handles on the circle, like the QGIS vertex tool.
+            self._handle_band = QgsRubberBand(canvas, Qgis.GeometryType.Point)
+            self._handle_band.setIcon(_ICON_BOX)
+            self._handle_band.setIconSize(10)
+            self._handle_band.setColor(QColor('#FF1493'))
+            self._handle_band.setFillColor(QColor('white'))
+            self._handle_band.setStrokeColor(QColor('#FF1493'))
+            self._handle_band.setWidth(2)
+            self.refresh_handles()
         self.setCursor(Qt.CursorShape.CrossCursor)
+
+    def refresh_handles(self):
+        """Put the resize handles on the current circle."""
+        centre, radius = self._circle()
+        if centre is None:
+            if self._handle_band is not None:
+                self._handle_band.reset(Qgis.GeometryType.Point)
+            return
+        self._show_handles(QgsPointXY(*centre), radius)
+
+    def _show_handles(self, centre, radius):
+        if self._handle_band is None:
+            return
+        ring = self._ring_points((centre.x(), centre.y()), radius)
+        self._handle_band.setToGeometry(
+            QgsGeometry.fromMultiPointXY([ring[index] for index in _HANDLE_INDEXES]), _WGS84)
+
+    def _edit_mode(self, pos, point, centre, radius):
+        """'resize' on the outline or a handle, 'move' inside, else None."""
+        tolerance = self._metres(point, self._to_wgs84(pos + QPoint(self.EDGE_TOLERANCE_PX, 0)))
+        distance = self._metres(centre, point)
+        if abs(distance - radius) <= tolerance:
+            return 'resize'
+        return 'move' if distance < radius else None
 
     def _to_wgs84(self, pos):
         transform = QgsCoordinateTransform(
@@ -133,28 +174,36 @@ class OrbitMapTool(QgsMapTool):
         if self.editing:
             if self._centre is None:
                 return
-            tolerance = self._metres(point, self._to_wgs84(pos + QPoint(self.EDGE_TOLERANCE_PX, 0)))
-            distance = self._metres(self._centre, point)
-            if abs(distance - self._radius) <= tolerance:
-                self._mode = 'resize'
-            elif distance < self._radius:
-                self._mode = 'move'
-            else:
+            self._mode = self._edit_mode(pos, point, self._centre, self._radius)
+            if self._mode is None:
                 return                  # outside the circle: nothing to edit
         self._press = pos
         self._press_point = point
         self._drag_centre = point if self._mode == 'draw' else QgsPointXY(self._centre)
 
     def canvasMoveEvent(self, event):
-        if self._press is None or not self._dragged(event.pos()):
+        if self._press is None:
+            if self.editing:
+                self._hover(event.pos())
+            return
+        if not self._dragged(event.pos()):
             return
         centre, radius, edge = self._result(event.pos())
+        self._show_handles(centre, radius)
         ring = self._ring_points((centre.x(), centre.y()), radius)
         self._ring_band.setToGeometry(QgsGeometry.fromPolygonXY([ring + [ring[0]]]), _WGS84)
         self._radius_band.setToGeometry(
             QgsGeometry.fromPolylineXY([centre, edge or ring[0]]), _WGS84)
         if self._mode != 'move':
             self._on_drag(radius)
+
+    def _hover(self, pos):
+        """Show what a drag from here would do: resize, move or nothing."""
+        centre, radius = self._circle()
+        mode = (self._edit_mode(pos, self._to_wgs84(pos), QgsPointXY(*centre), radius)
+                if centre is not None else None)
+        self.setCursor({'resize': Qt.CursorShape.SizeFDiagCursor,
+                        'move': Qt.CursorShape.SizeAllCursor}.get(mode, Qt.CursorShape.CrossCursor))
 
     def canvasReleaseEvent(self, event):
         if self._press is None or event.button() != Qt.MouseButton.LeftButton:
@@ -180,10 +229,10 @@ class OrbitMapTool(QgsMapTool):
 
     def deactivate(self):
         self._press = None
-        for band in (self._ring_band, self._radius_band):
+        for band in (self._ring_band, self._radius_band, self._handle_band):
             if band is not None:
                 self.canvas().scene().removeItem(band)
-        self._ring_band = self._radius_band = None
+        self._ring_band = self._radius_band = self._handle_band = None
         super().deactivate()
 
 
@@ -222,8 +271,9 @@ class OrbitMixin:
         self.editCircleBtn.setObjectName('editCircleBtn')
         self.editCircleBtn.setCheckable(True)
         self._tip(self.editCircleBtn,
-            'Edit the circle: drag inside it to move it, or drag its edge to '
-            'resize it. Click Finish Editing when done.')
+            'Edit the circle: drag inside it to move it, or drag a square '
+            'handle or the outline to make it larger or smaller. Click Finish '
+            'Editing when done.')
         self.editCircleBtn.setVisible(False)
         self.removeCircleBtn = QPushButton('✕ Remove')
         self.removeCircleBtn.setObjectName('removeCircleBtn')
@@ -403,8 +453,9 @@ class OrbitMixin:
         self._start_orbit_tool(editing=True)
         self.editCircleBtn.setText('✓ Finish Editing')
         self._set_info(
-            'Editing the orbit circle: drag inside it to move it, or drag its '
-            'edge to resize it. Click Finish Editing when done.')
+            'Editing the orbit circle: drag inside it to move it, or drag a '
+            'square handle or the outline to make it larger or smaller. Click '
+            'Finish Editing when done.')
 
     def _leave_orbit_tool(self):
         """Turn the circle tool off and restore the earlier map tool."""
@@ -524,6 +575,8 @@ class OrbitMixin:
         }))
         preview_layers.register(layer, kind='orbit_centre')
         self._orbit_centre_layer_id = layer.id()
+        if self._orbit_tool is not None and self._orbit_tool.editing:
+            self._orbit_tool.refresh_handles()
         self.editCircleBtn.setVisible(True)
         self.removeCircleBtn.setVisible(True)
         self.iface.mapCanvas().refresh()
