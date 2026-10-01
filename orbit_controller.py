@@ -236,6 +236,8 @@ class OrbitMixin:
         layout.addWidget(self.drawCircleBtn)
         layout.addWidget(self.editCircleBtn)
         layout.addWidget(self.removeCircleBtn)
+        for button in (self.drawCircleBtn, self.editCircleBtn, self.removeCircleBtn):
+            button.setMinimumHeight(28)     # same height as the 2D Draw buttons
         self._orbitDrawRow = row
         form.addRow(row)
         row.setVisible(False)
