@@ -35,7 +35,7 @@ ORBIT_LABEL = 'Orbit (3D Model)'
 DEFAULT_ORBIT_OVERLAP = 90      # % between neighbouring photos around the ring
 ORBIT_MIN_ALTITUDE_M = 10.0
 MAPPING_MIN_ALTITUDE_M = 30.0
-NO_CENTRE_TEXT = '— no centre —'
+NO_CENTRE_TEXT = '— no centre point —'
 DRAW_TEXT = 'Draw Circle on Map'
 EDIT_TEXT = '✎ Edit'
 _INFO_IDLE = 'ⓘ  Hover over any field to see what it does.'
@@ -256,8 +256,9 @@ class OrbitMixin:
         """Centre and Draw rows for the Survey Area group (replace Source)."""
         self.orbitCentreLabel = QLabel(NO_CENTRE_TEXT)
         self.orbitCentreLabel.setObjectName('selectionInfo')
-        self._tip(self.orbitCentreLabel, 'Latitude and longitude of the orbit centre.')
-        form.addRow('Centre', self.orbitCentreLabel)
+        self._tip(self.orbitCentreLabel,
+            'Latitude and longitude of the centre point the drone orbits.')
+        form.addRow('Centre Point', self.orbitCentreLabel)
         self._set_row_visible(form, self.orbitCentreLabel, False)
 
         # Draw / edit / remove, like the Draw source of 2D mapping.
@@ -282,7 +283,7 @@ class OrbitMixin:
         self.removeCircleBtn.setVisible(False)
         row = QWidget()
         layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 6, 0, 0)   # a little more room under Centre Point
         layout.setSpacing(4)
         layout.addWidget(self.drawCircleBtn)
         layout.addWidget(self.editCircleBtn)
@@ -291,7 +292,7 @@ class OrbitMixin:
             button.setMinimumHeight(28)     # same height as the 2D Draw buttons
         self._orbitDrawRow = row
         form.addRow(row)
-        row.setVisible(False)
+        self._set_row_visible(form, row, False)
 
     def _build_orbit_flight_rows(self, form):
         """Radius, camera tilt and direction rows for the Flight Parameters."""
@@ -335,9 +336,9 @@ class OrbitMixin:
             self._set_row_visible(self._flight_form, widget, orbit)
         self._set_row_visible(self._flight_form, self.gsdSpin, not orbit)
         self._set_row_visible(self._area_form, self.orbitCentreLabel, orbit)
-        self._orbitDrawRow.setVisible(orbit)
+        self._set_row_visible(self._area_form, self._orbitDrawRow, orbit)
         self._set_row_visible(self._area_form, self._sourceRow, not orbit)
-        self._sourceStack.setVisible(not orbit)
+        self._set_row_visible(self._area_form, self._sourceStack, not orbit)
 
         # An orbit always flies a curved path: DJI Fly keeps it on re-save.
         if orbit:
@@ -349,8 +350,11 @@ class OrbitMixin:
         if orbit:
             self.splitCheck.setChecked(False)
             self.terrainFollowCheck.setChecked(False)
-        self._set_row_visible(self._organizer_form, self.splitCheck, not orbit)
-        self._set_row_visible(self._organizer_form, self.splitSpin, not orbit)
+        drone = self.droneModelCombo.currentText()
+        splitting = (not orbit and registry.has(drone)
+                     and registry.get(drone).category == 'consumer')
+        self._set_row_visible(self._organizer_form, self.splitCheck, splitting)
+        self._set_row_visible(self._organizer_form, self.splitSpin, splitting)
         self.terrainFollowCheck.setVisible(not orbit)
         # Reverse route sets the orbit direction: clockwise, or reversed to
         # counterclockwise. It keeps its usual place in the route options row.
@@ -393,7 +397,7 @@ class OrbitMixin:
         self._set_row_visible(self._flight_form, self.sideOverlapSpin, full)
         self._set_row_visible(self._flight_form, self.frontOverlapStack, not full)
         self.frontOverlapStack.setCurrentIndex(0)
-        label = self._flight_form.labelForField(self.frontOverlapStack)
+        label = self._row_label(self._flight_form, self.frontOverlapStack)
         if label is not None:
             label.setText('Side Overlap')
         self._set_row_visible(self._area_form, self.demCombo, False)
@@ -401,7 +405,7 @@ class OrbitMixin:
     def _restore_mapping_overlap_rows(self):
         self._set_row_visible(self._flight_form, self.sideOverlapSpin, True)
         self._set_row_visible(self._flight_form, self.frontOverlapStack, True)
-        label = self._flight_form.labelForField(self.frontOverlapStack)
+        label = self._row_label(self._flight_form, self.frontOverlapStack)
         if label is not None:
             label.setText('Front Overlap')
 

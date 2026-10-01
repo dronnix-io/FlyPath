@@ -111,7 +111,7 @@ from .terrain import (
     sample_elevations, densify_by_terrain, heights_above_takeoff,
 )
 from .hardware import registry
-from . import planning_adapter
+from . import form_rows, planning_adapter
 from . import controller_storage
 from . import survey_geometry
 from . import takeoff_adapter
@@ -820,6 +820,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._source_mode        = 'layer'  # survey-area source: layer|selection|draw
 
         self._build_ui()
+        # Collapse hidden rows from here on, so gaps stay even on Qt 5.
+        for form in (self._area_form, self._flight_form, self._organizer_form):
+            form_rows.track(form)
         self._setup_combos()
         self._connect_signals()
         QgsProject.instance().cleared.connect(self._forget_website_mission)
@@ -1227,6 +1230,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.frontOverlapStack = QStackedWidget()
         self.frontOverlapStack.addWidget(self.frontOverlapLabel)   # index 0: semi
         self.frontOverlapStack.addWidget(self.frontOverlapSpin)    # index 1: full
+        self.frontOverlapStack.setSizePolicy(_SP_PREFERRED, _SP_FIXED)
         form.addRow('Front Overlap', self.frontOverlapStack)
 
         self.speedSpin = QDoubleSpinBox()
@@ -2226,15 +2230,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             return
         consumer = registry.get(drone).category == 'consumer'
 
-        # Splitting controls: consumer only.
-        self.splitCheck.setVisible(consumer)
-        split_check_lbl = self._organizer_form.labelForField(self.splitCheck)
-        if split_check_lbl is not None:
-            split_check_lbl.setVisible(consumer)
-        self.splitSpin.setVisible(consumer)
-        lbl = self._organizer_form.labelForField(self.splitSpin)
-        if lbl is not None:
-            lbl.setVisible(consumer)
+        # Splitting controls: consumer only (and never for a one-ring orbit).
+        splitting = consumer and self._mission_kind() != 'orbit'
+        self._set_row_visible(self._organizer_form, self.splitCheck, splitting)
+        self._set_row_visible(self._organizer_form, self.splitSpin, splitting)
         if not consumer:
             self.splitCheck.setChecked(False)
             self._setting_split = True
@@ -2318,14 +2317,14 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self.crossHatchCheck.setChecked(False)
             self.reverseRouteCheck.setChecked(False)
         self._set_row_visible(self._organizer_form, self.setBreaksBtn, corridor)
-        split_lbl = self._organizer_form.labelForField(self.splitSpin)
+        split_lbl = self._row_label(self._organizer_form, self.splitSpin)
         if split_lbl is not None:
             split_lbl.setText('Min Flights' if corridor else 'Split Missions')
         if not corridor and self.setBreaksBtn.isChecked():
             self.setBreaksBtn.setChecked(False)   # leaving corridor turns the tool off
 
         # Survey Area group: relabel the read-out row and the draw button
-        lbl = self._area_form.labelForField(self.areaLabel)
+        lbl = self._row_label(self._area_form, self.areaLabel)
         if lbl is not None:
             lbl.setText('Length' if corridor else 'Area')
         self.areaLabel.setToolTip('Total length of the corridor centre line.'
@@ -2353,10 +2352,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
     @staticmethod
     def _set_row_visible(form, widget, visible):
         """Show/hide a QFormLayout row (its field widget and its label)."""
-        widget.setVisible(visible)
-        lbl = form.labelForField(widget)
-        if lbl is not None:
-            lbl.setVisible(visible)
+        form_rows.set_visible(form, widget, visible)
+
+    @staticmethod
+    def _row_label(form, widget):
+        """A row's label widget, also while a hidden row is out of the form."""
+        return form_rows.label(form, widget)
 
     def _apply_mission_type_capabilities(self):
         """Swap the panel between semi- and full-automatic layouts.
