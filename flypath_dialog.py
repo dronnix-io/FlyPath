@@ -2287,8 +2287,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         survey area: a polygon is not valid input for a corridor (and vice
         versa), so the layer list is repopulated for the new geometry type."""
         self._apply_kind_layout()
-        # Orbit swaps the survey area for a centre point and its own controls.
-        self._apply_orbit_layout(self._mission_kind() == 'orbit')
+        self._switch_orbit_mode(self._mission_kind() == 'orbit')
         self._on_clear_preview(reset_area=True)
         self._refresh_layer_combo()
 
@@ -2315,6 +2314,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.reverseRouteCheck.setVisible(mapping_2d)
         if not mapping_2d:
             self.crossHatchCheck.setChecked(False)
+        if corridor:
             self.reverseRouteCheck.setChecked(False)
         self._set_row_visible(self._organizer_form, self.setBreaksBtn, corridor)
         split_lbl = self._row_label(self._organizer_form, self.splitSpin)
@@ -2337,6 +2337,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'are listed.' if corridor else
             'Select a polygon layer from the QGIS project. Only polygon layers '
             'are listed.')
+
+        # Orbit swaps the survey area for a centre point and its own controls.
+        self._apply_orbit_layout(kind == 'orbit')
 
     # ── Corridor mission breaks (manual line grouping) ────────────────────
 
