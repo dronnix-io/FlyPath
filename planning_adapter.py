@@ -10,7 +10,7 @@ from .flypath_engine.profiles import PROFILE_VERSION
 
 PlanningError = _PlanningError
 # These releases have identical planning behavior; revisit on engine upgrades.
-SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0')
+SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0')
 
 
 FINISH_ACTIONS = {
