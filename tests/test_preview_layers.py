@@ -136,7 +136,8 @@ def test_order_visibility_and_group_cleanup():
             'waypoints')}
         group = root.children()[0]
         assert [node.layer().customProperty('flypath_kind')
-                for node in group.children()] == list(module._ORDER)
+                for node in group.children()] == [
+                    kind for kind in module._ORDER if kind in layers]
         group.findLayer(layers['path'].id()).setItemVisibilityChecked(False)
         group.findLayer(layers['waypoints'].id()).setItemVisibilityChecked(False)
         group.setItemVisibilityChecked(False)
