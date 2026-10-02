@@ -15,12 +15,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 def test_planning_dialog_state():
     try:
-        from qgis.core import QgsApplication, QgsLayerTreeModel, QgsProject
+        from qgis.core import QgsApplication, QgsLayerTreeModel, QgsProject, QgsVectorLayer
         from qgis.gui import QgsMapCanvas
         from qgis.PyQt.QtCore import Qt
         from qgis.PyQt.QtGui import QShowEvent
         module = importlib.import_module(
             Path(__file__).resolve().parents[1].name + '.flypath_dialog')
+        sync_error = importlib.import_module(
+            Path(__file__).resolve().parents[1].name + '.flypath_sync').FlypathSyncError
     except ImportError as exc:
         raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
     app = QgsApplication.instance() or QgsApplication([], False)
@@ -81,20 +83,48 @@ def test_planning_dialog_state():
                 'split_max_wp': 70,
             },
         }
-        adjusted, recovery_note = planner._apply_website_mission(mission)
+        with patch.object(planner, '_on_preview') as automatic_preview:
+            adjusted, recovery_note = planner._apply_website_mission(mission)
+        automatic_preview.assert_not_called()
         assert not adjusted and not recovery_note
-        assert planner._preview_layer_ids and planner._planning.result, \
-            'Loading a mission without a saved route must preview automatically'
+        assert not planner._preview_layer_ids and not planner._planning.result, \
+            'Loading a mission without a saved route must wait for Preview'
+        assert planner._planning.save_requires_regeneration()
+        with patch.object(module.QMessageBox, 'warning') as warning:
+            planner._on_send_to_website()
+            planner._on_export()
+        assert warning.call_count == 2
+        planner._on_preview()
+        assert planner._preview_layer_ids and planner._planning.result
         expected = [flight['waypoints'] for flight in
                     module.planning_adapter.consume_result(
                         planner._planning.request, planner._planning.result)]
         assert planner._missions == expected
         assert 'travel unknown' not in planner.flightTimeLabel.text()
         assert 'travel unknown' not in planner.distanceLabel.text()
+        # Generated previews use every edited setting, including both directions
+        # of the exclusive route-style buttons.
+        previous_result = planner._planning.result
+        for change, field, value in (
+                (lambda: planner.marginSpin.setValue(10), 'margin_m', 10),
+                (lambda: planner.pathStraightRadio.setChecked(True), 'turn_style', 'straight'),
+                (lambda: planner.pathCurvedRadio.setChecked(True), 'turn_style', 'curved'),
+                (lambda: planner.finishActionCombo.setCurrentIndex(1), 'finish_action', 'hover')):
+            change()
+            planner._on_preview()
+            assert planner._planning.request[field] == value
+            assert planner._planning.result and planner._preview_layer_ids
+            assert planner._planning.result is not previous_result
+            previous_result = planner._planning.result
+        planner.marginSpin.setValue(0)
+        planner.finishActionCombo.setCurrentIndex(0)
+        planner._on_preview()
         shared = planner._website_payload('Shared mission')
         saved_result = shared['planning_result']
         project = QgsProject.instance()
         group = project.layerTreeRoot().children()[0]
+        external = QgsVectorLayer('Point?crs=EPSG:4326', 'User layer', 'memory')
+        project.addMapLayer(external)
         old_path_id, old_waypoints_id = planner._preview_layer_ids
         model = QgsLayerTreeModel(project.layerTreeRoot())
         model.setFlag(getattr(QgsLayerTreeModel, 'Flag', QgsLayerTreeModel)
@@ -119,10 +149,21 @@ def test_planning_dialog_state():
         assert model.layerLegendNodes(path_node)[0].data(check_role) == unchecked
         stale = deepcopy(shared)
         stale['planning_result']['statistics']['photo_count'] += 1
-        adjusted, recovery_note = planner._apply_website_mission(stale)
-        assert not adjusted and recovery_note
-        assert planner._planning.result, \
-            'Invalid saved provenance must regenerate from safe inputs'
+        old_layers = list(planner._preview_layer_ids)
+        old_route = deepcopy(planner._waypoints)
+        old_request = planner._planning.request
+        with unittest.TestCase().assertRaises(sync_error):
+            planner._apply_website_mission(stale)
+        planner._draw_tool = object()
+        try:
+            with unittest.TestCase().assertRaisesRegex(sync_error, 'Finish or cancel'):
+                planner._apply_website_mission(mission)
+        finally:
+            planner._draw_tool = None
+        assert project.mapLayer(external.id()) is external
+        assert planner._preview_layer_ids == old_layers
+        assert planner._waypoints == old_route
+        assert planner._planning.request is old_request
         legacy_points = [
             [51.0100, -114.0200], [51.0130, -114.0200],
             [51.0130, -114.0185], [51.0100, -114.0185],
@@ -137,6 +178,10 @@ def test_planning_dialog_state():
                                  'photos': '60', 'batteries': '1',
                                  'area': '3.5 ha'})
         planner._apply_website_mission(legacy)
+        old_survey_id = planner._survey_area_layer_id
+        planner._apply_website_mission(legacy)
+        assert project.mapLayer(old_survey_id) is None, \
+            'Successful repeated imports must remove the previous survey layer'
         assert planner.photosLabel.text() == '60', 'Show saved estimates on load'
         assert planner.waypointsLabel.text() == '9', 'Count the shared split seam'
         assert planner.linesLabel.text() == '4', 'Derive lines from endpoint pairs'
@@ -155,9 +200,18 @@ def test_planning_dialog_state():
                                        auto_direction=True, direction=90,
                                        terrain_follow=False)
         full_legacy['waypoints'] = mission['polygon'][:2]
-        planner._apply_website_mission(full_legacy)
-        assert planner._planning.result, \
-            'A legacy Full-auto route must be regenerated from its settings'
+        _, full_recovery_note = planner._apply_website_mission(full_legacy)
+        assert 'no verified capture actions' in full_recovery_note
+        assert 'Regenerate on Map' in planner.infoBar.text()
+        assert not planner._planning.result
+        assert planner._waypoints == [tuple(reversed(p)) for p in full_legacy['waypoints']]
+        assert planner._planning.save_requires_regeneration()
+        with patch.object(module.QMessageBox, 'warning') as warning:
+            planner._on_send_to_website()
+            planner._on_export()
+        assert warning.call_count == 2
+        planner._on_preview()
+        assert planner._planning.result
         assert len(planner._waypoints) > len(full_legacy['waypoints'])
         assert planner._planning.request['direction']['mode'] == 'automatic'
         assert planner.directionSpin.value() == \
@@ -178,13 +232,114 @@ def test_planning_dialog_state():
         older['planning_result']['engine_version'] = '0.3.0'
         planner._apply_website_mission(older)
         assert planner._planning.unsupported and planner._planning.locked
+        clamped = deepcopy(older)
+        clamped['settings']['margin'] = 300
+        clamped['planning_request']['margin_m'] = 300
+        adjusted, _ = planner._apply_website_mission(clamped)
+        assert adjusted and planner.marginSpin.value() == 200
+        assert planner._planning.save_requires_regeneration()
+        assert planner._planning.export_issue() == 'unsupported'
+        clamped_supported = deepcopy(shared)
+        clamped_supported['settings']['margin'] = 300
+        clamped_supported['planning_request']['margin_m'] = 300
+        clamped_supported['planning_result'] = module.planning_adapter.plan(
+            clamped_supported['planning_request'])
+        clamped_supported['waypoints'] = [
+            [row['position']['latitude_deg'], row['position']['longitude_deg']]
+            for row in clamped_supported['planning_result']['route']['waypoints']]
+        adjusted, _ = planner._apply_website_mission(clamped_supported)
+        assert adjusted and planner._planning.result == clamped_supported['planning_result']
+        assert planner._planning.save_requires_regeneration()
+        assert planner._planning.export_issue() == 'regeneration_required'
+        with patch.object(module.QMessageBox, 'warning') as warning:
+            assert planner._on_send_to_website() is False
+            planner._on_export()
+        assert warning.call_count == 2
         planner._apply_website_mission(shared)
         assert planner._planning.result == saved_result
         assert planner._planning.locked and not planner._planning.dirty
+        survey_layer = project.mapLayer(planner._survey_area_layer_id)
+        assert survey_layer.startEditing()
+        try:
+            with unittest.TestCase().assertRaisesRegex(sync_error, 'Finish or cancel'):
+                planner._apply_website_mission(mission)
+        finally:
+            survey_layer.rollBack()
+        planner._apply_website_mission(shared)
+        planner.marginSpin.setValue(10)
+        assert planner._planning.dirty
+        old_flags = (planner._planning.locked, planner._planning.dirty,
+                     planner._planning.unsupported,
+                     planner._planning.regeneration_required,
+                     planner._split_overridden, planner._split_choice_required)
+        all_ids = set(project.mapLayers())
+        old_preview_ids = list(planner._preview_layer_ids)
+        old_survey_id = planner._survey_area_layer_id
+        old_route = deepcopy(planner._waypoints)
+        old_extent = canvas.extent()
+        planner._website_link = {'id': 'existing', 'revision': 3,
+                                 'name': 'Local', 'account': 'account'}
+        old_link = planner._website_link
+        old_controls = (planner.missionTypeCombo.currentText(),
+                        planner.droneModelCombo.currentText(),
+                        planner.speedSpin.value(), planner.speedSpin.minimum(),
+                        planner.speedSpin.maximum(), planner.splitSpin.value(),
+                        planner.marginSpin.value())
+        corridor_failure = deepcopy(mission)
+        corridor_failure['drone_model'] = 'mini5pro'
+        corridor_failure['settings']['mapping_style'] = 'corridor'
+        corridor_failure['polygon'] = mission['polygon'][:2]
+        with patch.object(planner, '_zoom_to_website_geometry',
+                          side_effect=RuntimeError('injected late failure')):
+            with unittest.TestCase().assertRaises(sync_error):
+                planner._apply_website_mission(corridor_failure)
+        assert planner._survey_area_layer_id == old_survey_id
+        assert planner._preview_layer_ids == old_preview_ids
+        assert planner._waypoints == old_route
+        assert planner._website_link is old_link
+        assert planner._planning.result == saved_result
+        assert (planner._planning.locked, planner._planning.dirty,
+                planner._planning.unsupported,
+                planner._planning.regeneration_required,
+                planner._split_overridden, planner._split_choice_required) == old_flags
+        assert not planner._loading_mission
+        assert not planner._setting_split
+        assert (planner.missionTypeCombo.currentText(),
+                planner.droneModelCombo.currentText(),
+                planner.speedSpin.value(), planner.speedSpin.minimum(),
+                planner.speedSpin.maximum(), planner.splitSpin.value(),
+                planner.marginSpin.value()) == old_controls
+        assert set(project.mapLayers()) == all_ids
+        assert canvas.extent() == old_extent
+        # The 2D layout comes back too, and the panel knows it is 2D again.
+        assert planner._current_kind == '2d'
+        assert not planner._dirRow.isHidden() and planner.bufferSpin.isHidden()
+        assert planner.drawPolygonBtn.text() == 'Draw Polygon on Map'
+        with patch.object(planner, '_set_survey_polygon',
+                          side_effect=RuntimeError('injected geometry failure')):
+            with unittest.TestCase().assertRaises(sync_error):
+                planner._apply_website_mission(shared)
+        assert planner._survey_area_layer_id == old_survey_id
+        assert set(project.mapLayers()) == all_ids
+        planner._apply_website_mission(shared)
         with patch.object(planner, '_generate_waypoints') as generate:
             planner._on_preview()
         generate.assert_not_called()
         assert planner._planning.result == saved_result
+        for change in (
+                lambda: planner.marginSpin.setValue(10),
+                lambda: planner.pathStraightRadio.setChecked(True),
+                lambda: planner.finishActionCombo.setCurrentIndex(1)):
+            change()
+            assert planner._planning.dirty
+            assert planner.previewBtn.text() == 'Regenerate on Map'
+            with patch.object(module.QMessageBox, 'warning') as warning:
+                assert planner._on_send_to_website() is False
+                planner._on_export()
+            assert [call.args[1] for call in warning.call_args_list] == [
+                'Regeneration Required', 'Regeneration Required']
+            planner._apply_website_mission(shared)
+            assert planner._planning.locked and not planner._planning.dirty
         planner.altitudeSpin.setValue(81)
         assert planner._planning.dirty
         assert planner.previewBtn.text() == 'Regenerate on Map'
@@ -245,8 +400,17 @@ def test_planning_dialog_state():
                 patch.object(module.QMessageBox, 'critical') as critical:
             planner._export_rc('Mission', [(0, 0)], 5.0)
         assert critical.call_args.args[1:] == ('RC Export Failed', 'bad geometry')
+
+        planner.cleanup()
+        planner.layerCombo.clear()
+        planner.demCombo.clear()
+        project.layersAdded.emit([])
+        project.layersRemoved.emit([])
+        assert planner.layerCombo.count() == planner.demCombo.count() == 0
     finally:
         planner.close()
+        if 'external' in locals():
+            QgsProject.instance().removeMapLayer(external.id())
         canvas.close()
         app.processEvents()
 

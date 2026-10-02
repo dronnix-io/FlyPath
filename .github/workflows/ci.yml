@@ -50,12 +50,12 @@ jobs:
         run: python -m bandit -q -r . -x ./tests,./tools
 
   qgis-package:
-    name: Packaged plugin / QGIS 3.44.14
+    name: Package and behavior / QGIS 3.44.14
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
-      - name: Test ZIP in official QGIS runtime
+      - name: Test ZIP and behavior in official QGIS runtime
         shell: bash
         run: |
           docker run --rm \
@@ -63,7 +63,9 @@ jobs:
             --workdir /tests_directory \
             --env QT_QPA_PLATFORM=offscreen \
             qgis/qgis:3.44.14-noble \
-            sh -lc 'python3 -m pip install --disable-pip-version-check --no-cache-dir --target /tmp/flypath-deps "pyproj>=3.7,<4" "shapely>=2.1,<3" &&
+            sh -lc 'python3 -m pip install --disable-pip-version-check --no-cache-dir --target /tmp/flypath-deps pytest "pyproj>=3.7,<4" "shapely>=2.1,<3" &&
               export PYTHONPATH="/tmp/flypath-deps${PYTHONPATH:+:$PYTHONPATH}" &&
               python3 tools/build_plugin.py &&
-              python3 tests/test_qgis_package.py "$(ls -1t dist/FlyPath-*.zip | head -n 1)"'
+              python3 tests/test_qgis_package.py "$(ls -1t dist/FlyPath-*.zip | head -n 1)" &&
+              python3 tools/check_qgis_behavior.py &&
+              python3 tools/check_qgis_behavior.py --vault'

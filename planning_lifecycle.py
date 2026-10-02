@@ -11,6 +11,7 @@ class PlanningLifecycle:
         self.locked = False
         self.dirty = False
         self.unsupported = False
+        self.regeneration_required = False
 
     def record(self, request, result):
         self.request = request
@@ -25,6 +26,7 @@ class PlanningLifecycle:
         self.locked = True
         self.dirty = False
         self.unsupported = False
+        self.regeneration_required = False
         self.locations = None
 
     def preserve_imported_route(self, *, supported=None):
@@ -33,6 +35,11 @@ class PlanningLifecycle:
         if supported is not None:
             self.unsupported = not supported
 
+    def require_regeneration(self):
+        self.locked = True
+        self.dirty = False
+        self.regeneration_required = True
+
     def settings_changed(self):
         if self.locked:
             self.dirty = True
@@ -40,7 +47,7 @@ class PlanningLifecycle:
 
     def begin_preview(self, *, has_saved_route, split_choice_required=False):
         """Choose preview behavior and apply the transition into regeneration."""
-        if self.locked and not self.dirty and has_saved_route:
+        if self.locked and not self.dirty and not self.regeneration_required and has_saved_route:
             return 'restore'
         if self.unsupported:
             return 'unsupported'
@@ -48,6 +55,7 @@ class PlanningLifecycle:
             return 'choose_splitting'
         self.locked = False
         self.dirty = False
+        self.regeneration_required = False
         return 'regenerate'
 
     def clear_preview(self):
@@ -58,12 +66,12 @@ class PlanningLifecycle:
         self.__init__()
 
     def save_requires_regeneration(self):
-        return self.unsupported or (self.locked and self.dirty)
+        return self.unsupported or self.regeneration_required or (self.locked and self.dirty)
 
     def export_issue(self):
         if self.unsupported:
             return 'unsupported'
-        if self.locked and self.dirty:
+        if self.regeneration_required or (self.locked and self.dirty):
             return 'regeneration_required'
         if self.result and not self.result['validation']['export_allowed']:
             return 'validation'

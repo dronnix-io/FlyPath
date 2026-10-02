@@ -30,6 +30,13 @@ def test_import_edit_regenerate_sequence():
     assert lifecycle.export_issue() is None
     assert lifecycle.result is regenerated
 
+    lifecycle.begin_import()
+    lifecycle.require_regeneration()
+    assert lifecycle.save_requires_regeneration()
+    assert lifecycle.export_issue() == 'regeneration_required'
+    assert lifecycle.begin_preview(has_saved_route=False) == 'regenerate'
+    assert not lifecycle.save_requires_regeneration()
+
 
 if __name__ == '__main__':
     test_import_edit_regenerate_sequence()

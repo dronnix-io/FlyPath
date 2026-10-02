@@ -2120,12 +2120,15 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         self.altitudeSpin.valueChanged.connect(self._on_param_changed)
         self.gsdSpin.valueChanged.connect(self._on_gsd_changed)
         self.sideOverlapSpin.valueChanged.connect(self._on_param_changed)
+        self.marginSpin.valueChanged.connect(self._on_param_changed)
         self.speedSpin.valueChanged.connect(self._on_param_changed)
         self.directionSpin.valueChanged.connect(self._on_direction_changed)
         self.bufferSpin.valueChanged.connect(self._on_param_changed)
         self.setBreaksBtn.toggled.connect(self._on_set_breaks_toggled)
         self.crossHatchCheck.toggled.connect(self._on_param_changed)
         self.reverseRouteCheck.toggled.connect(self._on_param_changed)
+        self.pathStraightRadio.toggled.connect(self._on_param_changed)
+        self.finishActionCombo.currentIndexChanged.connect(self._on_param_changed)
         self.sameTakeoffCheck.toggled.connect(self._on_param_changed)
         self.sameTakeoffCheck.toggled.connect(self._refresh_takeoff_zone_if_shown)
         self.terrainFollowCheck.toggled.connect(self._on_terrain_toggled)
@@ -2267,10 +2270,18 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
                 else 'Draw Polygon on Map')
 
     def _apply_corridor_layout(self):
-        """Reconfigure the panel for the selected mission kind. Corridor Mapping
-        swaps the polygon survey area for a line + buffer, hides Direction/Auto
-        and Cross-hatch, and reports corridor length instead of area. 2D Mapping
-        is restored to its original layout, unchanged."""
+        """Reconfigure the panel for the selected mission kind, then reset the
+        survey area: a polygon is not valid input for a corridor (and vice
+        versa), so the layer list is repopulated for the new geometry type."""
+        self._apply_kind_layout()
+        self._on_clear_preview(reset_area=True)
+        self._refresh_layer_combo()
+
+    def _apply_kind_layout(self):
+        """Show the controls of the selected mission kind, without touching the
+        survey area. Corridor Mapping swaps the polygon survey area for a line
+        + buffer, hides Direction/Auto and Cross-hatch, and reports corridor
+        length instead of area. 2D Mapping is restored to its original layout."""
         corridor = self._mission_kind() == 'corridor'
 
         # Flight Parameters: Direction/Margin (2D) vs Buffer (corridor)
@@ -2308,11 +2319,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
             'are listed.' if corridor else
             'Select a polygon layer from the QGIS project. Only polygon layers '
             'are listed.')
-
-        # A polygon is not valid input for a corridor (and vice versa): reset the
-        # survey area, then repopulate the layer list for the new geometry type.
-        self._on_clear_preview(reset_area=True)
-        self._refresh_layer_combo()
 
     # ── Corridor mission breaks (manual line grouping) ────────────────────
 
@@ -3853,8 +3859,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         if planning_issue == 'regeneration_required':
             QMessageBox.warning(
                 self, 'Regeneration Required',
-                'Mission settings changed, but the saved route is still preserved. '
-                'Choose Preview to regenerate it before export.')
+                'Choose Preview to regenerate this mission before export.')
             return
         if self.terrainFollowCheck.isChecked() and self._terrain_failed:
             QMessageBox.warning(
@@ -4216,21 +4221,26 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
     # ── Helpers ───────────────────────────────────────────────────────────
 
     def cleanup(self):
+        """Remove FlyPath-owned layers and signal registrations on plugin unload."""
         try:
             QgsProject.instance().cleared.disconnect(self._forget_website_mission)
         except (TypeError, RuntimeError):
             pass
-        """Remove all FlyPath-owned QGIS layers. Called on plugin unload."""
         self._disconnect_layer_signals()
         self._remove_survey_area_layer()
         self._on_clear_preview(reset_area=False)
         # Belt-and-suspenders cleanup if panel state got out of sync.
         preview_layers.remove_stale()
-        try:
-            QgsProject.instance().layersAdded.disconnect(self._refresh_layer_combo)
-            QgsProject.instance().layersRemoved.disconnect(self._refresh_layer_combo)
-        except (TypeError, RuntimeError):
-            pass
+        project = QgsProject.instance()
+        for signal, slot in (
+                (project.layersAdded, self._refresh_layer_combo),
+                (project.layersRemoved, self._refresh_layer_combo),
+                (project.layersAdded, self._refresh_dem_combo),
+                (project.layersRemoved, self._refresh_dem_combo)):
+            try:
+                signal.disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass
         if self._thumb_dir:
             shutil.rmtree(self._thumb_dir, ignore_errors=True)
             self._thumb_dir = None

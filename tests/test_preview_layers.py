@@ -159,7 +159,9 @@ def test_order_visibility_and_group_cleanup():
         module.restore_visibility(saved, project)
         assert not user_node.itemVisibilityChecked()
         module.remove([layer.id() for layer in replacements.values()], project)
-        assert group in root.children() and group.findLayer(user.id())
+        # QGIS 4 layer tree nodes have len() (child count), so a layer node is
+        # falsy there; compare with None instead of relying on truthiness.
+        assert group in root.children() and group.findLayer(user.id()) is not None
         assert same_name in root.children()
         assert project.mapLayer(user.id()) is user
         project.removeMapLayer(user.id())

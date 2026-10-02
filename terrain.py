@@ -88,7 +88,8 @@ def densify_by_terrain(waypoints, sample, tolerance_m,
 
     leg_len = [_haversine_m(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])
                for i in range(len(pts) - 1)]
-    strip_total = sum(length for i, length in enumerate(leg_len) if i % 2 == 0)
+    strip_total = sum(length for i, length in enumerate(leg_len)
+                      if all_legs or i % 2 == 0)
     if spacing_m is None:
         # Tighter tolerances need finer ground sampling to be meaningful.
         spacing_m = min(30.0, max(8.0, float(tolerance_m) * 5.0))

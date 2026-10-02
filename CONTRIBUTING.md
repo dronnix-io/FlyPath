@@ -57,6 +57,17 @@ maintainer (Salar Ghaffarian) only.
    python -m pytest -q tests
    ```
 
+   In a configured QGIS Python runtime with pytest installed, also run:
+
+   ```bash
+   python tools/check_qgis_behavior.py
+   python tools/check_qgis_behavior.py --vault
+   ```
+
+   These commands fail if a required test skips. Keep the vault command in its
+   own process so its temporary authentication profile stays isolated. The QGIS
+   CI job runs both commands as well as the packaged-plugin smoke test.
+
    The same checks run automatically on every pull request through CI, so a
    green run here means a green run there.
 
