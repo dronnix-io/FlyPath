@@ -331,7 +331,11 @@ class OrbitMixin:
     # ── Layout ────────────────────────────────────────────────────────────
 
     def _apply_orbit_layout(self, orbit):
-        """Show the orbit controls and hide the mapping ones, or the reverse."""
+        """Show the orbit controls and hide the mapping ones, or the reverse.
+
+        Only visibility, labels and limits change here, so it is safe to rerun
+        at any time, for example when a failed import restores the panel.
+        _switch_orbit_mode() changes the values when the mission kind changes."""
         for widget in (self.orbitRadiusSpin, self.orbitTiltSpin):
             self._set_row_visible(self._flight_form, widget, orbit)
         self._set_row_visible(self._flight_form, self.gsdSpin, not orbit)
@@ -340,16 +344,11 @@ class OrbitMixin:
         self._set_row_visible(self._area_form, self._sourceRow, not orbit)
         self._set_row_visible(self._area_form, self._sourceStack, not orbit)
 
-        # An orbit always flies a curved path: DJI Fly keeps it on re-save.
-        if orbit:
-            self.pathCurvedRadio.setChecked(True)
+        # An orbit always flies a curved path, so the path choice is hidden.
         for widget in (self._pathInlineLabel, self.pathCurvedRadio, self.pathStraightRadio):
             widget.setVisible(not orbit)
 
-        # One ring, no splitting, breaks, cross-hatch or terrain follow.
-        if orbit:
-            self.splitCheck.setChecked(False)
-            self.terrainFollowCheck.setChecked(False)
+        # One ring: no splitting or terrain follow.
         drone = self.droneModelCombo.currentText()
         splitting = (not orbit and registry.has(drone)
                      and registry.get(drone).category == 'consumer')
@@ -371,24 +370,32 @@ class OrbitMixin:
                 'clockwise. The drone starts at the north point of the circle '
                 'either way.') if orbit else self._mapping_reverse_tip)
         # The takeoff zone and contours are built for mapping grids.
-        if orbit:
-            for button in (self.showTakeoffZoneBtn, self.showContoursBtn):
-                if button.isCheckable() and button.isChecked():
-                    button.setChecked(False)
         self._takeoffGroup.setVisible(not orbit)
-
-        # Orbits fly lower than mapping and need a denser ring of photos.
-        blocked = self.sideOverlapSpin.blockSignals(True)
-        if orbit:
-            self._orbit_saved_overlap = self.sideOverlapSpin.value()
-            self.sideOverlapSpin.setValue(DEFAULT_ORBIT_OVERLAP)
-        elif self._orbit_saved_overlap is not None:
-            self.sideOverlapSpin.setValue(self._orbit_saved_overlap)
-            self._orbit_saved_overlap = None
-        self.sideOverlapSpin.blockSignals(blocked)
+        # Orbits may fly lower than mapping.
         blocked = self.altitudeSpin.blockSignals(True)
         self.altitudeSpin.setMinimum(ORBIT_MIN_ALTITUDE_M if orbit else MAPPING_MIN_ALTITUDE_M)
         self.altitudeSpin.blockSignals(blocked)
+
+    def _switch_orbit_mode(self, orbit):
+        """Change values when the mission kind switches into or out of orbit."""
+        if orbit:
+            self.pathCurvedRadio.setChecked(True)   # DJI Fly keeps curved paths on re-save
+            self.splitCheck.setChecked(False)
+            self.terrainFollowCheck.setChecked(False)
+            for button in (self.showTakeoffZoneBtn, self.showContoursBtn):
+                if button.isCheckable() and button.isChecked():
+                    button.setChecked(False)
+        # Reverse means a different thing in each kind, so a switch clears it.
+        self.reverseRouteCheck.setChecked(False)
+        # Orbits need a denser ring of photos than mapping lines.
+        blocked = self.sideOverlapSpin.blockSignals(True)
+        if orbit and self._orbit_saved_overlap is None:
+            self._orbit_saved_overlap = self.sideOverlapSpin.value()
+            self.sideOverlapSpin.setValue(DEFAULT_ORBIT_OVERLAP)
+        elif not orbit and self._orbit_saved_overlap is not None:
+            self.sideOverlapSpin.setValue(self._orbit_saved_overlap)
+            self._orbit_saved_overlap = None
+        self.sideOverlapSpin.blockSignals(blocked)
         if not orbit:
             self._clear_orbit_centre()
 
