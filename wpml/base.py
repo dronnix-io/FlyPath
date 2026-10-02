@@ -49,6 +49,10 @@ class MissionSpec:
     # straight legs with a stop at each point, which map perfectly straight but
     # get reshuffled by DJI Fly on re-save (issue #13). Ignored by enterprise.
     curved_path: bool = True
+    # Per-waypoint aircraft heading in degrees (-180..180], for missions that
+    # must face a point, like an orbit around a centre. None = follow the
+    # wayline (2D and corridor). When set, must match waypoints length.
+    headings: list = None
 
 
 def esc(text):

@@ -200,6 +200,13 @@ class WebsiteSyncLifecycleMixin:
             self._update_web_buttons()
 
     def _on_send_to_website(self, save_as_new=False):
+        if self._mission_kind() == 'orbit':
+            QMessageBox.information(
+                self, 'Coming Soon',
+                'Orbit missions can be planned, previewed and sent to your drone '
+                'from the plugin. Saving them to FlyPath.io is coming soon, once '
+                'the website supports orbits.')
+            return False
         if self._planning.save_requires_regeneration():
             QMessageBox.warning(
                 self, 'Regeneration Required',
@@ -522,6 +529,7 @@ class WebsiteSyncLifecycleMixin:
         active_layer = QgsProject.instance().mapLayer(self._survey_area_layer_id) \
             if self._survey_area_layer_id else None
         if (self._draw_tool is not None or self._break_tool is not None
+                or self._orbit_tool is not None
                 or (active_layer and active_layer.isEditable())):
             raise FlypathSyncError(
                 'Finish or cancel the current survey drawing or edit before loading a mission.')
@@ -545,7 +553,7 @@ class WebsiteSyncLifecycleMixin:
             '_current_kind',
         )
         state_names += tuple(name for name in self.__dict__
-                             if name.startswith(('_survey_', '_preview_', '_live_')))
+                             if name.startswith(('_survey_', '_preview_', '_live_', '_orbit_')))
         state = {name: getattr(self, name) for name in set(state_names)
                  if hasattr(self, name)}
         planning = self._planning.__dict__.copy()
@@ -563,6 +571,8 @@ class WebsiteSyncLifecycleMixin:
             'setBreaksBtn', 'drawPolygonBtn', 'editPolygonBtn',
             'removePolygonBtn', 'photoIntervalSpin', 'gsdSpin',
             'frontOverlapStack', 'destCombo', 'destStack',
+            'orbitRadiusSpin', 'orbitTiltSpin', 'drawCircleBtn', 'editCircleBtn',
+            'removeCircleBtn',
         )
         widgets = {}
         appearance = {}
@@ -593,7 +603,7 @@ class WebsiteSyncLifecycleMixin:
             'frontOverlapStatLabel', 'areaLabel', 'infoBar', 'previewBtn',
             'showTakeoffZoneBtn', 'showContoursBtn', 'editPolygonBtn',
             'cameraInfoLabel', 'frontOverlapLabel', 'takeoffGsdVarLabel',
-            'selectionInfoLabel',
+            'selectionInfoLabel', 'orbitCentreLabel',
         )}
         feature_caption_hidden = self._featureCaption.isHidden()
         selected = (project.mapLayer(state['_selected_layer_id']).selectedFeatureIds()

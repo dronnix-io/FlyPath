@@ -24,17 +24,20 @@ def test_dialog_lifecycle_ownership_without_qgis():
     dialog = _class(ROOT / 'flypath_dialog.py', 'FlyPathDialog')
     survey = _class(ROOT / 'survey_controller.py', 'SurveyLifecycleMixin')
     website = _class(ROOT / 'website_sync_controller.py', 'WebsiteSyncLifecycleMixin')
+    orbit = _class(ROOT / 'orbit_controller.py', 'OrbitMixin')
 
     assert [base.id for base in dialog.bases] == [
-        'SurveyLifecycleMixin', 'WebsiteSyncLifecycleMixin', 'QWidget']
+        'SurveyLifecycleMixin', 'WebsiteSyncLifecycleMixin', 'OrbitMixin', 'QWidget']
 
     dialog_methods = {node.name for node in dialog.body if isinstance(node, ast.FunctionDef)}
     survey_methods = {node.name for node in survey.body if isinstance(node, ast.FunctionDef)}
     website_methods = {node.name for node in website.body if isinstance(node, ast.FunctionDef)}
+    orbit_methods = {node.name for node in orbit.body if isinstance(node, ast.FunctionDef)}
 
     assert {'_on_draw_polygon', '_on_draw_line', '_set_survey_geometry'} <= survey_methods
     assert {'_on_send_to_website', '_on_load_from_website', '_website_payload'} <= website_methods
-    assert not dialog_methods & (survey_methods | website_methods)
+    assert {'_apply_orbit_layout', '_plan_orbit', 'set_orbit_centre'} <= orbit_methods
+    assert not dialog_methods & (survey_methods | website_methods | orbit_methods)
 
 
 def test_dialog_lifecycle_modules():

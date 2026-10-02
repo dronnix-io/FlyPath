@@ -10,6 +10,25 @@ from FlyPath import mission_export  # noqa: E402
 from FlyPath.hardware import registry  # noqa: E402
 
 
+def test_orbit_headings_travel_with_the_export_settings():
+    captured = []
+    original = mission_export.write_mission
+    mission_export.write_mission = (
+        lambda drone, spec, path: captured.append(spec))
+    try:
+        settings = mission_export.ExportSettings(
+            drone=registry.get('DJI Mini 4 Pro'), altitude_m=25, speed_ms=3,
+            finish_action='Return to Home', rc_lost_action='Return to Home',
+            gimbal_pitch=-35, polygon=None, side_overlap=.9, front_overlap=.7,
+            direction_deg=0, margin_m=0, capture_mode='full', curved_path=True,
+            headings=(180.0, -90.0))
+        mission_export.write_kmz('orbit.kmz', settings, [(0, 0), (1, 1)], 'Orbit')
+    finally:
+        mission_export.write_mission = original
+    assert captured[0].headings == [180.0, -90.0]
+    assert captured[0].gimbal_pitch == -35
+
+
 def test_split_export_names_and_applies_launch_offset():
     captured = []
     original = mission_export.write_mission

@@ -1,6 +1,7 @@
 """Smoke-test the built plugin ZIP in the supported QGIS runtime."""
 
 import argparse
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -17,6 +18,10 @@ def main(archive_path):
     )
 
     assert Qgis.QGIS_VERSION.startswith("3.44."), Qgis.QGIS_VERSION
+    # The ZIP must bundle exactly the engine release that flypath-engine.json pins.
+    pin = json.loads((Path(__file__).resolve().parents[1] / "flypath-engine.json")
+                     .read_text(encoding="utf-8"))
+    expected_engine = pin["tag"].removeprefix("v")
     with tempfile.TemporaryDirectory() as temp:
         with zipfile.ZipFile(archive_path) as archive:
             archive.extractall(temp)
@@ -26,7 +31,7 @@ def main(archive_path):
         import pyproj
         import shapely
 
-        assert engine_version == "1.0.0"
+        assert engine_version == expected_engine, (engine_version, expected_engine)
         assert tuple(map(int, pyproj.__version__.split(".")[:2])) >= (3, 7)
         assert tuple(map(int, shapely.__version__.split(".")[:2])) >= (2, 1)
 

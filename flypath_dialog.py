@@ -111,7 +111,7 @@ from .terrain import (
     sample_elevations, densify_by_terrain, heights_above_takeoff,
 )
 from .hardware import registry
-from . import planning_adapter
+from . import form_rows, planning_adapter
 from . import controller_storage
 from . import survey_geometry
 from . import takeoff_adapter
@@ -121,6 +121,7 @@ from . import map_overlays
 from .planning_lifecycle import PlanningLifecycle
 from .survey_controller import SurveyLifecycleMixin
 from .website_sync_controller import WebsiteSyncLifecycleMixin
+from .orbit_controller import ORBIT_LABEL, OrbitMixin
 
 
 def _format_duration(seconds):
@@ -470,12 +471,12 @@ QPushButton#clearPreviewBtn {
     background-color: #3A3D45; color: #D0D0D0; font-weight: normal;
 }
 QPushButton#clearPreviewBtn:hover { background-color: #4A4D55; }
-QPushButton#drawPolygonBtn {
+QPushButton#drawPolygonBtn, QPushButton#drawCircleBtn {
     background-color: #1E3A1E; color: #80C880;
     border: 1px solid #2E5A2E; font-weight: bold;
 }
-QPushButton#drawPolygonBtn:hover   { background-color: #2A4D2A; }
-QPushButton#drawPolygonBtn:checked {
+QPushButton#drawPolygonBtn:hover, QPushButton#drawCircleBtn:hover { background-color: #2A4D2A; }
+QPushButton#drawPolygonBtn:checked, QPushButton#drawCircleBtn:checked {
     background-color: #2A6A2A; border: 1px solid #40A040; color: #AAFAAA;
 }
 QPushButton#autoDirectionBtn {
@@ -484,18 +485,19 @@ QPushButton#autoDirectionBtn {
 }
 QPushButton#autoDirectionBtn:hover { background-color: #4A4D55; }
 QPushButton#autoDirectionBtn:checked { background-color: #2A6A2A; color: #AAFAAA; }
-QPushButton#removePolygonBtn {
+QPushButton#removePolygonBtn, QPushButton#removeCircleBtn {
     background-color: #5A2020; color: #FF8888;
     border: 1px solid #7A3030; border-radius: 3px;
     font-weight: bold; padding: 3px 6px;
 }
-QPushButton#removePolygonBtn:hover { background-color: #7A2525; color: #FFAAAA; }
-QPushButton#editPolygonBtn {
+QPushButton#removePolygonBtn:hover, QPushButton#removeCircleBtn:hover { background-color: #7A2525; color: #FFAAAA; }
+QPushButton#editPolygonBtn, QPushButton#editCircleBtn,
+QPushButton#editCircleBtn:checked {
     background-color: #203A5A; color: #88BBFF;
     border: 1px solid #305A7A; border-radius: 3px;
     font-weight: bold; padding: 3px 6px;
 }
-QPushButton#editPolygonBtn:hover { background-color: #254A7A; color: #AACCFF; }
+QPushButton#editPolygonBtn:hover, QPushButton#editCircleBtn:hover { background-color: #254A7A; color: #AACCFF; }
 QPushButton#useSelectionBtn {
     background-color: #2A3A2A; color: #80C880;
     border: 1px solid #3A5A3A; border-radius: 3px;
@@ -763,7 +765,7 @@ class _ThumbnailViewer(QDialog):
         self._view.fitInView(self._item, _KeepAspect)
 
 
-class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
+class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin, QWidget):
 
     def __init__(self, iface, parent=None):
         super().__init__(parent)
@@ -788,6 +790,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         self._break_layer_id     = None   # markers for the chosen break vertices
         self._break_tool         = None   # active vertex-pick map tool
         self._current_kind       = '2d'   # tracks Mission Type for kind switches
+        self._orbit_init_state()
         self._draw_tool          = None
         self._selected_layer_id  = None   # layer carrying the current map selection
         self._monitored_layer_id = None   # layer whose edit signals we're connected to
@@ -817,6 +820,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         self._source_mode        = 'layer'  # survey-area source: layer|selection|draw
 
         self._build_ui()
+        # Collapse hidden rows from here on, so gaps stay even on Qt 5.
+        for form in (self._area_form, self._flight_form, self._organizer_form):
+            form_rows.track(form)
         self._setup_combos()
         self._connect_signals()
         QgsProject.instance().cleared.connect(self._forget_website_mission)
@@ -931,10 +937,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         self.missionTypeCombo = QComboBox()
         self.missionTypeCombo.addItem('2D Mapping')
         self.missionTypeCombo.addItem('Corridor Mapping')
+        self.missionTypeCombo.addItem(ORBIT_LABEL)
         self._tip(self.missionTypeCombo,
             'The kind of mission to plan. 2D Mapping flies a grid over a survey '
             'polygon. Corridor Mapping follows a centre line (roads, pipelines, '
-            'rivers) and covers a buffer each side. More types will be added.')
+            'rivers) and covers a buffer each side. Orbit (3D Model) circles a '
+            'centre point, facing it with a tilted camera, for 3D models.')
         form.addRow('Mission Type', self.missionTypeCombo)
 
         # Capture mode for mapping missions: how the camera is triggered.
@@ -1038,6 +1046,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         source_layout.addWidget(self.sourceSelectionRadio)
         source_layout.addWidget(self.sourceDrawRadio)
         source_layout.addStretch()
+        self._sourceRow = source_row   # kept so orbit mode can hide it
         form.addRow('Source', source_row)
 
         # From-layer: the layer and its feature (FID) picker share one line.
@@ -1125,6 +1134,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         # Survey Area grew taller in that mode, opening a gap under Source.
         self._sourceStack.setSizePolicy(_SP_PREFERRED, _SP_FIXED)
         form.addRow(self._sourceStack)
+        self._build_orbit_area_row(form)   # orbit centre, hidden until Orbit
 
         # DEM feeds terrain follow, the takeoff zone and the contours, so it is
         # shown for both sources.
@@ -1220,6 +1230,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         self.frontOverlapStack = QStackedWidget()
         self.frontOverlapStack.addWidget(self.frontOverlapLabel)   # index 0: semi
         self.frontOverlapStack.addWidget(self.frontOverlapSpin)    # index 1: full
+        self.frontOverlapStack.setSizePolicy(_SP_PREFERRED, _SP_FIXED)
         form.addRow('Front Overlap', self.frontOverlapStack)
 
         self.speedSpin = QDoubleSpinBox()
@@ -1291,6 +1302,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
             'passes automatically to cover it at the current altitude/overlap.')
         form.addRow('Buffer', self.bufferSpin)
         self._set_row_visible(form, self.bufferSpin, False)
+
+        self._build_orbit_flight_rows(form)   # radius, tilt, direction; Orbit only
 
         return group
 
@@ -1447,6 +1460,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         circle where the terrain rises or falls."""
         group = QGroupBox('Takeoff Zone')
         group.setObjectName('takeoffGroup')
+        self._takeoffGroup = group   # kept so orbit mode can hide it
         self._tip(group,
             'Ground within %d m of the first waypoint at its elevation, so '
             'repeat flights keep the same altitude and GSD. A full circle on '
@@ -1674,14 +1688,22 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
 
     def _show_hud(self):
         if self._hud and self.isVisible():
-            context = [self.coverageLabel.text(), f'{self.gsdSpin.value():.2f} cm']
+            # An orbit has no front overlap or nadir GSD: it reports the side
+            # overlap between neighbouring photos around the ring instead.
+            orbit = self._mission_kind() == 'orbit'
+            context = [self.coverageLabel.text()]
+            if not orbit:
+                context.append(f'{self.gsdSpin.value():.2f} cm')
             self._hudContext.setText(' · '.join(value for value in context if value != '—'))
             if self._mission_type() == 'full':
-                overlap = f'{self.frontOverlapSpin.value()}%'
+                spin = self.sideOverlapSpin if orbit else self.frontOverlapSpin
+                overlap = f'{spin.value()}%'
             else:
                 overlap = self.frontOverlapLabel.text().split()[0]
                 overlap = overlap if overlap == '—' else f'{overlap}%'
             self.frontOverlapStatLabel.setText(overlap)
+            self._hudCaptions['frontOverlapStatLabel'].setText(
+                'Side Overlap' if orbit else 'Front Overlap')
             self._position_hud()
             self._hud.show()
             self._hud.raise_()
@@ -2113,6 +2135,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         QgsProject.instance().layersRemoved.connect(self._refresh_dem_combo)
 
         self.missionTypeCombo.currentIndexChanged.connect(self._on_mission_type_changed)
+        self._orbit_connect_signals()
         self.captureSemiRadio.toggled.connect(self._on_mission_type_changed)
         self.frontOverlapSpin.valueChanged.connect(self._on_param_changed)
         self.maxWaypointsSpin.valueChanged.connect(self._on_param_changed)
@@ -2215,15 +2238,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
             return
         consumer = registry.get(drone).category == 'consumer'
 
-        # Splitting controls: consumer only.
-        self.splitCheck.setVisible(consumer)
-        split_check_lbl = self._organizer_form.labelForField(self.splitCheck)
-        if split_check_lbl is not None:
-            split_check_lbl.setVisible(consumer)
-        self.splitSpin.setVisible(consumer)
-        lbl = self._organizer_form.labelForField(self.splitSpin)
-        if lbl is not None:
-            lbl.setVisible(consumer)
+        # Splitting controls: consumer only (and never for a one-ring orbit).
+        splitting = consumer and self._mission_kind() != 'orbit'
+        self._set_row_visible(self._organizer_form, self.splitCheck, splitting)
+        self._set_row_visible(self._organizer_form, self.splitSpin, splitting)
         if not consumer:
             self.splitCheck.setChecked(False)
             self._setting_split = True
@@ -2250,10 +2268,13 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         return self.pathCurvedRadio.isChecked()
 
     def _mission_kind(self):
-        """'corridor' for Corridor Mapping, else '2d' (the default 2D grid)."""
-        return ('corridor'
-                if self.missionTypeCombo.currentText() == 'Corridor Mapping'
-                else '2d')
+        """'corridor', 'orbit', or '2d' (the default 2D grid)."""
+        text = self.missionTypeCombo.currentText()
+        if text == 'Corridor Mapping':
+            return 'corridor'
+        if text == ORBIT_LABEL:
+            return 'orbit'
+        return '2d'
 
     def _on_mission_type_changed(self):
         # This also fires on the semi/full capture toggle, so only reset the
@@ -2274,6 +2295,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         survey area: a polygon is not valid input for a corridor (and vice
         versa), so the layer list is repopulated for the new geometry type."""
         self._apply_kind_layout()
+        self._switch_orbit_mode(self._mission_kind() == 'orbit')
         self._on_clear_preview(reset_area=True)
         self._refresh_layer_combo()
 
@@ -2282,11 +2304,13 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         survey area. Corridor Mapping swaps the polygon survey area for a line
         + buffer, hides Direction/Auto and Cross-hatch, and reports corridor
         length instead of area. 2D Mapping is restored to its original layout."""
-        corridor = self._mission_kind() == 'corridor'
+        kind = self._mission_kind()
+        corridor = kind == 'corridor'
+        mapping_2d = kind == '2d'
 
         # Flight Parameters: Direction/Margin (2D) vs Buffer (corridor)
-        self._set_row_visible(self._flight_form, self._dirRow, not corridor)
-        self._set_row_visible(self._flight_form, self.marginSpin, not corridor)
+        self._set_row_visible(self._flight_form, self._dirRow, mapping_2d)
+        self._set_row_visible(self._flight_form, self.marginSpin, mapping_2d)
         self._set_row_visible(self._flight_form, self.bufferSpin, corridor)
 
         # Adv. Mission Organizers: cross-hatch is meaningless for a corridor; the
@@ -2294,19 +2318,21 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         # minimum-flight count in both modes; corridor labels it 'Min Flights'.
         # The route options share a row, so hide only the 2D-only checkboxes for
         # corridors (terrain follow works with corridors and stays).
-        self.crossHatchCheck.setVisible(not corridor)
-        self.reverseRouteCheck.setVisible(not corridor)
+        self.crossHatchCheck.setVisible(mapping_2d)
+        self.reverseRouteCheck.setVisible(mapping_2d)
+        if not mapping_2d:
+            self.crossHatchCheck.setChecked(False)
         if corridor:
             self.reverseRouteCheck.setChecked(False)
         self._set_row_visible(self._organizer_form, self.setBreaksBtn, corridor)
-        split_lbl = self._organizer_form.labelForField(self.splitSpin)
+        split_lbl = self._row_label(self._organizer_form, self.splitSpin)
         if split_lbl is not None:
             split_lbl.setText('Min Flights' if corridor else 'Split Missions')
         if not corridor and self.setBreaksBtn.isChecked():
             self.setBreaksBtn.setChecked(False)   # leaving corridor turns the tool off
 
         # Survey Area group: relabel the read-out row and the draw button
-        lbl = self._area_form.labelForField(self.areaLabel)
+        lbl = self._row_label(self._area_form, self.areaLabel)
         if lbl is not None:
             lbl.setText('Length' if corridor else 'Area')
         self.areaLabel.setToolTip('Total length of the corridor centre line.'
@@ -2319,6 +2345,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
             'are listed.' if corridor else
             'Select a polygon layer from the QGIS project. Only polygon layers '
             'are listed.')
+
+        # Orbit swaps the survey area for a centre point and its own controls.
+        self._apply_orbit_layout(kind == 'orbit')
 
     # ── Corridor mission breaks (manual line grouping) ────────────────────
 
@@ -2334,10 +2363,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
     @staticmethod
     def _set_row_visible(form, widget, visible):
         """Show/hide a QFormLayout row (its field widget and its label)."""
-        widget.setVisible(visible)
-        lbl = form.labelForField(widget)
-        if lbl is not None:
-            lbl.setVisible(visible)
+        form_rows.set_visible(form, widget, visible)
+
+    @staticmethod
+    def _row_label(form, widget):
+        """A row's label widget, also while a hidden row is out of the form."""
+        return form_rows.label(form, widget)
 
     def _apply_mission_type_capabilities(self):
         """Swap the panel between semi- and full-automatic layouts.
@@ -2354,6 +2385,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         # The DEM feeds both terrain follow and the takeoff zone, so it stays
         # available even when terrain follow is off.
         self._set_row_visible(self._area_form, self.demCombo, True)
+        if self._mission_kind() == 'orbit':
+            self._apply_orbit_capabilities(full)
+        else:
+            self._restore_mapping_overlap_rows()
 
     # ── Terrain follow ────────────────────────────────────────────────────
 
@@ -2986,7 +3021,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         if incomplete:
             self._set_info('Launch/home travel is not included in these totals.')
         self._refresh_split_part_combo()
-        if self.autoDirectionBtn.isChecked():
+        if self.autoDirectionBtn.isChecked() and 'resolved_direction' in result:
             blocked = self.directionSpin.blockSignals(True)
             self.directionSpin.setValue(result['resolved_direction']['value_deg'])
             self.directionSpin.blockSignals(blocked)
@@ -3062,6 +3097,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
             return
         if self._mission_kind() == 'corridor':
             self._update_stats_corridor()
+            return
+        if self._mission_kind() == 'orbit':
+            if not self._planning.locked and self._plan_orbit() is None:
+                self._clear_stats()
             return
         if self._uses_shared_planning():
             if self._planning.locked:
@@ -3353,7 +3392,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
             if result is None:
                 return
             waypoints, shot_spacing_m = result
-            if self._uses_shared_planning() and self._planning.result:
+            if ((self._uses_shared_planning() or self._mission_kind() == 'orbit')
+                    and self._planning.result):
                 missions_h = [(part, None, None) for part in self._missions]
             else:
                 missions_h = self._missions_with_heights(
@@ -3431,6 +3471,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
                 self.setBreaksBtn.setChecked(False)   # turns the break tool off
             self._clear_breaks()
             self._remove_survey_area_layer()
+            self._clear_orbit_centre()
             self._clear_layer_selection()
             self._survey_polygon     = None
             self._survey_polygon_crs = None
@@ -3783,22 +3824,27 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
 
     def _export_settings(self):
         """Snapshot export inputs from widgets before any destination work."""
+        orbit = self._mission_kind() == 'orbit'
         return mission_export.ExportSettings(
             drone=registry.get(self.droneModelCombo.currentText()),
             altitude_m=self.altitudeSpin.value(),
             speed_ms=self.speedSpin.value(),
             finish_action=self.finishActionCombo.currentText(),
             rc_lost_action=self.rcLostActionCombo.currentText(),
-            gimbal_pitch=self.gimbalAngleSpin.value(),
-            polygon=survey_geometry.polygon_vertices(
-                self._survey_polygon, self._survey_polygon_crs),
+            gimbal_pitch=(self.orbitTiltSpin.value() if orbit
+                          else self.gimbalAngleSpin.value()),
+            polygon=(None if orbit else survey_geometry.polygon_vertices(
+                self._survey_polygon, self._survey_polygon_crs)),
             side_overlap=self.sideOverlapSpin.value() / 100.0,
             front_overlap=self._front_overlap_fraction(),
             direction_deg=self.directionSpin.value(),
             margin_m=self.marginSpin.value(),
             capture_mode=self._mission_type(),
             curved_path=self._path_curved(),
-            launch_offset_m=self.launchOffsetSpin.value(),
+            # The launch offset lives in the Takeoff Zone group, hidden for orbits.
+            launch_offset_m=0.0 if orbit else self.launchOffsetSpin.value(),
+            headings=(tuple(self._orbit_headings)
+                      if orbit and self._orbit_headings else None),
         )
 
     def _missions_with_heights(self, waypoints, elevations):
@@ -4228,6 +4274,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
             pass
         self._disconnect_layer_signals()
         self._remove_survey_area_layer()
+        self._leave_orbit_tool()
+        self._remove_orbit_centre_layer()
         self._on_clear_preview(reset_area=False)
         # Belt-and-suspenders cleanup if panel state got out of sync.
         preview_layers.remove_stale()
@@ -4263,6 +4311,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         super().closeEvent(event)
 
     def _has_survey_area(self, silent=False):
+        if self._mission_kind() == 'orbit':
+            return self._has_orbit_centre(silent)
         if self._mission_kind() == 'corridor':
             if self._survey_line is None or self._survey_line_crs is None:
                 if not silent:
@@ -4298,6 +4348,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
         self._gen_elevations = None
         if self._mission_kind() == 'corridor':
             return self._generate_corridor_waypoints()
+        if self._mission_kind() == 'orbit':
+            if self._plan_orbit(silent=False) is None:
+                return None
+            return list(self._waypoints), self._shot_spacing_m
         if self._uses_shared_planning():
             if self._plan_shared(silent=False) is None:
                 return None
