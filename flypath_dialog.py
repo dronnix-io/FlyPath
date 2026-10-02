@@ -1688,14 +1688,22 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
     def _show_hud(self):
         if self._hud and self.isVisible():
-            context = [self.coverageLabel.text(), f'{self.gsdSpin.value():.2f} cm']
+            # An orbit has no front overlap or nadir GSD: it reports the side
+            # overlap between neighbouring photos around the ring instead.
+            orbit = self._mission_kind() == 'orbit'
+            context = [self.coverageLabel.text()]
+            if not orbit:
+                context.append(f'{self.gsdSpin.value():.2f} cm')
             self._hudContext.setText(' · '.join(value for value in context if value != '—'))
             if self._mission_type() == 'full':
-                overlap = f'{self.frontOverlapSpin.value()}%'
+                spin = self.sideOverlapSpin if orbit else self.frontOverlapSpin
+                overlap = f'{spin.value()}%'
             else:
                 overlap = self.frontOverlapLabel.text().split()[0]
                 overlap = overlap if overlap == '—' else f'{overlap}%'
             self.frontOverlapStatLabel.setText(overlap)
+            self._hudCaptions['frontOverlapStatLabel'].setText(
+                'Side Overlap' if orbit else 'Front Overlap')
             self._position_hud()
             self._hud.show()
             self._hud.raise_()
