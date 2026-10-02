@@ -1,6 +1,7 @@
 """QGIS layers used to display a generated FlyPath route."""
 
 from contextlib import contextmanager
+from functools import partial
 
 from qgis.PyQt.QtGui import QColor, QFont
 from qgis.core import (
@@ -20,6 +21,12 @@ _ORDER = ('waypoints', 'orbit_centre', 'breaks', 'path', 'orbit_radius', 'survey
           'orbit_ring', 'corridor', 'takeoff', 'contours')
 _preserved_ids = None
 _deferred_ids = None
+# PyQt keeps a connected Python slot alive only through the sender's Python
+# wrapper. QGIS owns the preview layers, so the garbage collector may free that
+# wrapper, and the slot with it, while the connection is still live; the next
+# repaint then calls freed memory and QGIS crashes. The slots live here instead,
+# keyed by path layer ID, until the layer is removed.
+_flight_slots = {}
 
 
 @contextmanager
@@ -54,12 +61,22 @@ def create(missions, heights=None, ground=None, project=None):
     waypoints = _waypoint_layer(missions, heights, ground)
     register(path, project, kind='path')
     register(waypoints, project, kind='waypoints')
-    path_id, waypoints_id = path.id(), waypoints.id()
-    path.repaintRequested.connect(
-        lambda: _sync_waypoint_flights(
-            QgsProject.instance().mapLayer(path_id),
-            QgsProject.instance().mapLayer(waypoints_id)))
+    _forget_removed_slots(project)
+    slot = partial(_sync_flights_by_id, path.id(), waypoints.id())
+    _flight_slots[path.id()] = slot
+    path.repaintRequested.connect(slot)
     return [path.id(), waypoints.id()]
+
+
+def _sync_flights_by_id(path_id, waypoints_id):
+    project = QgsProject.instance()
+    _sync_waypoint_flights(project.mapLayer(path_id), project.mapLayer(waypoints_id))
+
+
+def _forget_removed_slots(project):
+    """Drop the slots of path layers that are gone, also those removed by the user."""
+    for path_id in [key for key in _flight_slots if project.mapLayer(key) is None]:
+        del _flight_slots[path_id]
 
 
 def _sync_waypoint_flights(path, waypoints):
@@ -203,6 +220,7 @@ def remove(layer_ids, project=None):
             continue
         if project.mapLayer(layer_id):
             project.removeMapLayer(layer_id)
+        _flight_slots.pop(layer_id, None)
     _remove_empty_group(project)
 
 
@@ -212,6 +230,7 @@ def remove_stale(project=None):
     for layer_id, layer in list(project.mapLayers().items()):
         if layer.customProperty('flypath_internal'):
             project.removeMapLayer(layer_id)
+            _flight_slots.pop(layer_id, None)
     _remove_empty_group(project)
 
 
