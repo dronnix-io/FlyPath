@@ -311,6 +311,10 @@ def test_planning_dialog_state():
                 planner.marginSpin.value()) == old_controls
         assert set(project.mapLayers()) == all_ids
         assert canvas.extent() == old_extent
+        # The 2D layout comes back too, and the panel knows it is 2D again.
+        assert planner._current_kind == '2d'
+        assert not planner._dirRow.isHidden() and planner.bufferSpin.isHidden()
+        assert planner.drawPolygonBtn.text() == 'Draw Polygon on Map'
         with patch.object(planner, '_set_survey_polygon',
                           side_effect=RuntimeError('injected geometry failure')):
             with unittest.TestCase().assertRaises(sync_error):

@@ -542,6 +542,7 @@ class WebsiteSyncLifecycleMixin:
             '_setting_split', '_loading_mission', '_survey_area_layer_id',
             '_break_layer_id', '_corridor_band_layer_id', '_takeoff_layer_id',
             '_contour_layer_id', '_corridor_breaks', '_live_statistics',
+            '_current_kind',
         )
         state_names += tuple(name for name in self.__dict__
                              if name.startswith(('_survey_', '_preview_', '_live_')))
@@ -641,6 +642,10 @@ class WebsiteSyncLifecycleMixin:
             finally:
                 for widget, was_blocked in blocked:
                     widget.blockSignals(was_blocked)
+            # Rebuild the mission-kind layout from the restored values, so rows
+            # and texts that are not listed above (Direction, draw button) match.
+            self._apply_kind_layout()
+            self._apply_mission_type_capabilities()
             for name, value in labels.items():
                 getattr(self, name).setText(value)
             self._set_info(labels['infoBar'])

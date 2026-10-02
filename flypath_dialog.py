@@ -2270,10 +2270,18 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
                 else 'Draw Polygon on Map')
 
     def _apply_corridor_layout(self):
-        """Reconfigure the panel for the selected mission kind. Corridor Mapping
-        swaps the polygon survey area for a line + buffer, hides Direction/Auto
-        and Cross-hatch, and reports corridor length instead of area. 2D Mapping
-        is restored to its original layout, unchanged."""
+        """Reconfigure the panel for the selected mission kind, then reset the
+        survey area: a polygon is not valid input for a corridor (and vice
+        versa), so the layer list is repopulated for the new geometry type."""
+        self._apply_kind_layout()
+        self._on_clear_preview(reset_area=True)
+        self._refresh_layer_combo()
+
+    def _apply_kind_layout(self):
+        """Show the controls of the selected mission kind, without touching the
+        survey area. Corridor Mapping swaps the polygon survey area for a line
+        + buffer, hides Direction/Auto and Cross-hatch, and reports corridor
+        length instead of area. 2D Mapping is restored to its original layout."""
         corridor = self._mission_kind() == 'corridor'
 
         # Flight Parameters: Direction/Margin (2D) vs Buffer (corridor)
@@ -2311,11 +2319,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, QWidget):
             'are listed.' if corridor else
             'Select a polygon layer from the QGIS project. Only polygon layers '
             'are listed.')
-
-        # A polygon is not valid input for a corridor (and vice versa): reset the
-        # survey area, then repopulate the layer list for the new geometry type.
-        self._on_clear_preview(reset_area=True)
-        self._refresh_layer_combo()
 
     # ── Corridor mission breaks (manual line grouping) ────────────────────
 
