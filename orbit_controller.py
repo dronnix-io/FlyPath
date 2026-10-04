@@ -657,9 +657,6 @@ class OrbitMixin:
             flights = self._apply_planning_result(request, result)
             self._orbit_headings = flights[0]['headings']
             self.linesLabel.setText('1 ring')
-            if self._mission_type() != 'full':
-                self.frontOverlapLabel.setText(
-                    f"{result['capture']['side_overlap_ratio'] * 100:.0f} %")
             if not result['validation']['export_allowed']:
                 self._set_info(result['validation']['errors'][0]['message'])
             return result

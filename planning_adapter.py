@@ -113,6 +113,10 @@ def consume_result(request, result, *, require_supported=True,
         raise ValueError('This saved planning contract version is not supported.')
     if require_supported and result.get('engine_version') not in SUPPORTED_ENGINE_VERSIONS:
         raise ValueError('This saved engine version is not supported.')
+    if request.get('operation') == 'plan_orbit' and (
+            result.get('operation') != 'plan_orbit'
+            or result.get('engine_version') != '1.2.0'):
+        raise ValueError('This saved orbit engine version is not supported.')
     if any(result.get(key) != request.get(key)
            for key in ('profile_version', 'drone_profile_id')):
         raise ValueError('The saved planning result does not match its request.')
@@ -231,6 +235,45 @@ def validate_mission_provenance(mission):
     settings = mission.get('settings') or {}
     if not isinstance(request, dict):
         raise ValueError('The saved planning request is missing.')
+    if settings.get('mapping_style') == 'orbit':
+        if result.get('engine_version') != '1.2.0':
+            raise ValueError('This saved orbit engine version is not supported.')
+        expected = {
+            'operation': 'plan_orbit',
+            'mapping_style': 'orbit',
+            'drone_profile_id': mission.get('drone_model'),
+            'centre': dict(zip(('latitude_deg', 'longitude_deg'),
+                               (mission.get('polygon') or [[None, None]])[0])),
+            'radius_m': settings.get('orbit_radius'),
+            'gimbal_pitch_deg': settings.get('orbit_tilt'),
+            'altitude_m': settings.get('altitude'),
+            'speed_m_s': settings.get('speed'),
+            'direction': 'counterclockwise' if settings.get('reverse_route') else 'clockwise',
+            'finish_action': WEBSITE_FINISH_ACTIONS.get(settings.get('finish_action')),
+            'terrain_follow': False,
+        }
+        if any(request.get(key) != value for key, value in expected.items()):
+            raise ValueError('The saved orbit request does not match the mission settings.')
+        capture = request.get('capture')
+        full = settings.get('capture_mode') == 'full'
+        if (not isinstance(capture, dict)
+                or capture.get('mode') != ('full_auto' if full else 'semi_auto')
+                or (full and capture.get('side_overlap_ratio') != _ratio(settings.get('side_overlap')))):
+            raise ValueError('The saved orbit capture does not match the mission settings.')
+        split = request.get('split')
+        if (not isinstance(split, dict) or split.get('enabled') is not False
+                or split.get('max_waypoints_per_flight') != settings.get('split_max_wp')):
+            raise ValueError('The saved orbit split does not match the mission settings.')
+        flights = consume_result(request, result, require_supported=False,
+                                 legacy_waypoints=mission.get('waypoints') or None)
+        if len(flights) != 1 or flights[0]['headings'] is None:
+            raise ValueError('The saved orbit route is invalid.')
+        supported = (request.get('contract_version') == CONTRACT_VERSION
+                     and result.get('contract_version') == CONTRACT_VERSION
+                     and result.get('engine_version') in SUPPORTED_ENGINE_VERSIONS)
+        if supported and {**plan_orbit(request), 'engine_version': result['engine_version']} != result:
+            raise ValueError('The saved orbit result does not match its request.')
+        return supported, flights
     expected = {
         'mapping_style': settings.get('mapping_style', '2d'),
         'drone_profile_id': mission.get('drone_model'),

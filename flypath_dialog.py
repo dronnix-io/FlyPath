@@ -3017,6 +3017,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.waypointsLabel.setText(f"{stats['waypoint_count']:,}")
         self.linesLabel.setText(str(stats['strip_count']))
         self.batteriesLabel.setText(str(stats['battery_count']))
+        if request.get('operation') == 'plan_orbit' and self._mission_type() != 'full':
+            self.frontOverlapLabel.setText(
+                f"{result['capture']['side_overlap_ratio'] * 100:.0f} %")
         self._show_hud()
         if incomplete:
             self._set_info('Launch/home travel is not included in these totals.')
