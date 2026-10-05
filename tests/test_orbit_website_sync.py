@@ -47,7 +47,9 @@ def test_orbit_roundtrip_and_dirty_route():
         assert planner.frontOverlapStatLabel.text() == planner.frontOverlapLabel.text().split()[0] + '%'
         saved_route = deepcopy(mission['planning_result'])
         saved_waypoints = deepcopy(mission['waypoints'])
-        with patch.object(dialog.planning_adapter, 'plan', side_effect=AssertionError('regenerated')):
+        # Saved-result verification may call the engine; importing must not
+        # replace the saved route through the dialog's regeneration entry point.
+        with patch.object(planner, '_plan_shared', side_effect=AssertionError('regenerated')):
             adjusted, note = planner._apply_website_mission(mission)
         assert not adjusted and not note
         assert planner._planning.result == saved_route
