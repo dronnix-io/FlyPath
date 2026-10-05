@@ -211,6 +211,36 @@ def test_forged_orbit_headings_are_rejected():
         raise AssertionError('out of range headings must be rejected')
 
 
+def test_orbit_provenance_verifies_result_and_settings():
+    planned = orbit_request()
+    result = planning_adapter.plan(planned)
+    mission = {
+        'drone_model': 'mini4pro', 'polygon': [[51.0, -114.0]],
+        'planning_request': planned, 'planning_result': result,
+        'settings': {
+            'mapping_style': 'orbit', 'orbit_radius': 30, 'orbit_tilt': -35,
+            'altitude': 25, 'speed': 3, 'reverse_route': False,
+            'finish_action': 'goHome', 'capture_mode': 'full',
+            'side_overlap': 90, 'split_max_wp': 200,
+        },
+    }
+    saved = deepcopy(mission)
+    supported, flights = planning_adapter.validate_mission_provenance(mission)
+    assert supported and len(flights) == 1 and flights[0]['headings']
+    assert mission == saved
+    changes = [deepcopy(saved) for _ in range(3)]
+    changes[0]['planning_result']['route']['waypoints'][3]['heading_deg'] += 1
+    changes[1]['settings']['orbit_radius'] += 1
+    changes[2]['planning_result']['drone_profile_id'] = 'mini3pro'
+    for changed in changes:
+        try:
+            planning_adapter.validate_mission_provenance(changed)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('tampered orbit provenance accepted')
+
+
 if __name__ == '__main__':
     tests = [value for name, value in sorted(globals().items())
              if name.startswith('test_') and callable(value)]

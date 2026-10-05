@@ -444,9 +444,6 @@ class WebsiteSyncLifecycleMixin:
         if result:
             supported, flights = provenance
             self._apply_planning_result(request, result, flights=flights)
-            if self._mission_kind() == 'orbit':
-                self._orbit_headings = flights[0]['headings']
-                self.linesLabel.setText('1 ring')
             self._planning.preserve_imported_route(supported=supported)
         elif legacy:
             route = [(float(lon), float(lat)) for lat, lon in legacy]

@@ -2,8 +2,8 @@
 
 A mixin for FlyPathDialog, in the same style as SurveyLifecycleMixin. It owns
 the orbit controls, the circle draw and edit tool, the circle layers and the
-orbit planning call. The dialog routes here wherever the mission kind is
-'orbit'; planning itself runs in the shared engine (plan_orbit).
+orbit request translation. The dialog's shared planning flow runs the request
+in the engine (plan_orbit).
 """
 
 import math
@@ -247,7 +247,6 @@ class OrbitMixin:
         self._orbit_tool = None
         self._orbit_prev_tool = None
         self._orbit_saved_overlap = None    # mapping side overlap, restored on leaving
-        self._orbit_headings = None
         self._mapping_reverse_tip = None    # Reverse route tooltip outside orbits
 
     # ── Building the controls ─────────────────────────────────────────────
@@ -613,7 +612,6 @@ class OrbitMixin:
     def _clear_orbit_centre(self):
         self._leave_orbit_tool()
         self._orbit_centre = None
-        self._orbit_headings = None
         self.orbitCentreLabel.setText(NO_CENTRE_TEXT)
         self._remove_orbit_centre_layer()
         self.editCircleBtn.setVisible(False)
@@ -648,24 +646,3 @@ class OrbitMixin:
             finish_action=self.finishActionCombo.currentText(),
             max_waypoints_per_flight=self.maxWaypointsSpin.value(),
         )
-
-    def _plan_orbit(self, silent=True):
-        """Plan the orbit in the engine and show it in the panel, or None."""
-        try:
-            request = self._orbit_request_from_ui()
-            result = planning_adapter.plan(request)
-            flights = self._apply_planning_result(request, result)
-            self._orbit_headings = flights[0]['headings']
-            self.linesLabel.setText('1 ring')
-            if not result['validation']['export_allowed']:
-                self._set_info(result['validation']['errors'][0]['message'])
-            return result
-        except (ValueError, planning_adapter.PlanningError) as exc:
-            self._planning.plan_failed()
-            self._waypoints = []
-            self._missions = []
-            self._orbit_headings = None
-            self._shot_spacing_m = 0.0
-            if not silent:
-                QMessageBox.warning(self, 'Cannot Plan Orbit', str(exc))
-            return None

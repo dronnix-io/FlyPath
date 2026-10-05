@@ -51,7 +51,8 @@ def test_orbit_roundtrip_and_dirty_route():
             adjusted, note = planner._apply_website_mission(mission)
         assert not adjusted and not note
         assert planner._planning.result == saved_route
-        assert planner._orbit_headings == [row['heading_deg'] for row in saved_route['route']['waypoints']]
+        assert planner._export_settings().headings == tuple(
+            row['heading_deg'] for row in saved_route['route']['waypoints'])
         assert planner._website_payload('Orbit again')['waypoints'] == saved_waypoints
         assert planner._website_payload('Orbit again')['planning_result'] == saved_route
         assert planner.frontOverlapStatLabel.text() == planner.frontOverlapLabel.text().split()[0] + '%'
@@ -100,7 +101,7 @@ def test_orbit_roundtrip_and_dirty_route():
             full['settings']['side_overlap'] / 100)
         planner._apply_website_mission(full)
         assert planner._planning.result == full['planning_result']
-        assert planner._orbit_headings
+        assert planner._export_settings().headings
         legacy = deepcopy(mission)
         legacy.pop('planning_request')
         legacy.pop('planning_result')
