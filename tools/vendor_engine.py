@@ -20,6 +20,8 @@ def _config():
     data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     if not all(data.get(key) for key in ("repository", "tag", "commit")):
         raise ValueError("flypath-engine.json requires repository, tag, and commit.")
+    if type(data.get("fetch_by_commit", False)) is not bool:
+        raise ValueError("fetch_by_commit must be a boolean.")
     return data
 
 
@@ -93,17 +95,28 @@ def main():
     repository = args.repository or config["repository"]
     with tempfile.TemporaryDirectory(prefix="flypath-engine-") as temp:
         checkout = Path(temp) / "engine"
-        subprocess.run(
-            ["git", "clone", "--quiet", "--depth", "1", "--branch", config["tag"],
-             "--single-branch", repository, str(checkout)],
-            check=True,
-        )
+        if config.get("fetch_by_commit", False):
+            subprocess.run(["git", "init", "--quiet", str(checkout)], check=True)
+            subprocess.run(
+                ["git", "-C", str(checkout), "fetch", "--quiet", "--depth", "1",
+                 repository, config["commit"]], check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(checkout), "checkout", "--quiet", "--detach", "FETCH_HEAD"],
+                check=True,
+            )
+        else:
+            subprocess.run(
+                ["git", "clone", "--quiet", "--depth", "1", "--branch", config["tag"],
+                 "--single-branch", repository, str(checkout)],
+                check=True,
+            )
         commit = subprocess.run(
             ["git", "-C", str(checkout), "rev-parse", "HEAD"],
             check=True, capture_output=True, text=True,
         ).stdout.strip()
         if commit != config["commit"]:
-            raise ValueError(f"Tag {config['tag']} resolved to unexpected commit {commit}.")
+            raise ValueError(f"Engine source resolved to unexpected commit {commit}.")
         source = checkout / "src" / "flypath_engine"
         if not source.is_dir():
             raise ValueError("Engine repository has no src/flypath_engine package.")

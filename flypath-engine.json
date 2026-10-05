@@ -1,5 +1,6 @@
 {
   "repository": "https://github.com/dronnix-io/flypath_engine.git",
   "tag": "v1.2.0",
-  "commit": "805dff27b44f59198e15aa66143c21421b2d0195"
+  "commit": "805dff27b44f59198e15aa66143c21421b2d0195",
+  "fetch_by_commit": true
 }

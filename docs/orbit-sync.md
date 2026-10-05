@@ -18,5 +18,7 @@ cross-hatching, or mission splitting. Consumer DJI Fly profiles are supported;
 enterprise mapping export cannot represent this route. Saved routes retain
 their provenance until explicit regeneration.
 
-Release integration requires the public v1.2.0 engine tag at the pinned commit
-before the plugin ZIP can be built with the normal vendoring command.
+While the public v1.2.0 tag is pending, `fetch_by_commit: true` in
+`flypath-engine.json` fetches the exact pinned commit for CI and candidate ZIPs.
+Commit and package-version checks still apply. Remove this flag once v1.2.0
+is published at the pinned commit, before releasing the plugin.

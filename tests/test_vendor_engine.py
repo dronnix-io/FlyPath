@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 from unittest.mock import patch
@@ -11,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.vendor_engine import _check_package, _replace_package
 from tools.build_plugin import _include, main as build_plugin
+from tools import vendor_engine
 
 
 def test_replace_and_verify_package():
@@ -80,6 +82,42 @@ def test_build_includes_generated_engine_without_unrelated_untracked_files():
                 "FlyPath/flypath_engine/profiles/drones.json",
                 "FlyPath/flypath_engine/LICENSE", "FlyPath/flypath_engine/NOTICE",
             }
+
+
+def test_commit_fetch_without_release_tag_and_return_to_tag_fetch():
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        repo, destination = root / 'engine', root / 'vendored'
+        source = repo / 'src' / 'flypath_engine'
+        source.mkdir(parents=True)
+        (source / '__init__.py').write_text('__version__ = "1.2.0"\n', encoding='utf-8')
+        for name in ('LICENSE', 'NOTICE'):
+            (repo / name).write_text(name, encoding='utf-8')
+        subprocess.run(['git', 'init', '--quiet', str(repo)], check=True)
+        subprocess.run(['git', '-C', str(repo), 'add', '.'], check=True)
+        subprocess.run(['git', '-C', str(repo), '-c', 'user.name=Test',
+                        '-c', 'user.email=test@example.com', 'commit', '--quiet', '-m', 'fixture'],
+                       check=True)
+        commit = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'],
+                                check=True, capture_output=True, text=True).stdout.strip()
+        config = {'repository': str(repo), 'tag': 'v1.2.0', 'commit': commit,
+                  'fetch_by_commit': True}
+        with patch.object(vendor_engine, '_config', return_value=config), \
+                patch.object(vendor_engine, 'DESTINATION', destination), \
+                patch.object(sys, 'argv', ['vendor_engine.py']):
+            vendor_engine.main()  # No tag exists: fetch exactly the pinned commit.
+            _check_package(destination, config)
+            subprocess.run(['git', '-C', str(repo), 'tag', 'v1.2.0'], check=True)
+            del config['fetch_by_commit']  # Release mode remains the default.
+            vendor_engine.main()
+            _check_package(destination, config)
+            config['commit'] = '0' * 40
+            try:
+                vendor_engine.main()
+            except ValueError as exc:
+                assert 'unexpected commit' in str(exc)
+            else:
+                raise AssertionError('tag resolving to a different commit accepted')
 
 
 if __name__ == "__main__":
