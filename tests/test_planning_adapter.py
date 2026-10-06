@@ -241,6 +241,35 @@ def test_orbit_provenance_verifies_result_and_settings():
             raise AssertionError('tampered orbit provenance accepted')
 
 
+
+def test_orbit_results_follow_the_supported_engine_versions():
+    planned = orbit_request()
+    result = planning_adapter.plan(planned)
+    newer = dict(result, engine_version='1.3.0')
+    # A newer orbit-capable engine is readable without regeneration support...
+    assert planning_adapter.consume_result(planned, newer, require_supported=False)
+    # ...and becomes fully supported once the plugin lists it, like 2D.
+    try:
+        planning_adapter.consume_result(planned, newer)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('unlisted engine versions must not be regenerated')
+    original = planning_adapter.SUPPORTED_ENGINE_VERSIONS
+    planning_adapter.SUPPORTED_ENGINE_VERSIONS = original + ('1.3.0',)
+    try:
+        assert planning_adapter.consume_result(planned, newer)
+    finally:
+        planning_adapter.SUPPORTED_ENGINE_VERSIONS = original
+    # Engines older than 1.2.0 cannot have planned an orbit.
+    try:
+        planning_adapter.consume_result(planned, dict(result, engine_version='1.1.0'),
+                                        require_supported=False)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('orbit results from engines before 1.2.0 must be refused')
+
 if __name__ == '__main__':
     tests = [value for name, value in sorted(globals().items())
              if name.startswith('test_') and callable(value)]

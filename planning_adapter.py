@@ -12,6 +12,18 @@ from .flypath_engine.profiles import PROFILE_VERSION
 PlanningError = _PlanningError
 # These releases have identical planning behavior; revisit on engine upgrades.
 SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0')
+ORBIT_MIN_ENGINE_VERSION = (1, 2, 0)   # the first engine release with plan_orbit
+
+
+def _orbit_capable(version):
+    """True for an engine release that can plan orbits (1.2.0 or newer).
+
+    Whether this plugin can regenerate from that release is decided by
+    SUPPORTED_ENGINE_VERSIONS, the same as for 2D results."""
+    try:
+        return tuple(int(part) for part in str(version).split('.')) >= ORBIT_MIN_ENGINE_VERSION
+    except ValueError:
+        return False
 
 
 FINISH_ACTIONS = {
@@ -115,7 +127,7 @@ def consume_result(request, result, *, require_supported=True,
         raise ValueError('This saved engine version is not supported.')
     if request.get('operation') == 'plan_orbit' and (
             result.get('operation') != 'plan_orbit'
-            or result.get('engine_version') != '1.2.0'):
+            or not _orbit_capable(result.get('engine_version'))):
         raise ValueError('This saved orbit engine version is not supported.')
     if any(result.get(key) != request.get(key)
            for key in ('profile_version', 'drone_profile_id')):
@@ -236,7 +248,7 @@ def validate_mission_provenance(mission):
     if not isinstance(request, dict):
         raise ValueError('The saved planning request is missing.')
     if settings.get('mapping_style') == 'orbit':
-        if result.get('engine_version') != '1.2.0':
+        if not _orbit_capable(result.get('engine_version')):
             raise ValueError('This saved orbit engine version is not supported.')
         expected = {
             'operation': 'plan_orbit',
