@@ -93,10 +93,6 @@ git push origin my-change --force-with-lease
 
 ## Updating the shared engine
 
-The Orbit candidate temporarily sets `fetch_by_commit: true` to fetch the exact
-pinned commit while its public release tag is pending. Remove that flag after
-the tag is published at the pinned commit, before releasing the plugin.
-
 Set the engine tag and commit in `flypath-engine.json`, then run:
 
 ```bash

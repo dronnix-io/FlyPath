@@ -1,7 +1,7 @@
 # Orbit mission integration
 
 Orbit geometry, waypoint headings, camera actions, overlap, estimates, and
-export limits come from engine `plan_orbit`, added in the v1.2.0 candidate.
+export limits come from engine `plan_orbit`, released in v1.2.0.
 Consumers translate controls and serialize the engine result without
 replanning the ring. Map circles and editing handles are consumer UI.
 
@@ -17,8 +17,3 @@ Orbit missions use a curved path and one flight, without terrain follow,
 cross-hatching, or mission splitting. Consumer DJI Fly profiles are supported;
 enterprise mapping export cannot represent this route. Saved routes retain
 their provenance until explicit regeneration.
-
-While the public v1.2.0 tag is pending, `fetch_by_commit: true` in
-`flypath-engine.json` fetches the exact pinned commit for CI and candidate ZIPs.
-Commit and package-version checks still apply. Remove this flag once v1.2.0
-is published at the pinned commit, before releasing the plugin.
