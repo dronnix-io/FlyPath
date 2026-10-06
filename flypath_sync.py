@@ -192,7 +192,7 @@ def validate_mission(mission):
         settings = mission.get('settings', {})
         if not isinstance(settings, dict):
             raise ValueError()
-        enums = {'mapping_style': ('2d', 'corridor'), 'capture_mode': ('semi', 'full'),
+        enums = {'mapping_style': ('2d', 'corridor', 'orbit'), 'capture_mode': ('semi', 'full'),
                  'flight_path': ('straight', 'curved'),
                  'finish_action': tuple(WEBSITE_FINISH_ACTIONS.values()),
                  'rc_lost_action': tuple(WEBSITE_RC_LOST_ACTIONS.values())}
@@ -207,9 +207,20 @@ def validate_mission(mission):
                 raise ValueError()
         for key in ('altitude', 'speed', 'side_overlap', 'front_overlap', 'margin',
                     'direction', 'terrain_tolerance', 'split_max_wp',
-                    'corridor_width', 'split_count'):
+                    'corridor_width', 'split_count', 'orbit_radius', 'orbit_tilt'):
             if settings.get(key) is not None and (type(settings[key]) not in (int, float)
                                     or not math.isfinite(settings[key])):
+                raise ValueError()
+        if settings.get('mapping_style') == 'orbit':
+            if (len(mission.get('polygon', [])) != 1
+                    or not 5 <= settings.get('orbit_radius', 0) <= 2000
+                    or not -90 <= settings.get('orbit_tilt', 1) <= 0
+                    or not 10 <= settings.get('altitude', 0) <= 500
+                    or settings.get('flight_path', 'curved') != 'curved'
+                    or settings.get('terrain_follow', False)
+                    or settings.get('split_enabled', False)
+                    or settings.get('split_count', 1) != 1
+                    or settings.get('cross_hatch', False)):
                 raise ValueError()
     except (ValueError, TypeError, OverflowError, RecursionError):
         raise FlypathSyncError('FlyPath sent invalid mission geometry or settings.') from None

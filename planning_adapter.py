@@ -12,6 +12,18 @@ from .flypath_engine.profiles import PROFILE_VERSION
 PlanningError = _PlanningError
 # These releases have identical planning behavior; revisit on engine upgrades.
 SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0')
+ORBIT_MIN_ENGINE_VERSION = (1, 2, 0)   # the first engine release with plan_orbit
+
+
+def _orbit_capable(version):
+    """True for an engine release that can plan orbits (1.2.0 or newer).
+
+    Whether this plugin can regenerate from that release is decided by
+    SUPPORTED_ENGINE_VERSIONS, the same as for 2D results."""
+    try:
+        return tuple(int(part) for part in str(version).split('.')) >= ORBIT_MIN_ENGINE_VERSION
+    except ValueError:
+        return False
 
 
 FINISH_ACTIONS = {
@@ -113,6 +125,10 @@ def consume_result(request, result, *, require_supported=True,
         raise ValueError('This saved planning contract version is not supported.')
     if require_supported and result.get('engine_version') not in SUPPORTED_ENGINE_VERSIONS:
         raise ValueError('This saved engine version is not supported.')
+    if request.get('operation') == 'plan_orbit' and (
+            result.get('operation') != 'plan_orbit'
+            or not _orbit_capable(result.get('engine_version'))):
+        raise ValueError('This saved orbit engine version is not supported.')
     if any(result.get(key) != request.get(key)
            for key in ('profile_version', 'drone_profile_id')):
         raise ValueError('The saved planning result does not match its request.')
@@ -231,54 +247,87 @@ def validate_mission_provenance(mission):
     settings = mission.get('settings') or {}
     if not isinstance(request, dict):
         raise ValueError('The saved planning request is missing.')
-    expected = {
-        'mapping_style': settings.get('mapping_style', '2d'),
-        'drone_profile_id': mission.get('drone_model'),
-        'altitude_m': settings.get('altitude'),
-        'speed_m_s': settings.get('speed'),
-        'side_overlap_ratio': _ratio(settings.get('side_overlap')),
-        'margin_m': settings.get('margin', 0),
-        'turn_style': settings.get('flight_path', 'curved'),
-        'finish_action': WEBSITE_FINISH_ACTIONS.get(settings.get('finish_action')),
-        'cross_hatch': bool(settings.get('cross_hatch')),
-        'reverse_route': bool(settings.get('reverse_route')),
-        'terrain_follow': bool(settings.get('terrain_follow')),
-    }
-    if any(request.get(key) != value for key, value in expected.items()):
-        raise ValueError('The saved planning request does not match the mission settings.')
-    capture = request.get('capture')
-    expected_mode = 'full_auto' if settings.get('capture_mode') == 'full' else 'semi_auto'
-    if not isinstance(capture, dict) or capture.get('mode') != expected_mode:
-        raise ValueError('The saved capture request does not match the mission settings.')
-    if expected_mode == 'full_auto' and capture.get('front_overlap_ratio') != _ratio(settings.get('front_overlap')):
-        raise ValueError('The saved overlap request does not match the mission settings.')
-    split = request.get('split')
-    enabled = settings.get('split_enabled')
-    if (not isinstance(split, dict) or split.get('enabled') is not enabled
-            or split.get('max_waypoints_per_flight') != settings.get('split_max_wp')
-            or (enabled and split.get('requested_flights') != settings.get('split_count'))
-            or (not enabled and split.get('requested_flights') != 1)):
-        raise ValueError('The saved split request does not match the mission settings.')
-    direction = request.get('direction')
-    automatic = bool(settings.get('auto_direction'))
-    if (not isinstance(direction, dict)
-            or direction.get('mode') != ('automatic' if automatic else 'manual')
-            or (not automatic and direction.get('value_deg') != settings.get('direction'))):
-        raise ValueError('The saved direction request does not match the mission settings.')
-    area = request.get('survey_area')
-    exterior = area.get('exterior') if isinstance(area, dict) else None
-    polygon = mission.get('polygon') or []
-    request_polygon = ([[point.get('latitude_deg'), point.get('longitude_deg')]
-                        for point in exterior] if isinstance(exterior, list) else None)
-    if request_polygon != polygon:
-        raise ValueError('The saved planning area does not match the mission geometry.')
+    if settings.get('mapping_style') == 'orbit':
+        if not _orbit_capable(result.get('engine_version')):
+            raise ValueError('This saved orbit engine version is not supported.')
+        expected = {
+            'operation': 'plan_orbit',
+            'mapping_style': 'orbit',
+            'drone_profile_id': mission.get('drone_model'),
+            'centre': dict(zip(('latitude_deg', 'longitude_deg'),
+                               (mission.get('polygon') or [[None, None]])[0])),
+            'radius_m': settings.get('orbit_radius'),
+            'gimbal_pitch_deg': settings.get('orbit_tilt'),
+            'altitude_m': settings.get('altitude'),
+            'speed_m_s': settings.get('speed'),
+            'direction': 'counterclockwise' if settings.get('reverse_route') else 'clockwise',
+            'finish_action': WEBSITE_FINISH_ACTIONS.get(settings.get('finish_action')),
+            'terrain_follow': False,
+        }
+        if any(request.get(key) != value for key, value in expected.items()):
+            raise ValueError('The saved orbit request does not match the mission settings.')
+        capture = request.get('capture')
+        full = settings.get('capture_mode') == 'full'
+        if (not isinstance(capture, dict)
+                or capture.get('mode') != ('full_auto' if full else 'semi_auto')
+                or (full and capture.get('side_overlap_ratio') != _ratio(settings.get('side_overlap')))):
+            raise ValueError('The saved orbit capture does not match the mission settings.')
+        split = request.get('split')
+        if (not isinstance(split, dict) or split.get('enabled') is not False
+                or split.get('max_waypoints_per_flight') != settings.get('split_max_wp')):
+            raise ValueError('The saved orbit split does not match the mission settings.')
+    else:
+        expected = {
+            'mapping_style': settings.get('mapping_style', '2d'),
+            'drone_profile_id': mission.get('drone_model'),
+            'altitude_m': settings.get('altitude'),
+            'speed_m_s': settings.get('speed'),
+            'side_overlap_ratio': _ratio(settings.get('side_overlap')),
+            'margin_m': settings.get('margin', 0),
+            'turn_style': settings.get('flight_path', 'curved'),
+            'finish_action': WEBSITE_FINISH_ACTIONS.get(settings.get('finish_action')),
+            'cross_hatch': bool(settings.get('cross_hatch')),
+            'reverse_route': bool(settings.get('reverse_route')),
+            'terrain_follow': bool(settings.get('terrain_follow')),
+        }
+        if any(request.get(key) != value for key, value in expected.items()):
+            raise ValueError('The saved planning request does not match the mission settings.')
+        capture = request.get('capture')
+        expected_mode = 'full_auto' if settings.get('capture_mode') == 'full' else 'semi_auto'
+        if not isinstance(capture, dict) or capture.get('mode') != expected_mode:
+            raise ValueError('The saved capture request does not match the mission settings.')
+        if expected_mode == 'full_auto' and capture.get('front_overlap_ratio') != _ratio(settings.get('front_overlap')):
+            raise ValueError('The saved overlap request does not match the mission settings.')
+        split = request.get('split')
+        enabled = settings.get('split_enabled')
+        if (not isinstance(split, dict) or split.get('enabled') is not enabled
+                or split.get('max_waypoints_per_flight') != settings.get('split_max_wp')
+                or (enabled and split.get('requested_flights') != settings.get('split_count'))
+                or (not enabled and split.get('requested_flights') != 1)):
+            raise ValueError('The saved split request does not match the mission settings.')
+        direction = request.get('direction')
+        automatic = bool(settings.get('auto_direction'))
+        if (not isinstance(direction, dict)
+                or direction.get('mode') != ('automatic' if automatic else 'manual')
+                or (not automatic and direction.get('value_deg') != settings.get('direction'))):
+            raise ValueError('The saved direction request does not match the mission settings.')
+        area = request.get('survey_area')
+        exterior = area.get('exterior') if isinstance(area, dict) else None
+        polygon = mission.get('polygon') or []
+        request_polygon = ([[point.get('latitude_deg'), point.get('longitude_deg')]
+                            for point in exterior] if isinstance(exterior, list) else None)
+        if request_polygon != polygon:
+            raise ValueError('The saved planning area does not match the mission geometry.')
     flights = consume_result(request, result, require_supported=False,
                              legacy_waypoints=mission.get('waypoints') or None)
+    if settings.get('mapping_style') == 'orbit' and (len(flights) != 1 or flights[0]['headings'] is None):
+        raise ValueError('The saved orbit route is invalid.')
     supported = (request.get('contract_version') == CONTRACT_VERSION
                  and result.get('contract_version') == CONTRACT_VERSION
                  and result.get('engine_version') in SUPPORTED_ENGINE_VERSIONS)
-    if supported and {**plan_2d(request), 'engine_version': result['engine_version']} != result:
-        raise ValueError('The saved planning result does not match its request.')
+    if supported and {**plan(request), 'engine_version': result['engine_version']} != result:
+        kind = 'orbit' if settings.get('mapping_style') == 'orbit' else 'planning'
+        raise ValueError('The saved %s result does not match its request.' % kind)
     return supported, flights
 
 

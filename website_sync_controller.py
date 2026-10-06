@@ -200,13 +200,6 @@ class WebsiteSyncLifecycleMixin:
             self._update_web_buttons()
 
     def _on_send_to_website(self, save_as_new=False):
-        if self._mission_kind() == 'orbit':
-            QMessageBox.information(
-                self, 'Coming Soon',
-                'Orbit missions can be planned, previewed and sent to your drone '
-                'from the plugin. Saving them to FlyPath.io is coming soon, once '
-                'the website supports orbits.')
-            return False
         if self._planning.save_requires_regeneration():
             QMessageBox.warning(
                 self, 'Regeneration Required',
@@ -280,7 +273,9 @@ class WebsiteSyncLifecycleMixin:
         """The mission as the website's API expects it. Points travel as
         [lat, lon] pairs (the website's own order), the drone as the website's
         own code. Linked saves address the mission by its API URL."""
-        corridor = self._mission_kind() == 'corridor'
+        kind = self._mission_kind()
+        corridor = kind == 'corridor'
+        orbit = kind == 'orbit'
         drone = registry.get(self.droneModelCombo.currentText())
         if not drone.website_code:
             raise FlypathSyncError(
@@ -288,17 +283,20 @@ class WebsiteSyncLifecycleMixin:
                 'cannot be sent there. Choose another drone, or export a KMZ '
                 'instead.' % drone.name)
         try:
-            area = (survey_geometry.line_vertices(
-                        self._survey_line, self._survey_line_crs) if corridor
-                    else survey_geometry.polygon_vertices(
-                        self._survey_polygon, self._survey_polygon_crs))
+            if orbit:
+                area = [self._orbit_centre] if self._orbit_centre is not None else []
+            elif corridor:
+                area = survey_geometry.line_vertices(self._survey_line, self._survey_line_crs)
+            else:
+                area = survey_geometry.polygon_vertices(
+                    self._survey_polygon, self._survey_polygon_crs)
         except survey_geometry.MultipartLineError as exc:
             raise FlypathSyncError(
                 'FlyPath stores one corridor centre line, but this one has %d '
                 'separate lines. Send them as separate missions.' % exc.args[0]) from None
         if not area:
             raise FlypathSyncError('This mission has no survey area to send.')
-        if not corridor and self._planning.request:
+        if not corridor and not orbit and self._planning.request:
             survey_area = self._planning.request.get('survey_area', {})
             if survey_area.get('parts') or survey_area.get('holes'):
                 raise FlypathSyncError(
@@ -338,7 +336,9 @@ class WebsiteSyncLifecycleMixin:
         out rather than invented as new server-side keys. Values outside the
         website's own ranges are not clamped here: the server rejects them with
         a message the pilot is shown as-is."""
-        corridor = self._mission_kind() == 'corridor'
+        kind = self._mission_kind()
+        corridor = kind == 'corridor'
+        orbit = kind == 'orbit'
         actions = []
         for label, combo, table in (
                 ('Finish Action', self.finishActionCombo,
@@ -368,7 +368,14 @@ class WebsiteSyncLifecycleMixin:
             'reverse_route':  self.reverseRouteCheck.isChecked(),
             'split_max_wp':   self.maxWaypointsSpin.value(),
         }
-        if corridor:
+        if orbit:
+            settings['flight_path'] = 'curved'
+            settings['terrain_follow'] = False
+            settings['split_enabled'] = False
+            settings['split_count'] = 1
+            settings['orbit_radius'] = self.orbitRadiusSpin.value()
+            settings['orbit_tilt'] = self.orbitTiltSpin.value()
+        elif corridor:
             # The plugin's Buffer is the half-width each side; the website's
             # corridor_width is the full mapped width.
             settings['corridor_width'] = round(self.bufferSpin.value() * 2.0, 1)
@@ -378,7 +385,7 @@ class WebsiteSyncLifecycleMixin:
             settings['direction'] = round(self.directionSpin.value() % 180.0, 1)
             settings['margin'] = round(self.marginSpin.value(), 1)
             settings['cross_hatch'] = bool(self.crossHatchCheck.isChecked())
-        if self._mission_type() == 'full':
+        if self._mission_type() == 'full' and not orbit:
             # Semi-automatic front overlap is derived from speed and interval,
             # not a setting the pilot chose, so it is not sent as one.
             settings['front_overlap'] = self.frontOverlapSpin.value()
@@ -390,7 +397,9 @@ class WebsiteSyncLifecycleMixin:
         """The figures the website's mission card shows, taken from the same
         stats card the pilot just reviewed, so both tools report one number."""
         return {
-            'distance_m': int(round(measure_route(self._waypoints or []))),
+            'distance_m': int(round(
+                self._planning.result['statistics']['route_distance_m']
+                if self._planning.result else measure_route(self._waypoints or []))),
             'time':       self.flightTimeLabel.text(),
             'distance':   self.distanceLabel.text(),
             'photos':     self.photosLabel.text(),
@@ -448,7 +457,11 @@ class WebsiteSyncLifecycleMixin:
             restore_estimates()
             self.waypointsLabel.setText(str(sum(map(len, self._missions))))
             self.linesLabel.setText(str(len(route) // 2))
-            if self._mission_type() == 'full':
+            if self._mission_kind() == 'orbit':
+                self._planning.require_regeneration()
+                self._set_info('This older orbit route has no verified camera headings. '
+                               'Choose Regenerate on Map before saving or exporting.')
+            elif self._mission_type() == 'full':
                 self._planning.require_regeneration()
                 self._set_info('This older Full-auto route has no verified capture '
                                'actions. Choose Regenerate on Map before saving or exporting.')
@@ -693,14 +706,15 @@ class WebsiteSyncLifecycleMixin:
         except ValueError as exc:
             raise FlypathSyncError('The saved route could not be verified: %s' % exc) from None
         style = settings.get('mapping_style', '2d')
-        if style not in ('2d', 'corridor'):
+        if style not in ('2d', 'corridor', 'orbit'):
             raise FlypathSyncError(
                 'This mission is a "%s" survey, which this plugin cannot plan. '
-                'Only 2D and corridor missions can be loaded.' % style)
+                'Only 2D, corridor and orbit missions can be loaded.' % style)
         corridor = style == 'corridor'
+        orbit = style == 'orbit'
         if settings.get('reverse_route') and (
                 corridor or settings.get('terrain_follow')
-                or not mission.get('planning_result')):
+                or (not orbit and not mission.get('planning_result'))):
             raise FlypathSyncError(
                 'This reversed route cannot be edited by the plugin. Reverse '
                 'route is supported for 2D missions planned by the shared '
@@ -711,6 +725,8 @@ class WebsiteSyncLifecycleMixin:
             raise FlypathSyncError(
                 'This mission is planned for a drone this plugin does not '
                 'offer, so its settings would not carry over.')
+        if orbit and registry.get(drone_name).category != 'consumer':
+            raise FlypathSyncError('Orbit missions need a DJI Fly drone.')
 
         capture = settings.get('capture_mode', 'semi')
         if capture not in ('semi', 'full'):
@@ -730,30 +746,33 @@ class WebsiteSyncLifecycleMixin:
                     % (label, code))
 
         points = mission.get('polygon') or []
-        needed = 2 if corridor else 3
+        needed = 1 if orbit else 2 if corridor else 3
         if len(points) < needed:
             raise FlypathSyncError(
                 'This mission has no %s yet — draw one on the website first, '
                 'or plan it here.'
-                % ('centre line' if corridor else 'survey area'))
+                % ('centre point' if orbit else 'centre line' if corridor else 'survey area'))
         try:
             vertices = [QgsPointXY(float(lon), float(lat)) for lat, lon in points]
         except (TypeError, ValueError):
             raise FlypathSyncError('This mission\'s survey area could not be read.')
 
         wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
-        geom = (QgsGeometry.fromPolylineXY(vertices) if corridor
+        geom = (QgsGeometry.fromPointXY(vertices[0]) if orbit
+                else QgsGeometry.fromPolylineXY(vertices) if corridor
                 else QgsGeometry.fromPolygonXY([vertices]))
         if (geom.isEmpty() or not geom.isGeosValid()
-                or (geom.length() <= 0 if corridor else geom.area() <= 0)):
+                or (not orbit and (geom.length() <= 0 if corridor else geom.area() <= 0))):
             raise FlypathSyncError('This mission has an invalid survey geometry.')
 
-        return settings, provenance, corridor, drone_name, capture, finish, rc_lost, geom, wgs84
+        return settings, provenance, style, drone_name, capture, finish, rc_lost, geom, wgs84
 
     def _apply_website_mission_contents(self, mission, prepared):
         """Apply validated settings and route as an independent local mission."""
-        (settings, provenance, corridor, drone_name, capture, finish, rc_lost,
+        (settings, provenance, style, drone_name, capture, finish, rc_lost,
          geom, wgs84) = prepared
+        corridor = style == 'corridor'
+        orbit = style == 'orbit'
         recovery_note = ''
         self._loading_mission = True
         self._planning.begin_import()
@@ -761,7 +780,7 @@ class WebsiteSyncLifecycleMixin:
         # not optimise the imported heading against the previous survey area.
         self.autoDirectionBtn.setChecked(False)
         self.missionTypeCombo.setCurrentText(
-            'Corridor Mapping' if corridor else '2D Mapping')
+            'Orbit (3D Model)' if orbit else 'Corridor Mapping' if corridor else '2D Mapping')
         self.droneModelCombo.setCurrentText(drone_name)
         (self.captureFullRadio if capture == 'full'
          else self.captureSemiRadio).setChecked(True)
@@ -787,6 +806,9 @@ class WebsiteSyncLifecycleMixin:
                   ('terrain tolerance', self.terrainToleranceSpin,
                    settings.get('terrain_tolerance')),
                   ('max waypoints', self.maxWaypointsSpin, settings.get('split_max_wp'))]
+        if orbit:
+            fields.extend((('orbit radius', self.orbitRadiusSpin, settings.get('orbit_radius')),
+                           ('orbit tilt', self.orbitTiltSpin, settings.get('orbit_tilt'))))
         if isinstance(settings.get('corridor_width'), (int, float)):
             # The website's corridor_width is the full mapped width; the
             # plugin's Buffer is the half-width each side.
@@ -814,7 +836,10 @@ class WebsiteSyncLifecycleMixin:
         self._source_mode = 'draw'
         self._apply_source_mode()
 
-        if corridor:
+        if orbit:
+            centre = geom.asPoint()
+            self.set_orbit_centre(centre.x(), centre.y())
+        elif corridor:
             self._show_drawn_line(geom, wgs84)
             self._set_survey_line(geom, wgs84)
         else:
@@ -825,7 +850,10 @@ class WebsiteSyncLifecycleMixin:
         self._split_overridden = True
         split_enabled = settings.get('split_enabled')
         self._setting_split = True
-        if type(split_enabled) is bool:
+        if orbit:
+            self.splitCheck.setChecked(False)
+            self._split_choice_required = False
+        elif type(split_enabled) is bool:
             self.splitCheck.setChecked(split_enabled)
             self._split_choice_required = False
         elif mission.get('source_product') == 'plugin':
@@ -854,7 +882,11 @@ class WebsiteSyncLifecycleMixin:
         if adjusted:
             self._planning.require_regeneration()
             self.previewBtn.setText('Regenerate on Map')
-        self._zoom_to_website_geometry(geom, wgs84)
+        if orbit:
+            self._zoom_to_website_geometry(
+                QgsGeometry.fromPolygonXY([self._orbit_ring_points()]), wgs84)
+        else:
+            self._zoom_to_website_geometry(geom, wgs84)
         return adjusted, recovery_note
 
     def _zoom_to_website_geometry(self, geom, crs):

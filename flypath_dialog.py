@@ -2968,10 +2968,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
     # ── Statistics ────────────────────────────────────────────────────────
 
     def _uses_shared_planning(self):
-        return (self._mission_kind() == '2d'
-                and not self.terrainFollowCheck.isChecked())
+        kind = self._mission_kind()
+        return kind == 'orbit' or (kind == '2d' and not self.terrainFollowCheck.isChecked())
 
     def _planning_request_from_ui(self):
+        if self._mission_kind() == 'orbit':
+            return self._orbit_request_from_ui()
         drone = registry.get(self.droneModelCombo.currentText())
         if not drone.website_code:
             raise ValueError('%s has no shared engine profile.' % drone.name)
@@ -3015,8 +3017,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         photo_suffix = ' estimated' if stats.get('photo_count_kind') == 'estimate' else ''
         self.photosLabel.setText(f"{stats['photo_count']:,}{photo_suffix}")
         self.waypointsLabel.setText(f"{stats['waypoint_count']:,}")
-        self.linesLabel.setText(str(stats['strip_count']))
+        orbit = request.get('operation') == 'plan_orbit'
+        self.linesLabel.setText('1 ring' if orbit else str(stats['strip_count']))
         self.batteriesLabel.setText(str(stats['battery_count']))
+        if orbit and self._mission_type() != 'full':
+            self.frontOverlapLabel.setText(
+                f"{result['capture']['side_overlap_ratio'] * 100:.0f} %")
         self._show_hud()
         if incomplete:
             self._set_info('Launch/home travel is not included in these totals.')
@@ -3032,6 +3038,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             request = self._planning_request_from_ui()
             result = planning_adapter.plan(request)
             self._apply_planning_result(request, result)
+            if (self._mission_kind() == 'orbit'
+                    and not result['validation']['export_allowed']):
+                self._set_info(result['validation']['errors'][0]['message'])
             return result
         except (ValueError, planning_adapter.PlanningError) as exc:
             self._planning.plan_failed()
@@ -3039,7 +3048,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self._missions = []
             self._shot_spacing_m = 0.0
             if not silent:
-                QMessageBox.warning(self, 'Cannot Plan Mission', str(exc))
+                title = 'Cannot Plan Orbit' if self._mission_kind() == 'orbit' else 'Cannot Plan Mission'
+                QMessageBox.warning(self, title, str(exc))
             return None
 
     def _apply_split_default(self, max_split, default_target):
@@ -3097,10 +3107,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             return
         if self._mission_kind() == 'corridor':
             self._update_stats_corridor()
-            return
-        if self._mission_kind() == 'orbit':
-            if not self._planning.locked and self._plan_orbit() is None:
-                self._clear_stats()
             return
         if self._uses_shared_planning():
             if self._planning.locked:
@@ -3392,8 +3398,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             if result is None:
                 return
             waypoints, shot_spacing_m = result
-            if ((self._uses_shared_planning() or self._mission_kind() == 'orbit')
-                    and self._planning.result):
+            if self._uses_shared_planning() and self._planning.result:
                 missions_h = [(part, None, None) for part in self._missions]
             else:
                 missions_h = self._missions_with_heights(
@@ -3843,8 +3848,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             curved_path=self._path_curved(),
             # The launch offset lives in the Takeoff Zone group, hidden for orbits.
             launch_offset_m=0.0 if orbit else self.launchOffsetSpin.value(),
-            headings=(tuple(self._orbit_headings)
-                      if orbit and self._orbit_headings else None),
+            headings=(tuple(row['heading_deg']
+                            for row in self._planning.result['route']['waypoints'])
+                      if orbit and self._planning.result else None),
         )
 
     def _missions_with_heights(self, waypoints, elevations):
@@ -4348,10 +4354,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._gen_elevations = None
         if self._mission_kind() == 'corridor':
             return self._generate_corridor_waypoints()
-        if self._mission_kind() == 'orbit':
-            if self._plan_orbit(silent=False) is None:
-                return None
-            return list(self._waypoints), self._shot_spacing_m
         if self._uses_shared_planning():
             if self._plan_shared(silent=False) is None:
                 return None

@@ -9,7 +9,7 @@ changelog=3.0.0 - New Orbit (3D Model) mission type for 3D models: draw a circle
     set the radius and camera tilt. FlyPath plans one ring of waypoints that all face the centre.
     Full automatic takes a photo at every waypoint from the side overlap you set; semi automatic
     flies the ring for interval capture. Reverse route flips the direction. Field testing is in
-    progress, and orbit missions are not yet sent to flypath.io. Hidden panel rows no longer leave
+    progress. Orbit missions can be saved to and loaded from flypath.io. Hidden panel rows no longer leave
     uneven gaps in QGIS 3. The shared planning engine is updated to 1.2.0.
     2.8.0 - Fixes a crash where QGIS could close when the flight path was redrawn, for
     example after changing a setting or loading a mission. Adds the DJI Lito X1 (field testing in

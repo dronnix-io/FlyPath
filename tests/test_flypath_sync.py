@@ -308,6 +308,29 @@ def test_download_accepts_blank_legacy_source_without_changing_route():
         assert isinstance(result, FlypathSyncError)
 
 
+def test_orbit_geometry_and_settings_validation():
+    mission = {'polygon': [[51, -114]], 'settings': {
+        'mapping_style': 'orbit', 'orbit_radius': 30, 'orbit_tilt': -35,
+        'altitude': 25, 'flight_path': 'curved', 'split_enabled': False,
+        'terrain_follow': False}}
+    flypath_sync.validate_mission(mission)
+    for changed in (
+            {'polygon': [[51, -114], [51.1, -114.1]]},
+            {'settings': {**mission['settings'], 'orbit_radius': 4}},
+            {'settings': {**mission['settings'], 'orbit_tilt': 1}},
+            {'settings': {**mission['settings'], 'altitude': 501}},
+            {'settings': {**mission['settings'], 'flight_path': 'straight'}},
+            {'settings': {**mission['settings'], 'split_enabled': True}},
+            {'settings': {**mission['settings'], 'terrain_follow': True}},
+            {'settings': {**mission['settings'], 'cross_hatch': True}}):
+        try:
+            flypath_sync.validate_mission({**mission, **changed})
+        except FlypathSyncError:
+            pass
+        else:
+            raise AssertionError('Invalid orbit accepted: %s' % changed)
+
+
 if __name__ == '__main__':
     fns = [v for k, v in sorted(globals().items())
            if k.startswith('test_') and callable(v)]
