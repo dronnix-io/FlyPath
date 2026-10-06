@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 
+from qgis.PyQt.QtCore import QObject, pyqtSlot
 from qgis.PyQt.QtGui import QColor, QFont
 from qgis.core import (
     Qgis, QgsFeature, QgsGeometry, QgsLineSymbol, QgsMarkerSymbol,
@@ -20,6 +21,32 @@ _ORDER = ('waypoints', 'breaks', 'path', 'survey', 'corridor',
           'takeoff', 'contours')
 _preserved_ids = None
 _deferred_ids = None
+
+
+class _FlightSync(QObject):
+    """Receives path repaints and keeps each path's waypoints in step.
+
+    A lambda or partial connected to a layer signal is wrapped in a PyQt proxy
+    that lives only as long as the layer's Python wrapper. QGIS owns the preview
+    layers, so the garbage collector could free that wrapper and the proxy: the
+    next repaint then crashed QGIS, or silently stopped syncing. A slot on this
+    long-lived QObject is a plain Qt connection with no proxy to lose."""
+
+    def __init__(self):
+        super().__init__()
+        self.waypoints_of = {}      # path layer ID -> waypoints layer ID
+
+    @pyqtSlot()
+    def path_repainted(self):
+        path = self.sender()
+        if path is None:
+            return
+        waypoints_id = self.waypoints_of.get(path.id())
+        if waypoints_id is not None:
+            _sync_waypoint_flights(path, QgsProject.instance().mapLayer(waypoints_id))
+
+
+_flight_sync = _FlightSync()
 
 
 @contextmanager
@@ -54,15 +81,21 @@ def create(missions, heights=None, ground=None, project=None):
     waypoints = _waypoint_layer(missions, heights, ground)
     register(path, project, kind='path')
     register(waypoints, project, kind='waypoints')
-    waypoints_id = waypoints.id()
-    path.repaintRequested.connect(
-        lambda: _sync_waypoint_flights(path, project.mapLayer(waypoints_id)))
+    _forget_removed_paths(project)
+    _flight_sync.waypoints_of[path.id()] = waypoints.id()
+    path.repaintRequested.connect(_flight_sync.path_repainted)
     return [path.id(), waypoints.id()]
+
+
+def _forget_removed_paths(project):
+    """Drop path layers that are gone, also those removed by the user."""
+    for path_id in [key for key in _flight_sync.waypoints_of if project.mapLayer(key) is None]:
+        del _flight_sync.waypoints_of[path_id]
 
 
 def _sync_waypoint_flights(path, waypoints):
     """Follow the checked flight rules without changing waypoint categories."""
-    if waypoints is None:
+    if path is None or waypoints is None:
         return
     renderer = path.renderer()
     if not isinstance(renderer, QgsRuleBasedRenderer):
@@ -201,6 +234,7 @@ def remove(layer_ids, project=None):
             continue
         if project.mapLayer(layer_id):
             project.removeMapLayer(layer_id)
+        _flight_sync.waypoints_of.pop(layer_id, None)
     _remove_empty_group(project)
 
 
@@ -210,6 +244,7 @@ def remove_stale(project=None):
     for layer_id, layer in list(project.mapLayers().items()):
         if layer.customProperty('flypath_internal'):
             project.removeMapLayer(layer_id)
+            _flight_sync.waypoints_of.pop(layer_id, None)
     _remove_empty_group(project)
 
 

@@ -256,6 +256,46 @@ def test_flight_legend_controls_its_waypoints_and_survives_redraw():
         project.clear()
 
 
+def test_flight_sync_survives_garbage_collection():
+    # PyQt keeps a connected slot alive only through the sender's Python
+    # wrapper. A collection used to free the QGIS-owned path layer's wrapper and
+    # its slot, so the next repaint called freed memory and crashed QGIS.
+    try:
+        import gc
+        from qgis.PyQt.QtCore import Qt
+        from qgis.core import QgsApplication, QgsLayerTreeModel, QgsProject
+        module = importlib.import_module(
+            Path(__file__).resolve().parents[1].name + '.preview_layers')
+    except ImportError as exc:
+        raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
+    app = QgsApplication.instance() or QgsApplication([], False)
+    app.initQgis()
+    project = QgsProject.instance()
+    project.clear()
+    model = QgsLayerTreeModel(project.layerTreeRoot())
+    model.setFlag(getattr(QgsLayerTreeModel, 'Flag', QgsLayerTreeModel)
+                  .AllowLegendChangeState, True)
+    unchecked = getattr(Qt, 'CheckState', Qt).Unchecked
+    check_role = getattr(Qt, 'ItemDataRole', Qt).CheckStateRole
+    try:
+        # Like the plugin: default project, and no Python reference held to the
+        # project or the layers while the collector runs.
+        ids = module.create([[(13, 51), (14, 52)], [(15, 53), (16, 54)]])
+        del project
+        gc.collect()
+        project = QgsProject.instance()
+        project.mapLayer(ids[0]).triggerRepaint()
+        app.processEvents()
+        legend = model.layerLegendNodes(project.layerTreeRoot().findLayer(ids[0]))
+        assert model.setData(model.legendNode2index(legend[0]), unchecked, check_role)
+        points = project.mapLayer(ids[1])
+        assert [feature['mission'] for feature in points.getFeatures()] == [1, 1]
+        module.remove(ids, project)
+        assert ids[0] not in module._flight_sync.waypoints_of
+    finally:
+        project.clear()
+
+
 def test_shared_flight_endpoints_render_with_their_own_numbers():
     try:
         from qgis.PyQt.QtCore import QSize
