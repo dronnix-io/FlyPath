@@ -291,7 +291,7 @@ def test_flight_sync_survives_garbage_collection():
         points = project.mapLayer(ids[1])
         assert [feature['mission'] for feature in points.getFeatures()] == [1, 1]
         module.remove(ids, project)
-        assert ids[0] not in module._flight_slots
+        assert ids[0] not in module._flight_sync.waypoints_of
     finally:
         project.clear()
 

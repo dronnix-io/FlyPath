@@ -1,8 +1,8 @@
 """QGIS layers used to display a generated FlyPath route."""
 
 from contextlib import contextmanager
-from functools import partial
 
+from qgis.PyQt.QtCore import QObject, pyqtSlot
 from qgis.PyQt.QtGui import QColor, QFont
 from qgis.core import (
     Qgis, QgsFeature, QgsGeometry, QgsLineSymbol, QgsMarkerSymbol,
@@ -21,12 +21,32 @@ _ORDER = ('waypoints', 'breaks', 'path', 'survey', 'corridor',
           'takeoff', 'contours')
 _preserved_ids = None
 _deferred_ids = None
-# PyQt keeps a connected Python slot alive only through the sender's Python
-# wrapper. QGIS owns the preview layers, so the garbage collector may free that
-# wrapper, and the slot with it, while the connection is still live; the next
-# repaint then calls freed memory and QGIS crashes. The slots live here instead,
-# keyed by path layer ID, until the layer is removed.
-_flight_slots = {}
+
+
+class _FlightSync(QObject):
+    """Receives path repaints and keeps each path's waypoints in step.
+
+    A lambda or partial connected to a layer signal is wrapped in a PyQt proxy
+    that lives only as long as the layer's Python wrapper. QGIS owns the preview
+    layers, so the garbage collector could free that wrapper and the proxy: the
+    next repaint then crashed QGIS, or silently stopped syncing. A slot on this
+    long-lived QObject is a plain Qt connection with no proxy to lose."""
+
+    def __init__(self):
+        super().__init__()
+        self.waypoints_of = {}      # path layer ID -> waypoints layer ID
+
+    @pyqtSlot()
+    def path_repainted(self):
+        path = self.sender()
+        if path is None:
+            return
+        waypoints_id = self.waypoints_of.get(path.id())
+        if waypoints_id is not None:
+            _sync_waypoint_flights(path, QgsProject.instance().mapLayer(waypoints_id))
+
+
+_flight_sync = _FlightSync()
 
 
 @contextmanager
@@ -61,22 +81,16 @@ def create(missions, heights=None, ground=None, project=None):
     waypoints = _waypoint_layer(missions, heights, ground)
     register(path, project, kind='path')
     register(waypoints, project, kind='waypoints')
-    _forget_removed_slots(project)
-    slot = partial(_sync_flights_by_id, path.id(), waypoints.id())
-    _flight_slots[path.id()] = slot
-    path.repaintRequested.connect(slot)
+    _forget_removed_paths(project)
+    _flight_sync.waypoints_of[path.id()] = waypoints.id()
+    path.repaintRequested.connect(_flight_sync.path_repainted)
     return [path.id(), waypoints.id()]
 
 
-def _sync_flights_by_id(path_id, waypoints_id):
-    project = QgsProject.instance()
-    _sync_waypoint_flights(project.mapLayer(path_id), project.mapLayer(waypoints_id))
-
-
-def _forget_removed_slots(project):
-    """Drop the slots of path layers that are gone, also those removed by the user."""
-    for path_id in [key for key in _flight_slots if project.mapLayer(key) is None]:
-        del _flight_slots[path_id]
+def _forget_removed_paths(project):
+    """Drop path layers that are gone, also those removed by the user."""
+    for path_id in [key for key in _flight_sync.waypoints_of if project.mapLayer(key) is None]:
+        del _flight_sync.waypoints_of[path_id]
 
 
 def _sync_waypoint_flights(path, waypoints):
@@ -220,7 +234,7 @@ def remove(layer_ids, project=None):
             continue
         if project.mapLayer(layer_id):
             project.removeMapLayer(layer_id)
-        _flight_slots.pop(layer_id, None)
+        _flight_sync.waypoints_of.pop(layer_id, None)
     _remove_empty_group(project)
 
 
@@ -230,7 +244,7 @@ def remove_stale(project=None):
     for layer_id, layer in list(project.mapLayers().items()):
         if layer.customProperty('flypath_internal'):
             project.removeMapLayer(layer_id)
-            _flight_slots.pop(layer_id, None)
+            _flight_sync.waypoints_of.pop(layer_id, None)
     _remove_empty_group(project)
 
 
