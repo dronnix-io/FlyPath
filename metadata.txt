@@ -2,9 +2,16 @@
 name=FlyPath
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
-description=Generate DJI WPML KMZ mission files for 2D and corridor drone mapping directly from QGIS
-version=2.8.0
-changelog=2.8.0 - Fixes a crash where QGIS could close when the flight path was redrawn, for
+description=Generate DJI WPML KMZ mission files for 2D, corridor and orbit (3D model) drone missions directly from QGIS
+version=3.0.0
+changelog=3.0.0 - New Orbit (3D Model) mission type for 3D models: draw a circle around an object
+    on the map (click for the centre, or drag to set the radius), adjust it with resize handles, and
+    set the radius and camera tilt. FlyPath plans one ring of waypoints that all face the centre.
+    Full automatic takes a photo at every waypoint from the side overlap you set; semi automatic
+    flies the ring for interval capture. Reverse route flips the direction. Field testing is in
+    progress, and orbit missions are not yet sent to flypath.io. Hidden panel rows no longer leave
+    uneven gaps in QGIS 3. The shared planning engine is updated to 1.2.0.
+    2.8.0 - Fixes a crash where QGIS could close when the flight path was redrawn, for
     example after changing a setting or loading a mission. Adds the DJI Lito X1 (field testing in
     progress; flypath.io support follows). Loading missions from flypath.io is safer: if a load
     fails, your current mission stays as it was, a damaged saved route is refused, and missions
@@ -199,7 +206,8 @@ about=FlyPath is a QGIS plugin for planning autonomous drone mapping missions an
     Supported drones: DJI Mini 3 Pro, Mini 4 Pro, Mini 5 Pro (community-verified),
     plus Air 3, Air 3S, Mavic 3 Classic, Mavic 4 Pro and Lito X1 (field-test reports wanted).
     Plan a 2D grid over a survey polygon, or a corridor along a centre line for
-    linear features such as roads, pipelines and rivers. Draw your survey area on
+    linear features such as roads, pipelines and rivers, or an orbit that circles
+    an object with the camera tilted towards it for 3D models. Draw your survey area on
     the map, set flight altitude and overlap, preview the flight path, and export
     a ready-to-fly mission file. Choose semi-automatic capture (you set interval
     capture before takeoff) or full-automatic capture (a waypoint per photo with
