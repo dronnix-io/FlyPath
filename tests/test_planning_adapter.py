@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import zipfile
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -228,6 +229,22 @@ def test_orbit_provenance_verifies_result_and_settings():
     supported, flights = planning_adapter.validate_mission_provenance(mission)
     assert supported and len(flights) == 1 and flights[0]['headings']
     assert mission == saved
+    with patch.object(planning_adapter, 'SUPPORTED_ENGINE_VERSIONS',
+                      planning_adapter.SUPPORTED_ENGINE_VERSIONS + ('1.10.0',)):
+        for version in ('1.2.0', '1.10.0', '1.1.0', '9.0.0', '1.2.x'):
+            changed = deepcopy(saved)
+            changed['planning_result']['engine_version'] = version
+            if version in ('1.2.0', '1.10.0'):
+                supported, flights = planning_adapter.validate_mission_provenance(changed)
+                assert supported and flights[0]['headings']
+                assert changed['planning_result']['engine_version'] == version
+                changed['planning_result']['route']['waypoints'][3]['heading_deg'] += 1
+            try:
+                planning_adapter.validate_mission_provenance(changed)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('invalid Orbit provenance accepted')
     changes = [deepcopy(saved) for _ in range(3)]
     changes[0]['planning_result']['route']['waypoints'][3]['heading_deg'] += 1
     changes[1]['settings']['orbit_radius'] += 1
@@ -245,30 +262,26 @@ def test_orbit_provenance_verifies_result_and_settings():
 def test_orbit_results_follow_the_supported_engine_versions():
     planned = orbit_request()
     result = planning_adapter.plan(planned)
-    newer = dict(result, engine_version='1.3.0')
-    # A newer orbit-capable engine is readable without regeneration support...
-    assert planning_adapter.consume_result(planned, newer, require_supported=False)
-    # ...and becomes fully supported once the plugin lists it, like 2D.
-    try:
-        planning_adapter.consume_result(planned, newer)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError('unlisted engine versions must not be regenerated')
-    original = planning_adapter.SUPPORTED_ENGINE_VERSIONS
-    planning_adapter.SUPPORTED_ENGINE_VERSIONS = original + ('1.3.0',)
-    try:
-        assert planning_adapter.consume_result(planned, newer)
-    finally:
-        planning_adapter.SUPPORTED_ENGINE_VERSIONS = original
-    # Engines older than 1.2.0 cannot have planned an orbit.
-    try:
-        planning_adapter.consume_result(planned, dict(result, engine_version='1.1.0'),
-                                        require_supported=False)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError('orbit results from engines before 1.2.0 must be refused')
+    malformed = ('1.2', '1.2.0.1', '1.2.x', '1.2.0-rc1', '+1.2.0', ' 1.2.0', '')
+    supported = planning_adapter.SUPPORTED_ENGINE_VERSIONS + ('1.10.0',) + malformed
+    with patch.object(planning_adapter, 'SUPPORTED_ENGINE_VERSIONS', supported):
+        for version in ('1.2.0', '1.10.0', '1.1.0', '9.0.0', None, 120) + malformed:
+            saved = dict(result, engine_version=version)
+            for require_supported in (True, False):
+                if version in ('1.2.0', '1.10.0'):
+                    flights = planning_adapter.consume_result(
+                        planned, saved, require_supported=require_supported)
+                    assert flights[0]['headings'] == [
+                        row['heading_deg'] for row in result['route']['waypoints']]
+                else:
+                    try:
+                        planning_adapter.consume_result(
+                            planned, saved, require_supported=require_supported)
+                    except ValueError:
+                        pass
+                    else:
+                        raise AssertionError('invalid Orbit version accepted: %r' % (version,))
+
 
 if __name__ == '__main__':
     tests = [value for name, value in sorted(globals().items())
