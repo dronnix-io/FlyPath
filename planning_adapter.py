@@ -5,12 +5,13 @@ import math
 from .flypath_engine.planning import (
     CONTRACT_VERSION, DIRECTION_CONVENTION, PlanningError as _PlanningError, plan_2d,
 )
+from .flypath_engine.orbit import plan_orbit
 from .flypath_engine.profiles import PROFILE_VERSION
 
 
 PlanningError = _PlanningError
 # These releases have identical planning behavior; revisit on engine upgrades.
-SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0')
+SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0')
 
 
 FINISH_ACTIONS = {
@@ -66,8 +67,39 @@ def build_request(*, survey_area, drone_profile_id, altitude_m, speed_m_s,
     return request
 
 
+def build_orbit_request(*, centre, drone_profile_id, radius_m, altitude_m,
+                        gimbal_pitch_deg, clockwise, speed_m_s, capture_mode,
+                        side_overlap_ratio, finish_action, max_waypoints_per_flight):
+    """Translate the orbit controls into one engine request.
+
+    `centre` is (lon, lat) in WGS84. Full auto sets the photo spacing from the
+    side overlap; semi auto follows speed and the photo interval instead."""
+    capture = {'mode': 'full_auto' if capture_mode == 'full' else 'semi_auto'}
+    if capture['mode'] == 'full_auto':
+        capture['side_overlap_ratio'] = side_overlap_ratio
+    return {
+        'contract_version': CONTRACT_VERSION,
+        'operation': 'plan_orbit',
+        'mapping_style': 'orbit',
+        'drone_profile_id': drone_profile_id,
+        'profile_version': PROFILE_VERSION,
+        'centre': {'latitude_deg': centre[1], 'longitude_deg': centre[0]},
+        'radius_m': radius_m,
+        'altitude_m': altitude_m,
+        'gimbal_pitch_deg': gimbal_pitch_deg,
+        'direction': 'clockwise' if clockwise else 'counterclockwise',
+        'speed_m_s': speed_m_s,
+        'capture': capture,
+        'finish_action': FINISH_ACTIONS[finish_action],
+        'split': {'enabled': False, 'max_waypoints_per_flight': max_waypoints_per_flight},
+        'terrain_follow': False,
+    }
+
+
 def plan(request):
     """Run the bundled engine; consumers validate the returned result once."""
+    if request.get('operation') == 'plan_orbit':
+        return plan_orbit(request)
     return plan_2d(request)
 
 
@@ -132,6 +164,13 @@ def consume_result(request, result, *, require_supported=True,
                 abs(a - b) > 1e-9 for pair, saved in zip(points, expected)
                 for a, b in zip(pair, saved)):
             raise ValueError('The saved route does not match the planning result.')
+    # Orbit routes carry a heading per waypoint (facing the centre); 2D does not.
+    raw_headings = [row.get('heading_deg') for row in rows]
+    headings = None
+    if any(value is not None for value in raw_headings):
+        if any(not _finite(value) or not -180 <= value <= 180 for value in raw_headings):
+            raise ValueError('The saved route headings are invalid.')
+        headings = [float(value) for value in raw_headings]
     flights = result.get('flights')
     if not isinstance(flights, list) or not flights:
         raise ValueError('The saved planning result has no flights.')
@@ -164,6 +203,7 @@ def consume_result(request, result, *, require_supported=True,
             'waypoints': points[start:end + 1],
             'actions': [{**action, 'waypoint_index': action['waypoint_index'] - start}
                         for action in actions],
+            'headings': headings[start:end + 1] if headings else None,
             'flight': flight,
         })
         previous_end = end

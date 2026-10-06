@@ -24,6 +24,9 @@ class ExportSettings:
     capture_mode: str
     curved_path: bool
     launch_offset_m: float = 0.0
+    # Per-waypoint headings for single-flight missions that face a point
+    # (orbit). Orbits are never split, so one list covers the whole mission.
+    headings: tuple = None
 
 
 def write_kmz(filepath, settings, waypoints, mission_name, *,
@@ -49,6 +52,7 @@ def write_kmz(filepath, settings, waypoints, mission_name, *,
                  if heights is not None else None),
         curved_path=settings.curved_path,
         actions=actions,
+        headings=list(settings.headings) if settings.headings is not None else None,
     )
     write_mission(settings.drone, spec, filepath)
 

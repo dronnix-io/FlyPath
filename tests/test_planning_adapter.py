@@ -116,7 +116,7 @@ def test_older_result_keeps_view_only_provenance():
     else:
         raise AssertionError('older engine results must remain view-only')
 
-    for version in ('0.4.0', '1.0.0', '1.1.0'):
+    for version in ('0.4.0', '1.0.0', '1.1.0', '1.2.0'):
         result['engine_version'] = version
         saved = deepcopy(mission)
         supported, _ = planning_adapter.validate_mission_provenance(mission)
@@ -148,6 +148,67 @@ def test_engine_actions_are_written_to_wpml():
     assert wpml.count('<wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>') \
         == flight['flight']['photo_count']
     assert '<wpml:hoverTime>3.0</wpml:hoverTime>' in wpml
+
+
+def orbit_request(**overrides):
+    values = dict(
+        centre=(-114.0, 51.0), drone_profile_id='mini4pro', radius_m=30,
+        altitude_m=25, gimbal_pitch_deg=-35, clockwise=True, speed_m_s=3,
+        capture_mode='full', side_overlap_ratio=.9, finish_action='Return to Home',
+        max_waypoints_per_flight=200)
+    values.update(overrides)
+    return planning_adapter.build_orbit_request(**values)
+
+
+def test_orbit_request_routes_to_the_orbit_engine():
+    planned = orbit_request()
+    assert planned['operation'] == 'plan_orbit' and planned['mapping_style'] == 'orbit'
+    assert planned['centre'] == {'latitude_deg': 51.0, 'longitude_deg': -114.0}
+    assert planned['capture'] == {'mode': 'full_auto', 'side_overlap_ratio': .9}
+    semi = orbit_request(capture_mode='semi', clockwise=False)
+    assert semi['capture'] == {'mode': 'semi_auto'}
+    assert semi['direction'] == 'counterclockwise'
+    result = planning_adapter.plan(planned)
+    assert result['mapping_style'] == 'orbit'
+
+
+def test_orbit_headings_reach_the_flight_and_the_wpml():
+    planned = orbit_request()
+    result = planning_adapter.plan(planned)
+    flight = planning_adapter.consume_result(planned, result)[0]
+    assert len(flight['headings']) == len(flight['waypoints'])
+    assert flight['headings'] == [row['heading_deg'] for row in result['route']['waypoints']]
+    spec = MissionSpec(
+        waypoints=flight['waypoints'], altitude_m=25, speed_ms=3,
+        finish_action='Return to Home', rc_lost_action='Return to Home',
+        gimbal_pitch=-35, capture_mode='full', actions=flight['actions'],
+        headings=flight['headings'])
+    path = str(Path(tempfile.mkdtemp()) / 'orbit.kmz')
+    write_mission(registry.get('DJI Mini 4 Pro'), spec, path)
+    with zipfile.ZipFile(path) as archive:
+        wpml = archive.read('wpmz/waylines.wpml').decode('utf-8')
+    waypoints = len(flight['waypoints'])
+    assert wpml.count('<wpml:waypointHeadingMode>smoothTransition</wpml:waypointHeadingMode>') == waypoints
+    assert wpml.count('<wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>') == waypoints
+    assert '<wpml:gimbalPitchRotateAngle>-35.0</wpml:gimbalPitchRotateAngle>' in wpml
+
+
+def test_2d_flights_have_no_headings():
+    planned_request = request()
+    flight = planning_adapter.consume_result(planned_request, planning_adapter.plan(planned_request))[0]
+    assert flight['headings'] is None
+
+
+def test_forged_orbit_headings_are_rejected():
+    planned = orbit_request()
+    result = planning_adapter.plan(planned)
+    result['route']['waypoints'][3]['heading_deg'] = 400
+    try:
+        planning_adapter.consume_result(planned, result)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('out of range headings must be rejected')
 
 
 if __name__ == '__main__':
