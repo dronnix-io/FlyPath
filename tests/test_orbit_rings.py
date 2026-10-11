@@ -132,3 +132,98 @@ def test_orbit_rings_plan_export_and_reset():
         planner.close()
         canvas.close()
         app.processEvents()
+
+
+def test_orbits_split_into_flights_and_export_one_kmz_each():
+    try:
+        import tempfile
+        import zipfile
+        from qgis.core import QgsApplication
+        from qgis.gui import QgsMapCanvas
+        package = Path(__file__).resolve().parents[1].name
+        dialog = importlib.import_module(package + '.flypath_dialog')
+        sync_controller = importlib.import_module(package + '.website_sync_controller')
+    except ImportError as exc:
+        raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
+    app = QgsApplication.instance() or QgsApplication([], False)
+    app.initQgis()
+    canvas = QgsMapCanvas()
+    planner = dialog.FlyPathDialog(SimpleNamespace(mapCanvas=lambda: canvas))
+    try:
+        planner.show()
+        app.processEvents()
+        planner.droneModelCombo.setCurrentText('DJI Mini 4 Pro')
+        planner.maxWaypointsSpin.setValue(70)
+        planner.missionTypeCombo.setCurrentText('Orbit (3D Model)')
+        # Orbits get their own waypoint limit, with splitting on as in mapping.
+        assert planner.maxWaypointsSpin.value() == 200
+        assert planner.splitCheck.isVisibleTo(planner) and planner.splitCheck.isChecked()
+        planner.captureFullRadio.setChecked(True)
+        planner.orbitRadiusSpin.setValue(30)
+        planner.altitudeSpin.setValue(25)
+        planner.orbitTiltSpin.setValue(-20)
+        planner.set_orbit_centre(-114, 51)
+        planner._on_preview()
+        # One ring that fits one flight keeps the request flypath.io verifies.
+        assert planner._planning.request['split'] == {
+            'enabled': False, 'max_waypoints_per_flight': 200}
+        planner.addRingBtn.click()
+        planner.addRingBtn.click()
+        planner.maxWaypointsSpin.setValue(60)
+        planner._on_preview()
+        result = planner._planning.result
+        assert planner._planning.request['split']['enabled'] is True
+        assert result['validation']['export_allowed'], result['validation']
+        flights = result['flights']
+        assert len(flights) > 1 and all(f['waypoint_count'] <= 60 for f in flights)
+        assert planner.batteriesLabel.text() == str(len(flights))
+        assert len(planner._missions) == len(flights)
+        assert planner.splitPartCombo.count() == len(flights)
+
+        # Each flight is its own KMZ, with its own headings, heights and tilts.
+        folder = tempfile.mkdtemp()
+        planner.destCombo.setCurrentIndex(planner.destCombo.findData('local'))
+        planner.localFolderEdit.setText(folder)
+        path = str(Path(folder) / 'orbit.kmz')
+        with patch.object(dialog.QFileDialog, 'getSaveFileName', return_value=(path, '')), \
+                patch.object(dialog.QMessageBox, 'information', return_value=dialog._MB_NO), \
+                patch.object(dialog.QMessageBox, 'warning') as warning, \
+                patch.object(dialog.QMessageBox, 'critical') as critical:
+            planner._on_export()
+        assert not warning.called and not critical.called
+        files = sorted(Path(folder).glob('*.kmz'))
+        assert len(files) == len(flights)
+        rows = result['route']['waypoints']
+        tilts = [ring['gimbal_pitch_deg'] for ring in result['orbit']['rings']]
+        for kmz, flight in zip(files, flights):
+            with zipfile.ZipFile(kmz) as archive:
+                wpml = archive.read('wpmz/waylines.wpml').decode('utf-8')
+            part = rows[flight['route_start_waypoint_index']:flight['route_end_waypoint_index'] + 1]
+            heights = [float(text.split('<')[0]) for text in wpml.split('<wpml:executeHeight>')[1:]]
+            headings = [float(text.split('<')[0]) for text in wpml.split('<wpml:waypointHeadingAngle>')[1:]]
+            assert heights == [row['altitude_m'] for row in part]
+            assert len(headings) == len(part)
+            assert all(abs(written - row['heading_deg']) <= .05 + 1e-9
+                       for written, row in zip(headings, part))
+            first_tilt = tilts[part[0]['ring_index']]
+            assert '<wpml:gimbalPitchRotateAngle>%s</wpml:gimbalPitchRotateAngle>' % float(first_tilt) in wpml
+
+        # flypath.io does not store split orbits yet.
+        with patch.object(sync_controller.QMessageBox, 'information') as information:
+            assert planner._on_send_to_website() is False
+        assert information.call_args.args[1] == 'Coming Soon'
+
+        # Turning splitting off asks for it, with the numbers.
+        planner.splitCheck.setChecked(False)
+        planner._on_preview()
+        errors = planner._planning.result['validation']['errors']
+        assert errors[0]['code'] == 'splitting_required_waypoint_limit'
+        assert 'more than the limit of 60' in errors[0]['message']
+
+        # Leaving orbits brings back the mapping waypoint limit.
+        planner.missionTypeCombo.setCurrentText('2D Mapping')
+        assert planner.maxWaypointsSpin.value() == 70
+    finally:
+        planner.close()
+        canvas.close()
+        app.processEvents()

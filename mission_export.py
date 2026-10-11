@@ -24,8 +24,8 @@ class ExportSettings:
     capture_mode: str
     curved_path: bool
     launch_offset_m: float = 0.0
-    # Per-waypoint headings for single-flight missions that face a point
-    # (orbit). Orbits are never split, so one list covers the whole mission.
+    # Per-waypoint headings for missions that face a point (orbit). They cover
+    # one flight, so a split orbit uses one settings object per flight.
     headings: tuple = None
     # Multi-ring orbits: each waypoint's altitude and camera pitch, from the
     # engine result. None keeps one altitude and pitch for the whole mission.
@@ -65,8 +65,12 @@ def write_kmz(filepath, settings, waypoints, mission_name, *,
     write_mission(settings.drone, spec, filepath)
 
 
-def write_local(filepath, mission_name, missions, settings, actions=None):
-    """Write one KMZ per mission and return the concrete output targets."""
+def write_local(filepath, mission_name, missions, settings, actions=None,
+                flight_settings=None):
+    """Write one KMZ per mission and return the concrete output targets.
+
+    `flight_settings` gives each mission its own settings, for flights that
+    carry their own headings, heights and camera tilts (split orbits)."""
     count = len(missions)
     base, extension = os.path.splitext(filepath)
     extension = extension or '.kmz'
@@ -79,8 +83,8 @@ def write_local(filepath, mission_name, missions, settings, actions=None):
             path = f'{base}_{str(index).zfill(width)}_of_{count}{extension}'
             name = f'{mission_name} {index} of {count}'
         flight_actions = actions[index - 1] if actions else None
-        write_kmz(path, settings, waypoints, name, heights=heights,
-                  actions=flight_actions)
+        write_kmz(path, flight_settings[index - 1] if flight_settings else settings,
+                  waypoints, name, heights=heights, actions=flight_actions)
         targets.append((path, waypoints, name, heights, flight_actions))
     return targets
 

@@ -1,4 +1,4 @@
-"""Orbit (3D model) missions: draw a circle, fly one ring facing its centre.
+"""Orbit (3D model) missions: draw a circle, fly up to 3 rings facing its centre.
 
 A mixin for FlyPathDialog, in the same style as SurveyLifecycleMixin. It owns
 the orbit controls, the circle draw and edit tool, the circle layers and the
@@ -33,6 +33,10 @@ except ImportError:  # standalone tests import modules as top-level packages
 
 ORBIT_LABEL = 'Orbit (3D Model)'
 DEFAULT_ORBIT_OVERLAP = 90      # % between neighbouring photos around the ring
+DEFAULT_ORBIT_MAX_WAYPOINTS = 200   # dense rings need more than the mapping default
+# Engine checks that a split would fix: the orbit is then planned split.
+_SPLIT_FIXES = {'waypoint_limit_exceeded', 'battery_time_exceeded',
+                'splitting_required_waypoint_limit', 'splitting_required_battery_limit'}
 MAX_ORBIT_RINGS = 3             # the engine's limit for one orbit mission
 RING_LIMIT_TEXT = 'Ring 3 is the last one: an orbit mission can have up to 3 rings.'
 NEW_RING_CLIMB_M = 15.0         # a new ring starts this much above the last one
@@ -257,6 +261,7 @@ class OrbitMixin:
         self._orbit_tool = None
         self._orbit_prev_tool = None
         self._orbit_saved_overlap = None    # mapping side overlap, restored on leaving
+        self._orbit_saved_max_waypoints = None  # mapping waypoint limit, restored on leaving
         self._mapping_reverse_tip = None    # Reverse route tooltip outside orbits
 
     # ── Building the controls ─────────────────────────────────────────────
@@ -400,10 +405,9 @@ class OrbitMixin:
         for widget in (self._pathInlineLabel, self.pathCurvedRadio, self.pathStraightRadio):
             widget.setVisible(not orbit)
 
-        # One flight: no splitting or terrain follow.
+        # Orbits split into flights like mapping, but have no terrain follow.
         drone = self.droneModelCombo.currentText()
-        splitting = (not orbit and registry.has(drone)
-                     and registry.get(drone).category == 'consumer')
+        splitting = registry.has(drone) and registry.get(drone).category == 'consumer'
         self._set_row_visible(self._organizer_form, self.splitCheck, splitting)
         self._set_row_visible(self._organizer_form, self.splitSpin, splitting)
         self.terrainFollowCheck.setVisible(not orbit)
@@ -432,7 +436,12 @@ class OrbitMixin:
         """Change values when the mission kind switches into or out of orbit."""
         if orbit:
             self.pathCurvedRadio.setChecked(True)   # DJI Fly keeps curved paths on re-save
-            self.splitCheck.setChecked(False)
+            # Splitting is on, as in mapping; an orbit that fits one flight
+            # still flies as one.
+            self._setting_split = True
+            self.splitCheck.setChecked(True)
+            self._setting_split = False
+            self._split_overridden = False
             self.terrainFollowCheck.setChecked(False)
             for button in (self.showTakeoffZoneBtn, self.showContoursBtn):
                 if button.isCheckable() and button.isChecked():
@@ -448,6 +457,14 @@ class OrbitMixin:
             self.sideOverlapSpin.setValue(self._orbit_saved_overlap)
             self._orbit_saved_overlap = None
         self.sideOverlapSpin.blockSignals(blocked)
+        blocked = self.maxWaypointsSpin.blockSignals(True)
+        if orbit and self._orbit_saved_max_waypoints is None:
+            self._orbit_saved_max_waypoints = self.maxWaypointsSpin.value()
+            self.maxWaypointsSpin.setValue(DEFAULT_ORBIT_MAX_WAYPOINTS)
+        elif not orbit and self._orbit_saved_max_waypoints is not None:
+            self.maxWaypointsSpin.setValue(self._orbit_saved_max_waypoints)
+            self._orbit_saved_max_waypoints = None
+        self.maxWaypointsSpin.blockSignals(blocked)
         if not orbit:
             self._clear_orbit_centre()
 
@@ -813,7 +830,7 @@ class OrbitMixin:
         if drone.category != 'consumer' or not drone.website_code:
             raise ValueError('Orbit missions need a DJI Fly drone; %s is not supported.'
                              % drone.name)
-        return planning_adapter.build_orbit_request(
+        values = dict(
             centre=self._orbit_centre,
             drone_profile_id=drone.website_code,
             rings=self._orbit_rings_from_ui(),
@@ -824,3 +841,19 @@ class OrbitMixin:
             finish_action=self.finishActionCombo.currentText(),
             max_waypoints_per_flight=self.maxWaypointsSpin.value(),
         )
+        request = planning_adapter.build_orbit_request(**values)
+        if not self.splitCheck.isChecked():
+            return request
+        # Split only when the orbit needs it, or the pilot asked for more
+        # flights: an orbit that fits one flight keeps the unsplit request,
+        # so a one-ring orbit stays the one flypath.io verifies.
+        requested = self.splitSpin.value() if self._split_overridden else 1
+        if requested == 1:
+            try:
+                errors = planning_adapter.plan(request)['validation']['errors']
+            except planning_adapter.PlanningError:
+                return request
+            if not any(error['code'] in _SPLIT_FIXES for error in errors):
+                return request
+        return planning_adapter.build_orbit_request(
+            **values, split_enabled=True, requested_flights=requested)

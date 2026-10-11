@@ -2241,10 +2241,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             return
         consumer = registry.get(drone).category == 'consumer'
 
-        # Splitting controls: consumer only (and never for a one-ring orbit).
-        splitting = consumer and self._mission_kind() != 'orbit'
-        self._set_row_visible(self._organizer_form, self.splitCheck, splitting)
-        self._set_row_visible(self._organizer_form, self.splitSpin, splitting)
+        # Splitting controls: consumer only.
+        self._set_row_visible(self._organizer_form, self.splitCheck, consumer)
+        self._set_row_visible(self._organizer_form, self.splitSpin, consumer)
         if not consumer:
             self.splitCheck.setChecked(False)
             self._setting_split = True
@@ -3033,6 +3032,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._show_hud()
         if incomplete:
             self._set_info('Launch/home travel is not included in these totals.')
+        if orbit:
+            # Split Missions follows the flights the orbit needs until the
+            # pilot sets a number.
+            self._apply_split_default(max(1, len(route) - 1), stats['battery_count'])
         self._refresh_split_part_combo()
         if self.autoDirectionBtn.isChecked() and 'resolved_direction' in result:
             blocked = self.directionSpin.blockSignals(True)
@@ -3834,20 +3837,31 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         except OSError:
             pass
 
-    def _export_settings(self):
-        """Snapshot export inputs from widgets before any destination work."""
+    def _export_settings(self, flight=None):
+        """Snapshot export inputs from widgets before any destination work.
+
+        For an orbit, `flight` is one consumed engine flight: its headings,
+        heights and camera tilts go with it. Without it, the whole route's."""
         orbit = self._mission_kind() == 'orbit'
-        rows = (self._planning.result['route']['waypoints']
-                if orbit and self._planning.result else None)
-        # Multi-ring orbits fly each ring at its own altitude and camera tilt.
-        rings = (self._planning.result.get('orbit') or {}).get('rings') if rows else None
+        headings = heights = pitches = None
+        if orbit and flight is not None:
+            headings, heights, pitches = (
+                flight['headings'], flight['heights'], flight['gimbal_pitches'])
+        elif orbit and self._planning.result:
+            rows = self._planning.result['route']['waypoints']
+            headings = [row['heading_deg'] for row in rows]
+            # Multi-ring orbits fly each ring at its own altitude and camera tilt.
+            rings = (self._planning.result.get('orbit') or {}).get('rings')
+            if rings:
+                heights = [row['altitude_m'] for row in rows]
+                pitches = [rings[row['ring_index']]['gimbal_pitch_deg'] for row in rows]
         return mission_export.ExportSettings(
             drone=registry.get(self.droneModelCombo.currentText()),
-            altitude_m=rings[0]['altitude_m'] if rings else self.altitudeSpin.value(),
+            altitude_m=heights[0] if heights else self.altitudeSpin.value(),
             speed_ms=self.speedSpin.value(),
             finish_action=self.finishActionCombo.currentText(),
             rc_lost_action=self.rcLostActionCombo.currentText(),
-            gimbal_pitch=(rings[0]['gimbal_pitch_deg'] if rings else
+            gimbal_pitch=(pitches[0] if pitches else
                           self.orbitTiltSpin.value() if orbit
                           else self.gimbalAngleSpin.value()),
             polygon=(None if orbit else survey_geometry.polygon_vertices(
@@ -3860,10 +3874,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             curved_path=self._path_curved(),
             # The launch offset lives in the Takeoff Zone group, hidden for orbits.
             launch_offset_m=0.0 if orbit else self.launchOffsetSpin.value(),
-            headings=tuple(row['heading_deg'] for row in rows) if rows else None,
-            heights=tuple(row['altitude_m'] for row in rows) if rings else None,
-            gimbal_pitches=(tuple(rings[row['ring_index']]['gimbal_pitch_deg'] for row in rows)
-                            if rings else None),
+            headings=tuple(headings) if headings else None,
+            heights=tuple(heights) if heights else None,
+            gimbal_pitches=tuple(pitches) if pitches else None,
         )
 
     def _missions_with_heights(self, waypoints, elevations):
@@ -3939,6 +3952,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             return
         mission = 'FlyPath Mission'
         flight_actions = []
+        flight_settings = None
 
         # ── Resolve waypoints first (needed for both destinations) ────────
         if self._waypoints and self._shot_spacing_m:
@@ -3996,6 +4010,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                 legacy_waypoints=[[lat, lon] for lon, lat in self._waypoints])
             missions_h = [(flight['waypoints'], None, None) for flight in consumed]
             flight_actions = [flight['actions'] for flight in consumed]
+            if self._mission_kind() == 'orbit':
+                # Each orbit flight has its own headings, heights and tilts.
+                flight_settings = [self._export_settings(flight) for flight in consumed]
         else:
             missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
 
@@ -4015,13 +4032,15 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                 part_wps, part_heights, _ = missions_h[part]
                 part_name = f'{mission} {part + 1} of {len(missions_h)}'
                 self._export_rc(part_name, part_wps, shot_spacing_m, part_heights,
-                                flight_actions[part] if flight_actions else None)
+                                flight_actions[part] if flight_actions else None,
+                                flight_settings[part] if flight_settings else None)
             else:
                 part_wps, part_heights, _ = missions_h[0]
                 self._export_rc(mission, part_wps, shot_spacing_m, part_heights,
-                                flight_actions[0] if flight_actions else None)
+                                flight_actions[0] if flight_actions else None,
+                                flight_settings[0] if flight_settings else None)
         else:
-            self._export_local(mission, missions_h, flight_actions)
+            self._export_local(mission, missions_h, flight_actions, flight_settings)
 
     def _export_local_enterprise(self, mission, waypoints):
         """Save a single enterprise (DJI Pilot 2) mapping2d KMZ from the survey
@@ -4069,10 +4088,11 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         if reply == _MB_YES:
             self._open_in_explorer(filepath)
 
-    def _export_local(self, mission, missions, actions=None):
+    def _export_local(self, mission, missions, actions=None, flight_settings=None):
         """Save the mission (or each split mission) as a .kmz in the folder.
         `missions` is a list of (waypoints, heights, ground) from
-        _missions_with_heights; only the flight heights are written."""
+        _missions_with_heights; only the flight heights are written.
+        `flight_settings` gives each mission its own export settings."""
         folder = self.localFolderEdit.text().strip() or os.path.expanduser('~')
         if not os.path.isdir(folder):
             reply = QMessageBox.question(
@@ -4099,7 +4119,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         n = len(missions)
         try:
             targets = mission_export.write_local(
-                filepath, mission, missions, self._export_settings(), actions)
+                filepath, mission, missions, self._export_settings(), actions,
+                flight_settings=flight_settings)
         except Exception as exc:
             QMessageBox.critical(self, 'Export Failed', str(exc))
             return
@@ -4128,7 +4149,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self._open_in_explorer(written[0])
 
     def _export_rc(self, mission, waypoints, shot_spacing_m, heights=None,
-                   actions=None):
+                   actions=None, settings=None):
         """Replace the selected mission on the connected RC."""
         target = self.rcMissionCombo.currentData()
         if not target or not self._rc_waypoint_path:
@@ -4157,7 +4178,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         try:
             try:
                 ok, detail = mission_export.replace_controller(
-                    self._rc_waypoint_path, target['uuid'], self._export_settings(),
+                    self._rc_waypoint_path, target['uuid'],
+                    settings or self._export_settings(),
                     waypoints, mission, create_time_ms=create_ms, heights=heights,
                     actions=actions, mtp_copy=self._copy_kmz_to_mtp)
             except Exception as exc:

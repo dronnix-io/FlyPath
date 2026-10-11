@@ -225,6 +225,34 @@ def test_multi_ring_flights_carry_each_ring_altitude_and_tilt():
         assert [row['ring_index'] for row in rows] == sorted(row['ring_index'] for row in rows)
 
 
+def test_split_orbit_flights_start_at_their_ring_or_share_a_seam():
+    planned = ring_request(split_enabled=True, requested_flights=3)
+    assert planned['split'] == {'enabled': True, 'requested_flights': 3,
+                                'max_waypoints_per_flight': 200}
+    assert orbit_request()['split'] == {'enabled': False, 'max_waypoints_per_flight': 200}
+    result = planning_adapter.plan(planned)
+    flights = planning_adapter.consume_result(planned, result)
+    assert len(flights) == 3
+    for flight, (_radius, altitude, tilt) in zip(flights, RINGS):
+        assert flight['heights'] == [altitude] * len(flight['waypoints'])
+        assert flight['gimbal_pitches'] == [tilt] * len(flight['waypoints'])
+        assert len(flight['headings']) == len(flight['waypoints'])
+    # A gap that is not a ring boundary is refused.
+    broken = deepcopy(result)
+    broken['flights'][1]['route_start_waypoint_index'] += 1
+    try:
+        planning_adapter.consume_result(planned, broken)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('a gap inside a ring was accepted')
+    # One ring larger than the limit is cut into parts that share their seams.
+    cut = orbit_request(split_enabled=True, max_waypoints_per_flight=10)
+    parts = planning_adapter.consume_result(cut, planning_adapter.plan(cut))
+    assert len(parts) > 1 and all(len(part['waypoints']) <= 10 for part in parts)
+    assert all(part['gimbal_pitches'] == [-35] * len(part['waypoints']) for part in parts)
+
+
 def test_forged_ring_altitudes_are_rejected():
     planned = ring_request()
     for altitude in (0, -5, 501, float('nan'), None):

@@ -79,14 +79,16 @@ def build_request(*, survey_area, drone_profile_id, altitude_m, speed_m_s,
 
 def build_orbit_request(*, centre, drone_profile_id, clockwise, speed_m_s, capture_mode,
                         side_overlap_ratio, finish_action, max_waypoints_per_flight,
-                        radius_m=None, altitude_m=None, gimbal_pitch_deg=None, rings=None):
+                        radius_m=None, altitude_m=None, gimbal_pitch_deg=None, rings=None,
+                        split_enabled=False, requested_flights=1):
     """Translate the orbit controls into one engine request.
 
     `centre` is (lon, lat) in WGS84. Give one ring as radius, altitude and pitch,
     or `rings` as (radius_m, altitude_m, gimbal_pitch_deg) tuples flown in order.
     A single ring always uses the single-ring request, so its result stays the
     one flypath.io and earlier plugins verify. Full auto sets the photo spacing
-    from the side overlap; semi auto follows speed and the photo interval."""
+    from the side overlap; semi auto follows speed and the photo interval.
+    Splitting divides the rings into flights (engine 1.3.0 and newer)."""
     capture = {'mode': 'full_auto' if capture_mode == 'full' else 'semi_auto'}
     if capture['mode'] == 'full_auto':
         capture['side_overlap_ratio'] = side_overlap_ratio
@@ -108,7 +110,9 @@ def build_orbit_request(*, centre, drone_profile_id, clockwise, speed_m_s, captu
         'speed_m_s': speed_m_s,
         'capture': capture,
         'finish_action': FINISH_ACTIONS[finish_action],
-        'split': {'enabled': False, 'max_waypoints_per_flight': max_waypoints_per_flight},
+        'split': ({'enabled': True, 'requested_flights': requested_flights,
+                   'max_waypoints_per_flight': max_waypoints_per_flight} if split_enabled else
+                  {'enabled': False, 'max_waypoints_per_flight': max_waypoints_per_flight}),
         'terrain_follow': False,
     }
 
@@ -202,6 +206,9 @@ def consume_result(request, result, *, require_supported=True,
     flights = result.get('flights')
     if not isinstance(flights, list) or not flights:
         raise ValueError('The saved planning result has no flights.')
+    # Adjacent flights share their seam waypoint, except orbit flights that
+    # split between rings: the next one starts at its ring's first waypoint.
+    orbit = request.get('operation') == 'plan_orbit'
     consumed = []
     previous_end = None
     for index, flight in enumerate(flights):
@@ -210,7 +217,9 @@ def consume_result(request, result, *, require_supported=True,
         start = flight.get('route_start_waypoint_index')
         end = flight.get('route_end_waypoint_index')
         if (type(start) is not int or type(end) is not int or not 0 <= start <= end < len(points)
-                or (previous_end is not None and start != previous_end)):
+                or (previous_end is not None and start != previous_end
+                    and not (orbit and start == previous_end + 1
+                             and 'ring_start' in (rows[start].get('roles') or ())))):
             raise ValueError('The saved flight boundaries are invalid.')
         actions = flight.get('actions')
         if not isinstance(actions, list) or any(

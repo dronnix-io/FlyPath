@@ -207,11 +207,14 @@ class WebsiteSyncLifecycleMixin:
                 'Preview to regenerate it before saving to FlyPath.')
             return False
         """Save the linked mission, or explicitly create and link a new one."""
-        if self._mission_kind() == 'orbit' and len(self._orbit_rings) > 1:
+        if self._mission_kind() == 'orbit' and (
+                len(self._orbit_rings) > 1
+                or (self._planning.request or {}).get('split', {}).get('enabled')):
             QMessageBox.information(
                 self, 'Coming Soon',
-                'Saving orbits with more than one ring to FlyPath is coming soon. '
-                'You can export this mission to a KMZ file or your controller now.')
+                'Saving orbits with more than one ring or flight to FlyPath is '
+                'coming soon. You can export this mission to KMZ files or your '
+                'controller now.')
             return False
         if not (self._preview_layer_ids and self._missions):
             QMessageBox.information(self, 'Preview First', 'Preview the mission on the map before saving it to FlyPath.')
@@ -859,7 +862,9 @@ class WebsiteSyncLifecycleMixin:
         split_enabled = settings.get('split_enabled')
         self._setting_split = True
         if orbit:
-            self.splitCheck.setChecked(False)
+            # Saved orbits fly as one; splitting stays on for later edits that
+            # need it, as when an orbit is drawn.
+            self.splitCheck.setChecked(True)
             self._split_choice_required = False
         elif type(split_enabled) is bool:
             self.splitCheck.setChecked(split_enabled)

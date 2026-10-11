@@ -19,7 +19,9 @@ enterprise mapping export cannot represent this route. Saved routes retain
 their provenance until explicit regeneration.
 
 Engine v1.3.0 adds orbits of up to 3 rings, flown in order, each with its
-own radius, altitude, and camera tilt. The plugin plans and exports them, but
-the mission-sync representation above holds one ring, so the plugin does not
-save multi-ring orbits to flypath.io yet. A single-ring orbit uses the v1.2.0
+own radius, altitude, and camera tilt, and splits orbits into flights. The
+plugin plans and exports them, but the mission-sync representation above holds
+one ring flown as one flight, so the plugin does not save multi-ring or split
+orbits to flypath.io yet. It only sends a split request when the orbit does not
+fit one flight, or the pilot asks for more flights. A single-ring orbit uses the v1.2.0
 request and result unchanged.
