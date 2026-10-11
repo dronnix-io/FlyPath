@@ -57,6 +57,10 @@ def test_orbit_rings_plan_export_and_reset():
                 planner.orbitTiltSpin.value()) == (30, 40, -35)
         assert planner.removeRingBtn.isVisibleTo(planner)
         assert not planner.orbitRingLimitLabel.isVisibleTo(planner)
+        # The selector is in Survey Area; Flight Parameters names the ring.
+        assert planner._area_form.labelForField(planner._orbitRingRow) is not None
+        assert planner._row_label(planner._flight_form, planner.altitudeSpin).text() == 'Altitude (Ring 2)'
+        assert planner._row_label(planner._flight_form, planner.orbitTiltSpin).text() == 'Camera Tilt (Ring 2)'
         planner.orbitRadiusSpin.setValue(40)
         planner.addRingBtn.click()
         assert planner.orbitRingCombo.count() == 3
@@ -119,6 +123,11 @@ def test_orbit_rings_plan_export_and_reset():
         planner._on_remove_orbit_circle()
         assert planner._orbit_rings_from_ui() == [rings[0]]
         assert not planner.addRingBtn.isEnabled() and not other_rings()
+        assert planner._row_label(planner._flight_form, planner.orbitRadiusSpin).text() == 'Radius'
+        planner.set_orbit_centre(-114, 51)
+        planner.addRingBtn.click()
+        planner.missionTypeCombo.setCurrentText('2D Mapping')
+        assert planner._row_label(planner._flight_form, planner.altitudeSpin).text() == 'Altitude'
     finally:
         planner.close()
         canvas.close()

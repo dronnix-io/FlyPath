@@ -262,7 +262,7 @@ class OrbitMixin:
     # ── Building the controls ─────────────────────────────────────────────
 
     def _build_orbit_area_row(self, form):
-        """Centre and Draw rows for the Survey Area group (replace Source)."""
+        """Centre, Draw and Ring rows for the Survey Area group (replace Source)."""
         self.orbitCentreLabel = QLabel(NO_CENTRE_TEXT)
         self.orbitCentreLabel.setObjectName('selectionInfo')
         self._tip(self.orbitCentreLabel,
@@ -303,16 +303,14 @@ class OrbitMixin:
         form.addRow(row)
         self._set_row_visible(form, row, False)
 
-    def _build_orbit_flight_rows(self, form):
-        """Ring, radius and camera tilt rows for the Flight Parameters."""
-        # Ring selector, above Altitude: the ring whose radius, altitude and
-        # tilt the fields below show and edit.
+        # Ring selector: the ring whose radius, altitude and tilt the Flight
+        # Parameters show and edit.
         self.orbitRingCombo = QComboBox()
         self.orbitRingCombo.addItem('Ring 1')
         self._tip(self.orbitRingCombo,
-            'The ring whose radius, altitude and camera tilt are shown below. '
-            'The drone flies the rings in order, moving from the end of one '
-            'ring to the start of the next.')
+            'The ring whose radius, altitude and camera tilt are shown in '
+            'Flight Parameters. The drone flies the rings in order, moving '
+            'from the end of one ring to the start of the next.')
         self.addRingBtn = QPushButton('+ Add Ring')
         self.addRingBtn.setObjectName('addRingBtn')
         self._tip(self.addRingBtn,
@@ -333,11 +331,16 @@ class OrbitMixin:
         buttons.addWidget(self.orbitRingCombo, 1)
         buttons.addWidget(self.addRingBtn)
         buttons.addWidget(self.removeRingBtn)
+        for widget in (self.orbitRingCombo, self.addRingBtn, self.removeRingBtn):
+            widget.setMinimumHeight(28)     # same height as the Draw buttons
         column.addLayout(buttons)
         column.addWidget(self.orbitRingLimitLabel)
         self._orbitRingRow = row
-        form.insertRow(0, 'Ring', row)
+        form.addRow('Ring', row)
+        self._set_row_visible(form, row, False)
 
+    def _build_orbit_flight_rows(self, form):
+        """Radius and camera tilt rows for the Flight Parameters."""
         self.orbitRadiusSpin = QDoubleSpinBox()
         self.orbitRadiusSpin.setRange(5.0, 2000.0)
         self.orbitRadiusSpin.setValue(30.0)
@@ -359,7 +362,7 @@ class OrbitMixin:
             'angles between -30° and -45° suit 3D models.')
         form.addRow('Camera Tilt', self.orbitTiltSpin)
 
-        for widget in (self._orbitRingRow, self.orbitRadiusSpin, self.orbitTiltSpin):
+        for widget in (self.orbitRadiusSpin, self.orbitTiltSpin):
             self._set_row_visible(form, widget, False)
         self._orbit_rings = (self._orbit_ring_values(),)
         self._refresh_orbit_ring_controls()
@@ -383,12 +386,13 @@ class OrbitMixin:
         Only visibility, labels and limits change here, so it is safe to rerun
         at any time, for example when a failed import restores the panel.
         _switch_orbit_mode() changes the values when the mission kind changes."""
-        for widget in (self._orbitRingRow, self.orbitRadiusSpin, self.orbitTiltSpin):
+        for widget in (self.orbitRadiusSpin, self.orbitTiltSpin):
             self._set_row_visible(self._flight_form, widget, orbit)
-        self._refresh_orbit_ring_controls()
         self._set_row_visible(self._flight_form, self.gsdSpin, not orbit)
         self._set_row_visible(self._area_form, self.orbitCentreLabel, orbit)
         self._set_row_visible(self._area_form, self._orbitDrawRow, orbit)
+        self._set_row_visible(self._area_form, self._orbitRingRow, orbit)
+        self._refresh_orbit_ring_controls()
         self._set_row_visible(self._area_form, self._sourceRow, not orbit)
         self._set_row_visible(self._area_form, self._sourceStack, not orbit)
 
@@ -508,6 +512,16 @@ class OrbitMixin:
         self.addRingBtn.setEnabled(count < MAX_ORBIT_RINGS and self._orbit_centre is not None)
         self.removeRingBtn.setVisible(count > 1)
         self.orbitRingLimitLabel.setVisible(count >= MAX_ORBIT_RINGS)
+        # The ring fields sit in Flight Parameters, so their labels name the
+        # ring they edit once there is more than one.
+        suffix = (' (Ring %d)' % (self._orbit_ring_index + 1)
+                  if count > 1 and self._mission_kind() == 'orbit' else '')
+        for widget, text in ((self.altitudeSpin, 'Altitude'),
+                             (self.orbitRadiusSpin, 'Radius'),
+                             (self.orbitTiltSpin, 'Camera Tilt')):
+            label = self._row_label(self._flight_form, widget)
+            if label is not None:
+                label.setText(text + suffix)
 
     def _on_orbit_ring_selected(self, index):
         if 0 <= index < len(self._orbit_rings) and index != self._orbit_ring_index:
