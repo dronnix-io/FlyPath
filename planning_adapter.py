@@ -12,7 +12,7 @@ from .flypath_engine.profiles import PROFILE_VERSION
 
 PlanningError = _PlanningError
 # These releases have identical planning behavior; revisit on engine upgrades.
-SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0')
+SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0', '1.3.0')
 ORBIT_MIN_ENGINE_VERSION = (1, 2, 0)   # the first engine release with plan_orbit
 
 
@@ -77,16 +77,25 @@ def build_request(*, survey_area, drone_profile_id, altitude_m, speed_m_s,
     return request
 
 
-def build_orbit_request(*, centre, drone_profile_id, radius_m, altitude_m,
-                        gimbal_pitch_deg, clockwise, speed_m_s, capture_mode,
-                        side_overlap_ratio, finish_action, max_waypoints_per_flight):
+def build_orbit_request(*, centre, drone_profile_id, clockwise, speed_m_s, capture_mode,
+                        side_overlap_ratio, finish_action, max_waypoints_per_flight,
+                        radius_m=None, altitude_m=None, gimbal_pitch_deg=None, rings=None):
     """Translate the orbit controls into one engine request.
 
-    `centre` is (lon, lat) in WGS84. Full auto sets the photo spacing from the
-    side overlap; semi auto follows speed and the photo interval instead."""
+    `centre` is (lon, lat) in WGS84. Give one ring as radius, altitude and pitch,
+    or `rings` as (radius_m, altitude_m, gimbal_pitch_deg) tuples flown in order.
+    A single ring always uses the single-ring request, so its result stays the
+    one flypath.io and earlier plugins verify. Full auto sets the photo spacing
+    from the side overlap; semi auto follows speed and the photo interval."""
     capture = {'mode': 'full_auto' if capture_mode == 'full' else 'semi_auto'}
     if capture['mode'] == 'full_auto':
         capture['side_overlap_ratio'] = side_overlap_ratio
+    if rings is not None and len(rings) == 1:
+        (radius_m, altitude_m, gimbal_pitch_deg), rings = rings[0], None
+    shape = ({'rings': [{'radius_m': radius, 'altitude_m': altitude, 'gimbal_pitch_deg': pitch}
+                        for radius, altitude, pitch in rings]}
+             if rings is not None else
+             {'radius_m': radius_m, 'altitude_m': altitude_m, 'gimbal_pitch_deg': gimbal_pitch_deg})
     return {
         'contract_version': CONTRACT_VERSION,
         'operation': 'plan_orbit',
@@ -94,9 +103,7 @@ def build_orbit_request(*, centre, drone_profile_id, radius_m, altitude_m,
         'drone_profile_id': drone_profile_id,
         'profile_version': PROFILE_VERSION,
         'centre': {'latitude_deg': centre[1], 'longitude_deg': centre[0]},
-        'radius_m': radius_m,
-        'altitude_m': altitude_m,
-        'gimbal_pitch_deg': gimbal_pitch_deg,
+        **shape,
         'direction': 'clockwise' if clockwise else 'counterclockwise',
         'speed_m_s': speed_m_s,
         'capture': capture,
@@ -185,6 +192,13 @@ def consume_result(request, result, *, require_supported=True,
         if any(not _finite(value) or not -180 <= value <= 180 for value in raw_headings):
             raise ValueError('The saved route headings are invalid.')
         headings = [float(value) for value in raw_headings]
+    # Multi-ring orbits also give each waypoint its own altitude.
+    raw_altitudes = [row.get('altitude_m') for row in rows]
+    altitudes = None
+    if any(value is not None for value in raw_altitudes):
+        if any(not _finite(value, positive=True) or value > 500 for value in raw_altitudes):
+            raise ValueError('The saved route altitudes are invalid.')
+        altitudes = [float(value) for value in raw_altitudes]
     flights = result.get('flights')
     if not isinstance(flights, list) or not flights:
         raise ValueError('The saved planning result has no flights.')
@@ -218,6 +232,9 @@ def consume_result(request, result, *, require_supported=True,
             'actions': [{**action, 'waypoint_index': action['waypoint_index'] - start}
                         for action in actions],
             'headings': headings[start:end + 1] if headings else None,
+            'heights': altitudes[start:end + 1] if altitudes else None,
+            'gimbal_pitches': (_pitch_per_waypoint(actions, start, end)
+                               if altitudes else None),
             'flight': flight,
         })
         previous_end = end
@@ -327,6 +344,19 @@ def validate_mission_provenance(mission):
         kind = 'orbit' if settings.get('mapping_style') == 'orbit' else 'planning'
         raise ValueError('The saved %s result does not match its request.' % kind)
     return supported, flights
+
+
+def _pitch_per_waypoint(actions, start, end):
+    """The camera pitch in force at each waypoint, from the rotate actions."""
+    rotations = {action['waypoint_index']: float(action['pitch_deg'])
+                 for action in actions if action['type'] == 'rotate_camera'}
+    if start not in rotations:
+        raise ValueError('The saved flight does not set the camera at its start.')
+    pitches, current = [], None
+    for index in range(start, end + 1):
+        current = rotations.get(index, current)
+        pitches.append(current)
+    return pitches
 
 
 def _ratio(value):

@@ -194,6 +194,50 @@ def test_orbit_headings_reach_the_flight_and_the_wpml():
     assert '<wpml:gimbalPitchRotateAngle>-35.0</wpml:gimbalPitchRotateAngle>' in wpml
 
 
+RINGS = [(30, 25, -20), (30, 40, -35), (20, 55, -60)]
+
+
+def ring_request(rings=RINGS, **overrides):
+    return orbit_request(radius_m=None, altitude_m=None, gimbal_pitch_deg=None,
+                         rings=rings, **overrides)
+
+
+def test_one_listed_ring_is_the_single_ring_request():
+    # flypath.io and earlier plugins verify single-ring orbits by this request.
+    assert ring_request([(30, 25, -35)]) == orbit_request()
+    planned = ring_request()
+    assert 'radius_m' not in planned and len(planned['rings']) == 3
+    assert planned['rings'][2] == {'radius_m': 20, 'altitude_m': 55, 'gimbal_pitch_deg': -60}
+    single = orbit_request()
+    flight = planning_adapter.consume_result(single, planning_adapter.plan(single))[0]
+    assert flight['heights'] is None and flight['gimbal_pitches'] is None
+
+
+def test_multi_ring_flights_carry_each_ring_altitude_and_tilt():
+    for capture_mode in ('full', 'semi'):
+        planned = ring_request(capture_mode=capture_mode)
+        result = planning_adapter.plan(planned)
+        rows = result['route']['waypoints']
+        flight = planning_adapter.consume_result(planned, result)[0]
+        assert len(flight['heights']) == len(flight['waypoints']) == len(rows)
+        assert flight['heights'] == [RINGS[row['ring_index']][1] for row in rows]
+        assert flight['gimbal_pitches'] == [RINGS[row['ring_index']][2] for row in rows]
+        assert [row['ring_index'] for row in rows] == sorted(row['ring_index'] for row in rows)
+
+
+def test_forged_ring_altitudes_are_rejected():
+    planned = ring_request()
+    for altitude in (0, -5, 501, float('nan'), None):
+        result = planning_adapter.plan(planned)
+        result['route']['waypoints'][4]['altitude_m'] = altitude
+        try:
+            planning_adapter.consume_result(planned, result)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('altitude %r accepted' % altitude)
+
+
 def test_2d_flights_have_no_headings():
     planned_request = request()
     flight = planning_adapter.consume_result(planned_request, planning_adapter.plan(planned_request))[0]

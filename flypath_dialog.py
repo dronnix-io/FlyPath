@@ -471,11 +471,13 @@ QPushButton#clearPreviewBtn {
     background-color: #3A3D45; color: #D0D0D0; font-weight: normal;
 }
 QPushButton#clearPreviewBtn:hover { background-color: #4A4D55; }
-QPushButton#drawPolygonBtn, QPushButton#drawCircleBtn {
+QPushButton#drawPolygonBtn, QPushButton#drawCircleBtn, QPushButton#addRingBtn {
     background-color: #1E3A1E; color: #80C880;
     border: 1px solid #2E5A2E; font-weight: bold;
 }
-QPushButton#drawPolygonBtn:hover, QPushButton#drawCircleBtn:hover { background-color: #2A4D2A; }
+QPushButton#drawPolygonBtn:hover, QPushButton#drawCircleBtn:hover,
+QPushButton#addRingBtn:hover { background-color: #2A4D2A; }
+QPushButton#addRingBtn:disabled { background-color: #2A2D35; color: #6A6D75; border: 1px solid #3A3D45; }
 QPushButton#drawPolygonBtn:checked, QPushButton#drawCircleBtn:checked {
     background-color: #2A6A2A; border: 1px solid #40A040; color: #AAFAAA;
 }
@@ -485,12 +487,13 @@ QPushButton#autoDirectionBtn {
 }
 QPushButton#autoDirectionBtn:hover { background-color: #4A4D55; }
 QPushButton#autoDirectionBtn:checked { background-color: #2A6A2A; color: #AAFAAA; }
-QPushButton#removePolygonBtn, QPushButton#removeCircleBtn {
+QPushButton#removePolygonBtn, QPushButton#removeCircleBtn, QPushButton#removeRingBtn {
     background-color: #5A2020; color: #FF8888;
     border: 1px solid #7A3030; border-radius: 3px;
     font-weight: bold; padding: 3px 6px;
 }
-QPushButton#removePolygonBtn:hover, QPushButton#removeCircleBtn:hover { background-color: #7A2525; color: #FFAAAA; }
+QPushButton#removePolygonBtn:hover, QPushButton#removeCircleBtn:hover,
+QPushButton#removeRingBtn:hover { background-color: #7A2525; color: #FFAAAA; }
 QPushButton#editPolygonBtn, QPushButton#editCircleBtn,
 QPushButton#editCircleBtn:checked {
     background-color: #203A5A; color: #88BBFF;
@@ -3018,7 +3021,11 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.photosLabel.setText(f"{stats['photo_count']:,}{photo_suffix}")
         self.waypointsLabel.setText(f"{stats['waypoint_count']:,}")
         orbit = request.get('operation') == 'plan_orbit'
-        self.linesLabel.setText('1 ring' if orbit else str(stats['strip_count']))
+        if orbit:
+            rings = len(result['orbit'].get('rings') or (None,))
+            self.linesLabel.setText('1 ring' if rings == 1 else f'{rings} rings')
+        else:
+            self.linesLabel.setText(str(stats['strip_count']))
         self.batteriesLabel.setText(str(stats['battery_count']))
         if orbit and self._mission_type() != 'full':
             self.frontOverlapLabel.setText(
@@ -3830,13 +3837,18 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
     def _export_settings(self):
         """Snapshot export inputs from widgets before any destination work."""
         orbit = self._mission_kind() == 'orbit'
+        rows = (self._planning.result['route']['waypoints']
+                if orbit and self._planning.result else None)
+        # Multi-ring orbits fly each ring at its own altitude and camera tilt.
+        rings = (self._planning.result.get('orbit') or {}).get('rings') if rows else None
         return mission_export.ExportSettings(
             drone=registry.get(self.droneModelCombo.currentText()),
-            altitude_m=self.altitudeSpin.value(),
+            altitude_m=rings[0]['altitude_m'] if rings else self.altitudeSpin.value(),
             speed_ms=self.speedSpin.value(),
             finish_action=self.finishActionCombo.currentText(),
             rc_lost_action=self.rcLostActionCombo.currentText(),
-            gimbal_pitch=(self.orbitTiltSpin.value() if orbit
+            gimbal_pitch=(rings[0]['gimbal_pitch_deg'] if rings else
+                          self.orbitTiltSpin.value() if orbit
                           else self.gimbalAngleSpin.value()),
             polygon=(None if orbit else survey_geometry.polygon_vertices(
                 self._survey_polygon, self._survey_polygon_crs)),
@@ -3848,9 +3860,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             curved_path=self._path_curved(),
             # The launch offset lives in the Takeoff Zone group, hidden for orbits.
             launch_offset_m=0.0 if orbit else self.launchOffsetSpin.value(),
-            headings=(tuple(row['heading_deg']
-                            for row in self._planning.result['route']['waypoints'])
-                      if orbit and self._planning.result else None),
+            headings=tuple(row['heading_deg'] for row in rows) if rows else None,
+            heights=tuple(row['altitude_m'] for row in rows) if rings else None,
+            gimbal_pitches=(tuple(rings[row['ring_index']]['gimbal_pitch_deg'] for row in rows)
+                            if rings else None),
         )
 
     def _missions_with_heights(self, waypoints, elevations):

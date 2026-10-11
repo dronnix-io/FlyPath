@@ -53,6 +53,8 @@ class MissionSpec:
     # must face a point, like an orbit around a centre. None = follow the
     # wayline (2D and corridor). When set, must match waypoints length.
     headings: list = None
+    # Camera pitch per waypoint (multi-ring orbits); None uses gimbal_pitch.
+    gimbal_pitches: list = None
 
 
 def esc(text):

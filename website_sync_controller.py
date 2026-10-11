@@ -207,6 +207,12 @@ class WebsiteSyncLifecycleMixin:
                 'Preview to regenerate it before saving to FlyPath.')
             return False
         """Save the linked mission, or explicitly create and link a new one."""
+        if self._mission_kind() == 'orbit' and len(self._orbit_rings) > 1:
+            QMessageBox.information(
+                self, 'Coming Soon',
+                'Saving orbits with more than one ring to FlyPath is coming soon. '
+                'You can export this mission to a KMZ file or your controller now.')
+            return False
         if not (self._preview_layer_ids and self._missions):
             QMessageBox.information(self, 'Preview First', 'Preview the mission on the map before saving it to FlyPath.')
             return
@@ -781,6 +787,8 @@ class WebsiteSyncLifecycleMixin:
         self.autoDirectionBtn.setChecked(False)
         self.missionTypeCombo.setCurrentText(
             'Orbit (3D Model)' if orbit else 'Corridor Mapping' if corridor else '2D Mapping')
+        if orbit:
+            self._reset_orbit_rings()   # saved orbits have one ring
         self.droneModelCombo.setCurrentText(drone_name)
         (self.captureFullRadio if capture == 'full'
          else self.captureSemiRadio).setChecked(True)

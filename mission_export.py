@@ -27,12 +27,18 @@ class ExportSettings:
     # Per-waypoint headings for single-flight missions that face a point
     # (orbit). Orbits are never split, so one list covers the whole mission.
     headings: tuple = None
+    # Multi-ring orbits: each waypoint's altitude and camera pitch, from the
+    # engine result. None keeps one altitude and pitch for the whole mission.
+    heights: tuple = None
+    gimbal_pitches: tuple = None
 
 
 def write_kmz(filepath, settings, waypoints, mission_name, *,
               create_time_ms=None, heights=None, actions=None):
     """Write one mission, applying the launch datum to all written heights."""
     offset = settings.launch_offset_m
+    if heights is None and settings.heights is not None:
+        heights = list(settings.heights)
     spec = MissionSpec(
         waypoints=waypoints,
         altitude_m=settings.altitude_m - offset,
@@ -53,6 +59,8 @@ def write_kmz(filepath, settings, waypoints, mission_name, *,
         curved_path=settings.curved_path,
         actions=actions,
         headings=list(settings.headings) if settings.headings is not None else None,
+        gimbal_pitches=(list(settings.gimbal_pitches)
+                        if settings.gimbal_pitches is not None else None),
     )
     write_mission(settings.drone, spec, filepath)
 
