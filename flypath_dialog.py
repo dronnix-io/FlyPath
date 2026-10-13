@@ -1945,8 +1945,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
         layout.addWidget(export_group)
 
-        # Restore last-used destination mode
-        mode = settings.value('dest_mode', 'local')
+        # Restore the last-used destination; Send to DJI RC on first use.
+        mode = settings.value('dest_mode', 'rc')
         idx  = self.destCombo.findData(mode)
         self.destCombo.setCurrentIndex(idx if idx >= 0 else 0)
         self.destStack.setCurrentIndex(self.destCombo.currentIndex())

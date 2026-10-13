@@ -13,7 +13,31 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
+class _KeepUserSettings:
+    """Restore the user's FlyPath settings (export folder, destination) after a test."""
+
+    def __enter__(self):
+        from qgis.PyQt.QtCore import QSettings
+        self.settings = QSettings('FlyPath', 'FlyPath')
+        self.saved = {key: self.settings.value(key) for key in self.settings.allKeys()}
+
+    def __exit__(self, *exc):
+        self.settings.clear()
+        for key, value in self.saved.items():
+            self.settings.setValue(key, value)
+        self.settings.sync()
+
+
 def test_orbit_rings_plan_export_and_reset():
+    try:
+        importlib.import_module('qgis.PyQt.QtCore')
+    except ImportError as exc:
+        raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
+    with _KeepUserSettings():
+        _test_orbit_rings_plan_export_and_reset()
+
+
+def _test_orbit_rings_plan_export_and_reset():
     try:
         from qgis.core import QgsApplication, QgsProject
         from qgis.gui import QgsMapCanvas
@@ -136,6 +160,15 @@ def test_orbit_rings_plan_export_and_reset():
 
 def test_orbits_split_into_flights_and_export_one_kmz_each():
     try:
+        importlib.import_module('qgis.PyQt.QtCore')
+    except ImportError as exc:
+        raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
+    with _KeepUserSettings():
+        _test_orbits_split_into_flights_and_export_one_kmz_each()
+
+
+def _test_orbits_split_into_flights_and_export_one_kmz_each():
+    try:
         import tempfile
         import zipfile
         from qgis.core import QgsApplication
@@ -227,3 +260,33 @@ def test_orbits_split_into_flights_and_export_one_kmz_each():
         planner.close()
         canvas.close()
         app.processEvents()
+
+
+def test_export_destination_starts_on_the_controller():
+    try:
+        from qgis.PyQt.QtCore import QSettings
+    except ImportError as exc:
+        raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
+    with _KeepUserSettings():
+        from qgis.core import QgsApplication
+        from qgis.gui import QgsMapCanvas
+        package = Path(__file__).resolve().parents[1].name
+        dialog = importlib.import_module(package + '.flypath_dialog')
+        app = QgsApplication.instance() or QgsApplication([], False)
+        app.initQgis()
+        QSettings('FlyPath', 'FlyPath').remove('dest_mode')     # first use
+        canvas = QgsMapCanvas()
+        planner = dialog.FlyPathDialog(SimpleNamespace(mapCanvas=lambda: canvas))
+        try:
+            assert planner.destCombo.currentData() == 'rc'
+            planner.destCombo.setCurrentIndex(planner.destCombo.findData('local'))
+        finally:
+            planner.close()
+        # The last choice is remembered.
+        again = dialog.FlyPathDialog(SimpleNamespace(mapCanvas=lambda: canvas))
+        try:
+            assert again.destCombo.currentData() == 'local'
+        finally:
+            again.close()
+            canvas.close()
+            app.processEvents()
