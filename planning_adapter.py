@@ -1,6 +1,7 @@
 """Thin QGIS-plugin adapter for the versioned shared planning contract."""
 
 import math
+import re
 
 from .flypath_engine.planning import (
     CONTRACT_VERSION, DIRECTION_CONVENTION, PlanningError as _PlanningError, plan_2d,
@@ -16,14 +17,11 @@ ORBIT_MIN_ENGINE_VERSION = (1, 2, 0)   # the first engine release with plan_orbi
 
 
 def _orbit_capable(version):
-    """True for an engine release that can plan orbits (1.2.0 or newer).
-
-    Whether this plugin can regenerate from that release is decided by
-    SUPPORTED_ENGINE_VERSIONS, the same as for 2D results."""
-    try:
-        return tuple(int(part) for part in str(version).split('.')) >= ORBIT_MIN_ENGINE_VERSION
-    except ValueError:
-        return False
+    """True for an explicitly supported Orbit release (1.2.0 or newer)."""
+    return (isinstance(version, str)
+            and version in SUPPORTED_ENGINE_VERSIONS
+            and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version) is not None
+            and tuple(int(part) for part in version.split('.')) >= ORBIT_MIN_ENGINE_VERSION)
 
 
 FINISH_ACTIONS = {
