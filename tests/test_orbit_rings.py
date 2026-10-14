@@ -4,7 +4,9 @@ from copy import deepcopy
 import importlib
 import os
 from pathlib import Path
+import shutil
 import sys
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -294,19 +296,28 @@ def test_export_destination_starts_on_the_controller():
         dialog = importlib.import_module(package + '.flypath_dialog')
         app = QgsApplication.instance() or QgsApplication([], False)
         app.initQgis()
-        QSettings('FlyPath', 'FlyPath').remove('dest_mode')     # first use
+        try:
+            ini_format = QSettings.Format.IniFormat
+        except AttributeError:
+            ini_format = getattr(QSettings, 'IniFormat')
+        # The panel's settings go to a temporary file, so the test neither
+        # depends on nor changes the machine's stored FlyPath settings.
+        folder = tempfile.mkdtemp()
+        path = str(Path(folder) / 'flypath.ini')
         canvas = QgsMapCanvas()
-        planner = dialog.FlyPathDialog(SimpleNamespace(mapCanvas=lambda: canvas))
-        try:
-            assert planner.destCombo.currentData() == 'rc'
-            planner.destCombo.setCurrentIndex(planner.destCombo.findData('local'))
-        finally:
-            planner.close()
-        # The last choice is remembered.
-        again = dialog.FlyPathDialog(SimpleNamespace(mapCanvas=lambda: canvas))
-        try:
-            assert again.destCombo.currentData() == 'local'
-        finally:
-            again.close()
-            canvas.close()
-            app.processEvents()
+        with patch.object(dialog, 'QSettings', lambda *_args: QSettings(path, ini_format)):
+            planner = dialog.FlyPathDialog(SimpleNamespace(mapCanvas=lambda: canvas))   # first use
+            try:
+                assert planner.destCombo.currentData() == 'rc'
+                planner.destCombo.setCurrentIndex(planner.destCombo.findData('local'))
+            finally:
+                planner.close()
+            # The last choice is remembered.
+            again = dialog.FlyPathDialog(SimpleNamespace(mapCanvas=lambda: canvas))
+            try:
+                assert again.destCombo.currentData() == 'local'
+            finally:
+                again.close()
+                canvas.close()
+                app.processEvents()
+        shutil.rmtree(folder, ignore_errors=True)
