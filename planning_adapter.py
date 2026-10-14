@@ -12,16 +12,17 @@ from .flypath_engine.profiles import PROFILE_VERSION
 
 PlanningError = _PlanningError
 # These releases have identical planning behavior; revisit on engine upgrades.
-SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0')
+SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0', '1.3.0')
 ORBIT_MIN_ENGINE_VERSION = (1, 2, 0)   # the first engine release with plan_orbit
+ORBIT_RINGS_MIN_ENGINE_VERSION = (1, 3, 0)
 
 
-def _orbit_capable(version):
-    """True for an explicitly supported Orbit release (1.2.0 or newer)."""
+def _orbit_capable(version, minimum=ORBIT_MIN_ENGINE_VERSION):
+    """True for an explicitly supported Orbit release at or above minimum."""
     return (isinstance(version, str)
             and version in SUPPORTED_ENGINE_VERSIONS
             and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version) is not None
-            and tuple(int(part) for part in version.split('.')) >= ORBIT_MIN_ENGINE_VERSION)
+            and tuple(int(part) for part in version.split('.')) >= minimum)
 
 
 FINISH_ACTIONS = {
@@ -77,16 +78,27 @@ def build_request(*, survey_area, drone_profile_id, altitude_m, speed_m_s,
     return request
 
 
-def build_orbit_request(*, centre, drone_profile_id, radius_m, altitude_m,
-                        gimbal_pitch_deg, clockwise, speed_m_s, capture_mode,
-                        side_overlap_ratio, finish_action, max_waypoints_per_flight):
+def build_orbit_request(*, centre, drone_profile_id, clockwise, speed_m_s, capture_mode,
+                        side_overlap_ratio, finish_action, max_waypoints_per_flight,
+                        radius_m=None, altitude_m=None, gimbal_pitch_deg=None, rings=None,
+                        split_enabled=False, requested_flights=1):
     """Translate the orbit controls into one engine request.
 
-    `centre` is (lon, lat) in WGS84. Full auto sets the photo spacing from the
-    side overlap; semi auto follows speed and the photo interval instead."""
+    `centre` is (lon, lat) in WGS84. Give one ring as radius, altitude and pitch,
+    or `rings` as (radius_m, altitude_m, gimbal_pitch_deg) tuples flown in order.
+    A single ring always uses the single-ring request, so its result stays the
+    one flypath.io and earlier plugins verify. Full auto sets the photo spacing
+    from the side overlap; semi auto follows speed and the photo interval.
+    Splitting divides the rings into flights (engine 1.3.0 and newer)."""
     capture = {'mode': 'full_auto' if capture_mode == 'full' else 'semi_auto'}
     if capture['mode'] == 'full_auto':
         capture['side_overlap_ratio'] = side_overlap_ratio
+    if rings is not None and len(rings) == 1:
+        (radius_m, altitude_m, gimbal_pitch_deg), rings = rings[0], None
+    shape = ({'rings': [{'radius_m': radius, 'altitude_m': altitude, 'gimbal_pitch_deg': pitch}
+                        for radius, altitude, pitch in rings]}
+             if rings is not None else
+             {'radius_m': radius_m, 'altitude_m': altitude_m, 'gimbal_pitch_deg': gimbal_pitch_deg})
     return {
         'contract_version': CONTRACT_VERSION,
         'operation': 'plan_orbit',
@@ -94,14 +106,14 @@ def build_orbit_request(*, centre, drone_profile_id, radius_m, altitude_m,
         'drone_profile_id': drone_profile_id,
         'profile_version': PROFILE_VERSION,
         'centre': {'latitude_deg': centre[1], 'longitude_deg': centre[0]},
-        'radius_m': radius_m,
-        'altitude_m': altitude_m,
-        'gimbal_pitch_deg': gimbal_pitch_deg,
+        **shape,
         'direction': 'clockwise' if clockwise else 'counterclockwise',
         'speed_m_s': speed_m_s,
         'capture': capture,
         'finish_action': FINISH_ACTIONS[finish_action],
-        'split': {'enabled': False, 'max_waypoints_per_flight': max_waypoints_per_flight},
+        'split': ({'enabled': True, 'requested_flights': requested_flights,
+                   'max_waypoints_per_flight': max_waypoints_per_flight} if split_enabled else
+                  {'enabled': False, 'max_waypoints_per_flight': max_waypoints_per_flight}),
         'terrain_follow': False,
     }
 
@@ -185,9 +197,19 @@ def consume_result(request, result, *, require_supported=True,
         if any(not _finite(value) or not -180 <= value <= 180 for value in raw_headings):
             raise ValueError('The saved route headings are invalid.')
         headings = [float(value) for value in raw_headings]
+    # Multi-ring orbits also give each waypoint its own altitude.
+    raw_altitudes = [row.get('altitude_m') for row in rows]
+    altitudes = None
+    if any(value is not None for value in raw_altitudes):
+        if any(not _finite(value, positive=True) or value > 500 for value in raw_altitudes):
+            raise ValueError('The saved route altitudes are invalid.')
+        altitudes = [float(value) for value in raw_altitudes]
     flights = result.get('flights')
     if not isinstance(flights, list) or not flights:
         raise ValueError('The saved planning result has no flights.')
+    # Adjacent flights share their seam waypoint, except orbit flights that
+    # split between rings: the next one starts at its ring's first waypoint.
+    orbit = request.get('operation') == 'plan_orbit'
     consumed = []
     previous_end = None
     for index, flight in enumerate(flights):
@@ -196,7 +218,9 @@ def consume_result(request, result, *, require_supported=True,
         start = flight.get('route_start_waypoint_index')
         end = flight.get('route_end_waypoint_index')
         if (type(start) is not int or type(end) is not int or not 0 <= start <= end < len(points)
-                or (previous_end is not None and start != previous_end)):
+                or (previous_end is not None and start != previous_end
+                    and not (orbit and start == previous_end + 1
+                             and 'ring_start' in (rows[start].get('roles') or ())))):
             raise ValueError('The saved flight boundaries are invalid.')
         actions = flight.get('actions')
         if not isinstance(actions, list) or any(
@@ -218,6 +242,9 @@ def consume_result(request, result, *, require_supported=True,
             'actions': [{**action, 'waypoint_index': action['waypoint_index'] - start}
                         for action in actions],
             'headings': headings[start:end + 1] if headings else None,
+            'heights': altitudes[start:end + 1] if altitudes else None,
+            'gimbal_pitches': (_pitch_per_waypoint(actions, start, end)
+                               if altitudes else None),
             'flight': flight,
         })
         previous_end = end
@@ -248,15 +275,22 @@ def validate_mission_provenance(mission):
     if settings.get('mapping_style') == 'orbit':
         if not _orbit_capable(result.get('engine_version')):
             raise ValueError('This saved orbit engine version is not supported.')
+        rings = settings.get('orbit_rings') or [{
+            'radius_m': settings.get('orbit_radius'),
+            'altitude_m': settings.get('altitude'),
+            'gimbal_pitch_deg': settings.get('orbit_tilt'),
+        }]
+        request_split = request.get('split')
+        if (len(rings) > 1 or (isinstance(request_split, dict)
+                              and request_split.get('enabled') is True)) and not _orbit_capable(
+                result.get('engine_version'), ORBIT_RINGS_MIN_ENGINE_VERSION):
+            raise ValueError('This saved orbit needs planning engine 1.3.0 or newer.')
         expected = {
             'operation': 'plan_orbit',
             'mapping_style': 'orbit',
             'drone_profile_id': mission.get('drone_model'),
             'centre': dict(zip(('latitude_deg', 'longitude_deg'),
                                (mission.get('polygon') or [[None, None]])[0])),
-            'radius_m': settings.get('orbit_radius'),
-            'gimbal_pitch_deg': settings.get('orbit_tilt'),
-            'altitude_m': settings.get('altitude'),
             'speed_m_s': settings.get('speed'),
             'direction': 'counterclockwise' if settings.get('reverse_route') else 'clockwise',
             'finish_action': WEBSITE_FINISH_ACTIONS.get(settings.get('finish_action')),
@@ -264,6 +298,13 @@ def validate_mission_provenance(mission):
         }
         if any(request.get(key) != value for key, value in expected.items()):
             raise ValueError('The saved orbit request does not match the mission settings.')
+        if len(rings) == 1:
+            if (request.get('rings') is not None or any(
+                    request.get(key) != value for key, value in rings[0].items())):
+                raise ValueError('The saved orbit rings do not match the mission settings.')
+        elif (request.get('rings') != rings or any(
+                key in request for key in ('radius_m', 'altitude_m', 'gimbal_pitch_deg'))):
+            raise ValueError('The saved orbit rings do not match the mission settings.')
         capture = request.get('capture')
         full = settings.get('capture_mode') == 'full'
         if (not isinstance(capture, dict)
@@ -271,8 +312,16 @@ def validate_mission_provenance(mission):
                 or (full and capture.get('side_overlap_ratio') != _ratio(settings.get('side_overlap')))):
             raise ValueError('The saved orbit capture does not match the mission settings.')
         split = request.get('split')
-        if (not isinstance(split, dict) or split.get('enabled') is not False
-                or split.get('max_waypoints_per_flight') != settings.get('split_max_wp')):
+        enabled = settings.get('split_enabled', False)
+        request_enabled = split.get('enabled') if isinstance(split, dict) else None
+        # The website can save the checked split preference even when an orbit
+        # fitting one flight has an unsplit planning request.
+        preference_only = (enabled is True and settings.get('split_count', 1) == 1
+                           and request_enabled is False)
+        if (not isinstance(split, dict) or (request_enabled is not enabled and not preference_only)
+                or split.get('max_waypoints_per_flight') != settings.get('split_max_wp')
+                or (request_enabled and split.get('requested_flights') != settings.get('split_count'))
+                or (not request_enabled and 'requested_flights' in split)):
             raise ValueError('The saved orbit split does not match the mission settings.')
     else:
         expected = {
@@ -318,7 +367,8 @@ def validate_mission_provenance(mission):
             raise ValueError('The saved planning area does not match the mission geometry.')
     flights = consume_result(request, result, require_supported=False,
                              legacy_waypoints=mission.get('waypoints') or None)
-    if settings.get('mapping_style') == 'orbit' and (len(flights) != 1 or flights[0]['headings'] is None):
+    if settings.get('mapping_style') == 'orbit' and any(
+            flight['headings'] is None for flight in flights):
         raise ValueError('The saved orbit route is invalid.')
     supported = (request.get('contract_version') == CONTRACT_VERSION
                  and result.get('contract_version') == CONTRACT_VERSION
@@ -327,6 +377,19 @@ def validate_mission_provenance(mission):
         kind = 'orbit' if settings.get('mapping_style') == 'orbit' else 'planning'
         raise ValueError('The saved %s result does not match its request.' % kind)
     return supported, flights
+
+
+def _pitch_per_waypoint(actions, start, end):
+    """The camera pitch in force at each waypoint, from the rotate actions."""
+    rotations = {action['waypoint_index']: float(action['pitch_deg'])
+                 for action in actions if action['type'] == 'rotate_camera'}
+    if start not in rotations:
+        raise ValueError('The saved flight does not set the camera at its start.')
+    pitches, current = [], None
+    for index in range(start, end + 1):
+        current = rotations.get(index, current)
+        pitches.append(current)
+    return pitches
 
 
 def _ratio(value):

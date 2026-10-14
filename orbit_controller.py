@@ -1,4 +1,4 @@
-"""Orbit (3D model) missions: draw a circle, fly one ring facing its centre.
+"""Orbit (3D model) missions: draw a circle, fly up to 3 rings facing its centre.
 
 A mixin for FlyPathDialog, in the same style as SurveyLifecycleMixin. It owns
 the orbit controls, the circle draw and edit tool, the circle layers and the
@@ -11,8 +11,8 @@ import math
 from qgis.PyQt.QtCore import QPoint, Qt
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
-    QDoubleSpinBox, QHBoxLayout, QLabel, QMessageBox, QPushButton,
-    QSpinBox, QWidget,
+    QComboBox, QDoubleSpinBox, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+    QSpinBox, QVBoxLayout, QWidget,
 )
 from qgis.core import (
     Qgis, QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsDistanceArea,
@@ -33,6 +33,14 @@ except ImportError:  # standalone tests import modules as top-level packages
 
 ORBIT_LABEL = 'Orbit (3D Model)'
 DEFAULT_ORBIT_OVERLAP = 90      # % between neighbouring photos around the ring
+DEFAULT_ORBIT_MAX_WAYPOINTS = 200   # dense rings need more than the mapping default
+# Engine checks that a split would fix: the orbit is then planned split.
+_SPLIT_FIXES = {'waypoint_limit_exceeded', 'battery_time_exceeded',
+                'splitting_required_waypoint_limit', 'splitting_required_battery_limit'}
+MAX_ORBIT_RINGS = 3             # the engine's limit for one orbit mission
+RING_LIMIT_TEXT = 'Ring 3 is the last one: an orbit mission can have up to 3 rings.'
+NEW_RING_CLIMB_M = 15.0         # a new ring starts this much above the last one
+NEW_RING_TILT_DEG = 15          # and tilts the camera this much further down
 ORBIT_MIN_ALTITUDE_M = 10.0
 MAPPING_MIN_ALTITUDE_M = 30.0
 NO_CENTRE_TEXT = '— no centre point —'
@@ -244,15 +252,22 @@ class OrbitMixin:
         self._orbit_centre_layer_id = None
         self._orbit_ring_layer_id = None    # the circle the drone flies, shown at once
         self._orbit_radius_layer_id = None  # centre to start point, labelled with the radius
+        self._orbit_others_layer_id = None  # the rings that are not selected
+        # (radius, altitude, tilt) per ring, flown in order. The selected ring's
+        # live values are in the Radius, Altitude and Camera Tilt fields; its
+        # entry here is only updated when another ring is selected.
+        self._orbit_rings = ()
+        self._orbit_ring_index = 0
         self._orbit_tool = None
         self._orbit_prev_tool = None
         self._orbit_saved_overlap = None    # mapping side overlap, restored on leaving
+        self._orbit_saved_max_waypoints = None  # mapping waypoint limit, restored on leaving
         self._mapping_reverse_tip = None    # Reverse route tooltip outside orbits
 
     # ── Building the controls ─────────────────────────────────────────────
 
     def _build_orbit_area_row(self, form):
-        """Centre and Draw rows for the Survey Area group (replace Source)."""
+        """Centre, Draw and Ring rows for the Survey Area group (replace Source)."""
         self.orbitCentreLabel = QLabel(NO_CENTRE_TEXT)
         self.orbitCentreLabel.setObjectName('selectionInfo')
         self._tip(self.orbitCentreLabel,
@@ -293,8 +308,44 @@ class OrbitMixin:
         form.addRow(row)
         self._set_row_visible(form, row, False)
 
+        # Ring selector: the ring whose radius, altitude and tilt the Flight
+        # Parameters show and edit.
+        self.orbitRingCombo = QComboBox()
+        self.orbitRingCombo.addItem('Ring 1')
+        self._tip(self.orbitRingCombo,
+            'The ring whose radius, altitude and camera tilt are shown in '
+            'Flight Parameters. The drone flies the rings in order, moving '
+            'from the end of one ring to the start of the next.')
+        self.addRingBtn = QPushButton('+ Add Ring')
+        self.addRingBtn.setObjectName('addRingBtn')
+        self._tip(self.addRingBtn,
+            'Add another ring around the same centre, with its own radius, '
+            'altitude and camera tilt. An orbit mission can have up to 3 rings.')
+        self.removeRingBtn = QPushButton('✕ Remove Ring')
+        self.removeRingBtn.setObjectName('removeRingBtn')
+        self._tip(self.removeRingBtn, 'Remove the selected ring.')
+        self.orbitRingLimitLabel = QLabel(RING_LIMIT_TEXT)
+        self.orbitRingLimitLabel.setObjectName('selectionInfo')
+        self.orbitRingLimitLabel.setWordWrap(True)
+        row = QWidget()
+        column = QVBoxLayout(row)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(4)
+        buttons = QHBoxLayout()
+        buttons.setSpacing(4)
+        buttons.addWidget(self.orbitRingCombo, 1)
+        buttons.addWidget(self.addRingBtn)
+        buttons.addWidget(self.removeRingBtn)
+        for widget in (self.orbitRingCombo, self.addRingBtn, self.removeRingBtn):
+            widget.setMinimumHeight(28)     # same height as the Draw buttons
+        column.addLayout(buttons)
+        column.addWidget(self.orbitRingLimitLabel)
+        self._orbitRingRow = row
+        form.addRow('Ring', row)
+        self._set_row_visible(form, row, False)
+
     def _build_orbit_flight_rows(self, form):
-        """Radius, camera tilt and direction rows for the Flight Parameters."""
+        """Radius and camera tilt rows for the Flight Parameters."""
         self.orbitRadiusSpin = QDoubleSpinBox()
         self.orbitRadiusSpin.setRange(5.0, 2000.0)
         self.orbitRadiusSpin.setValue(30.0)
@@ -318,11 +369,16 @@ class OrbitMixin:
 
         for widget in (self.orbitRadiusSpin, self.orbitTiltSpin):
             self._set_row_visible(form, widget, False)
+        self._orbit_rings = (self._orbit_ring_values(),)
+        self._refresh_orbit_ring_controls()
 
     def _orbit_connect_signals(self):
         self.drawCircleBtn.toggled.connect(self._on_draw_circle_toggled)
         self.editCircleBtn.toggled.connect(self._on_edit_circle_toggled)
         self.removeCircleBtn.clicked.connect(self._on_remove_orbit_circle)
+        self.orbitRingCombo.currentIndexChanged.connect(self._on_orbit_ring_selected)
+        self.addRingBtn.clicked.connect(self._on_add_orbit_ring)
+        self.removeRingBtn.clicked.connect(self._on_remove_orbit_ring)
         self.orbitRadiusSpin.valueChanged.connect(self._show_orbit_centre)
         self.orbitRadiusSpin.valueChanged.connect(self._on_param_changed)
         self.orbitTiltSpin.valueChanged.connect(self._on_param_changed)
@@ -340,6 +396,8 @@ class OrbitMixin:
         self._set_row_visible(self._flight_form, self.gsdSpin, not orbit)
         self._set_row_visible(self._area_form, self.orbitCentreLabel, orbit)
         self._set_row_visible(self._area_form, self._orbitDrawRow, orbit)
+        self._set_row_visible(self._area_form, self._orbitRingRow, orbit)
+        self._refresh_orbit_ring_controls()
         self._set_row_visible(self._area_form, self._sourceRow, not orbit)
         self._set_row_visible(self._area_form, self._sourceStack, not orbit)
 
@@ -347,10 +405,9 @@ class OrbitMixin:
         for widget in (self._pathInlineLabel, self.pathCurvedRadio, self.pathStraightRadio):
             widget.setVisible(not orbit)
 
-        # One ring: no splitting or terrain follow.
+        # Orbits split into flights like mapping, but have no terrain follow.
         drone = self.droneModelCombo.currentText()
-        splitting = (not orbit and registry.has(drone)
-                     and registry.get(drone).category == 'consumer')
+        splitting = registry.has(drone) and registry.get(drone).category == 'consumer'
         self._set_row_visible(self._organizer_form, self.splitCheck, splitting)
         self._set_row_visible(self._organizer_form, self.splitSpin, splitting)
         self.terrainFollowCheck.setVisible(not orbit)
@@ -379,7 +436,12 @@ class OrbitMixin:
         """Change values when the mission kind switches into or out of orbit."""
         if orbit:
             self.pathCurvedRadio.setChecked(True)   # DJI Fly keeps curved paths on re-save
-            self.splitCheck.setChecked(False)
+            # Splitting is on, as in mapping; an orbit that fits one flight
+            # still flies as one.
+            self._setting_split = True
+            self.splitCheck.setChecked(True)
+            self._setting_split = False
+            self._split_overridden = False
             self.terrainFollowCheck.setChecked(False)
             for button in (self.showTakeoffZoneBtn, self.showContoursBtn):
                 if button.isCheckable() and button.isChecked():
@@ -395,6 +457,14 @@ class OrbitMixin:
             self.sideOverlapSpin.setValue(self._orbit_saved_overlap)
             self._orbit_saved_overlap = None
         self.sideOverlapSpin.blockSignals(blocked)
+        blocked = self.maxWaypointsSpin.blockSignals(True)
+        if orbit and self._orbit_saved_max_waypoints is None:
+            self._orbit_saved_max_waypoints = self.maxWaypointsSpin.value()
+            self.maxWaypointsSpin.setValue(DEFAULT_ORBIT_MAX_WAYPOINTS)
+        elif not orbit and self._orbit_saved_max_waypoints is not None:
+            self.maxWaypointsSpin.setValue(self._orbit_saved_max_waypoints)
+            self._orbit_saved_max_waypoints = None
+        self.maxWaypointsSpin.blockSignals(blocked)
         if not orbit:
             self._clear_orbit_centre()
 
@@ -414,6 +484,99 @@ class OrbitMixin:
         label = self._row_label(self._flight_form, self.frontOverlapStack)
         if label is not None:
             label.setText('Front Overlap')
+
+    # ── Rings ─────────────────────────────────────────────────────────────
+
+    def _orbit_ring_values(self):
+        """The selected ring as the fields show it: (radius, altitude, tilt)."""
+        return (self.orbitRadiusSpin.value(), self.altitudeSpin.value(),
+                self.orbitTiltSpin.value())
+
+    def _orbit_rings_from_ui(self):
+        """Every ring in flight order, the selected one from its fields."""
+        rings = list(self._orbit_rings)
+        rings[self._orbit_ring_index] = self._orbit_ring_values()
+        return rings
+
+    def _show_orbit_ring_values(self, ring):
+        """Put a ring's values in the fields without treating it as an edit."""
+        for spin, value in zip((self.orbitRadiusSpin, self.altitudeSpin,
+                                self.orbitTiltSpin), ring):
+            blocked = spin.blockSignals(True)
+            spin.setValue(type(spin.value())(value))
+            spin.blockSignals(blocked)
+
+    def _select_orbit_ring(self, index, rings=None):
+        """Keep the selected ring's edits, then show ring `index`."""
+        rings = tuple(self._orbit_rings_from_ui() if rings is None else rings)
+        self._orbit_rings = rings
+        self._orbit_ring_index = index
+        self._show_orbit_ring_values(rings[index])
+        self._refresh_orbit_ring_controls()
+        self._show_orbit_centre()
+
+    def _refresh_orbit_ring_controls(self):
+        """Match the ring selector and its buttons to the rings."""
+        count = len(self._orbit_rings)
+        combo = self.orbitRingCombo
+        blocked = combo.blockSignals(True)
+        if combo.count() != count:
+            combo.clear()
+            combo.addItems(['Ring %d' % (number + 1) for number in range(count)])
+        combo.setCurrentIndex(self._orbit_ring_index)
+        combo.blockSignals(blocked)
+        combo.setEnabled(count > 1)
+        self.addRingBtn.setEnabled(count < MAX_ORBIT_RINGS and self._orbit_centre is not None)
+        self.removeRingBtn.setVisible(count > 1)
+        self.orbitRingLimitLabel.setVisible(count >= MAX_ORBIT_RINGS)
+        # The ring fields sit in Flight Parameters, so their labels name the
+        # ring they edit once there is more than one.
+        suffix = (' (Ring %d)' % (self._orbit_ring_index + 1)
+                  if count > 1 and self._mission_kind() == 'orbit' else '')
+        for widget, text in ((self.altitudeSpin, 'Altitude'),
+                             (self.orbitRadiusSpin, 'Radius'),
+                             (self.orbitTiltSpin, 'Camera Tilt')):
+            label = self._row_label(self._flight_form, widget)
+            if label is not None:
+                label.setText(text + suffix)
+
+    def _on_orbit_ring_selected(self, index):
+        if 0 <= index < len(self._orbit_rings) and index != self._orbit_ring_index:
+            self._select_orbit_ring(index)
+
+    def _on_add_orbit_ring(self):
+        """Add a ring after the last one: a little higher, the camera lower."""
+        rings = self._orbit_rings_from_ui()
+        if len(rings) >= MAX_ORBIT_RINGS or self._orbit_centre is None:
+            return
+        radius, altitude, tilt = rings[-1]
+        rings.append((radius,
+                      min(self.altitudeSpin.maximum(), altitude + NEW_RING_CLIMB_M),
+                      max(self.orbitTiltSpin.minimum(), tilt - NEW_RING_TILT_DEG)))
+        self._select_orbit_ring(len(rings) - 1, rings)
+        self._on_param_changed()
+        if len(rings) == MAX_ORBIT_RINGS:
+            self._set_info(RING_LIMIT_TEXT)
+
+    def _on_remove_orbit_ring(self):
+        """Remove the selected ring; the one before it becomes selected."""
+        rings = self._orbit_rings_from_ui()
+        if len(rings) < 2:
+            return
+        index = self._orbit_ring_index
+        del rings[index]
+        self._select_orbit_ring(max(0, index - 1), rings)
+        self._on_param_changed()
+
+    def _reset_orbit_rings(self):
+        """Back to the first ring only, as a new orbit starts."""
+        if len(self._orbit_rings) > 1 or self._orbit_ring_index:
+            first = self._orbit_rings_from_ui()[0]
+            self._orbit_rings = (first,)
+            self._orbit_ring_index = 0
+            self._show_orbit_ring_values(first)
+            self._update_gsd()          # Altitude changed without its signal
+        self._refresh_orbit_ring_controls()
 
     # ── Circle draw / edit tool ───────────────────────────────────────────
 
@@ -448,7 +611,7 @@ class OrbitMixin:
             reply = QMessageBox.question(
                 self, 'Replace Orbit Circle?',
                 'An orbit circle is already defined.\n\n'
-                'Do you want to discard it and draw a new one?',
+                'Do you want to discard it, with all its rings, and draw a new one?',
                 _MB_YES | _MB_NO, _MB_NO)
             if reply != _MB_YES:
                 self._reset_orbit_button(self.drawCircleBtn)
@@ -472,7 +635,10 @@ class OrbitMixin:
         self._set_info(
             'Editing the orbit circle: drag inside it to move it, or drag a '
             'square handle or the outline to make it larger or smaller. Click '
-            'Finish Editing when done.')
+            'Finish Editing when done.' if len(self._orbit_rings) < 2 else
+            'Editing ring %d: drag inside it to move all rings, or drag a '
+            'square handle or the outline to make this ring larger or smaller. '
+            'Click Finish Editing when done.' % (self._orbit_ring_index + 1))
 
     def _leave_orbit_tool(self):
         """Turn the circle tool off and restore the earlier map tool."""
@@ -520,6 +686,7 @@ class OrbitMixin:
         """Set the orbit centre (WGS84) and draw its marker."""
         self._orbit_centre = (float(longitude), float(latitude))
         self.orbitCentreLabel.setText(f'{latitude:.6f}, {longitude:.6f}')
+        self._refresh_orbit_ring_controls()
         self._show_orbit_centre()
 
     def _orbit_ring_points(self, centre=None, radius=None):
@@ -540,7 +707,10 @@ class OrbitMixin:
         feature = QgsFeature(layer.fields())
         feature.setGeometry(QgsGeometry.fromPolylineXY(
             [QgsPointXY(*self._orbit_centre), start]))
-        feature.setAttribute('label', f'R {self.orbitRadiusSpin.value():g} m')
+        label = f'R {self.orbitRadiusSpin.value():g} m'
+        if len(self._orbit_rings) > 1:
+            label = f'Ring {self._orbit_ring_index + 1}: {label}'
+        feature.setAttribute('label', label)
         layer.dataProvider().addFeatures([feature])
         layer.renderer().setSymbol(QgsLineSymbol.createSimple({
             'line_color': '#FF1493', 'line_width': '0.6', 'line_style': 'dash',
@@ -562,11 +732,36 @@ class OrbitMixin:
         preview_layers.register(layer, kind='orbit_radius')
         self._orbit_radius_layer_id = layer.id()
 
+    def _add_orbit_others_layer(self):
+        """The rings that are not selected, as thin dashed outlines."""
+        others = [ring for index, ring in enumerate(self._orbit_rings)
+                  if index != self._orbit_ring_index]
+        if not others:
+            return
+        layer = QgsVectorLayer('LineString?crs=EPSG:4326', 'FlyPath — Orbit Rings', 'memory')
+        layer.setCustomProperty('flypath_internal', True)
+        features = []
+        for radius, _altitude, _tilt in others:
+            points = self._orbit_ring_points(radius=radius)
+            feature = QgsFeature()
+            feature.setGeometry(QgsGeometry.fromPolylineXY(points + [points[0]]))
+            features.append(feature)
+        layer.dataProvider().addFeatures(features)
+        layer.renderer().setSymbol(QgsLineSymbol.createSimple({
+            'line_color': '255,20,147,150', 'line_width': '0.5', 'line_style': 'dash',
+        }))
+        preview_layers.register(layer, kind='orbit_rings')
+        self._orbit_others_layer_id = layer.id()
+
     def _show_orbit_centre(self):
-        """Draw the orbit circle, radius and centre as soon as the centre is set."""
+        """Draw the orbit rings, radius and centre as soon as the centre is set.
+
+        The selected ring is filled and labelled with its radius; the others
+        are thin outlines."""
         self._remove_orbit_centre_layer()
         if self._orbit_centre is None:
             return
+        self._add_orbit_others_layer()
         points = self._orbit_ring_points()
         ring = QgsVectorLayer('Polygon?crs=EPSG:4326', 'FlyPath — Orbit Circle', 'memory')
         ring.setCustomProperty('flypath_internal', True)
@@ -602,18 +797,20 @@ class OrbitMixin:
         """Remove the orbit circle, radius and centre marker layers."""
         layer_ids = [layer_id for layer_id in (
             self._orbit_centre_layer_id, self._orbit_ring_layer_id,
-            self._orbit_radius_layer_id) if layer_id]
+            self._orbit_radius_layer_id, self._orbit_others_layer_id) if layer_id]
         if layer_ids:
             preview_layers.remove(layer_ids)
         self._orbit_centre_layer_id = None
         self._orbit_ring_layer_id = None
         self._orbit_radius_layer_id = None
+        self._orbit_others_layer_id = None
 
     def _clear_orbit_centre(self):
         self._leave_orbit_tool()
         self._orbit_centre = None
         self.orbitCentreLabel.setText(NO_CENTRE_TEXT)
         self._remove_orbit_centre_layer()
+        self._reset_orbit_rings()
         self.editCircleBtn.setVisible(False)
         self.removeCircleBtn.setVisible(False)
 
@@ -633,12 +830,10 @@ class OrbitMixin:
         if drone.category != 'consumer' or not drone.website_code:
             raise ValueError('Orbit missions need a DJI Fly drone; %s is not supported.'
                              % drone.name)
-        return planning_adapter.build_orbit_request(
+        values = dict(
             centre=self._orbit_centre,
             drone_profile_id=drone.website_code,
-            radius_m=self.orbitRadiusSpin.value(),
-            altitude_m=self.altitudeSpin.value(),
-            gimbal_pitch_deg=self.orbitTiltSpin.value(),
+            rings=self._orbit_rings_from_ui(),
             clockwise=not self.reverseRouteCheck.isChecked(),
             speed_m_s=self.speedSpin.value(),
             capture_mode=self._mission_type(),
@@ -646,3 +841,19 @@ class OrbitMixin:
             finish_action=self.finishActionCombo.currentText(),
             max_waypoints_per_flight=self.maxWaypointsSpin.value(),
         )
+        request = planning_adapter.build_orbit_request(**values)
+        if not self.splitCheck.isChecked():
+            return request
+        # Split only when the orbit needs it, or the pilot asked for more
+        # flights: an orbit that fits one flight keeps the unsplit request,
+        # so a one-ring orbit stays the one flypath.io verifies.
+        requested = self.splitSpin.value() if self._split_overridden else 1
+        if requested == 1:
+            try:
+                errors = planning_adapter.plan(request)['validation']['errors']
+            except planning_adapter.PlanningError:
+                return request
+            if not any(error['code'] in _SPLIT_FIXES for error in errors):
+                return request
+        return planning_adapter.build_orbit_request(
+            **values, split_enabled=True, requested_flights=requested)

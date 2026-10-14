@@ -55,11 +55,11 @@ A walkthrough of installing and using FlyPath in QGIS: defining a survey area, s
 - **Takeoff Zone** (for repeatable mapping): consumer DJI missions fly relative to the takeoff point, so launching from ground at a different elevation than the first waypoint shifts the whole mission's height above ground, and its GSD, on every repeat flight. FlyPath shades the ground you can launch from to keep that constant: within a fixed radius of the first waypoint it highlights the ground whose elevation matches the first waypoint's, within an elevation tolerance you set (shown live as a GSD variance). It is a full circle on flat ground and the matching-elevation part of that circle where the terrain changes, with each split mission drawn in its own tone of purple. A companion overlay draws DEM elevation contours, one line per tolerance step, over the survey area or just the takeoff circles
 - **Launch height offset**: when you take off from something above the ground at the first waypoint (a car roof, a raised platform), enter that height and FlyPath shifts every written waypoint height so the real height above ground still matches the plan, without changing the GSD, overlap or flight lines. It applies to 2D and corridor missions and to every split mission, and defaults to 0 for a normal ground launch
 - **Corridor mapping** (mission type): map linear features such as roads, pipelines, rivers and power lines from a centre line instead of a polygon. Draw, select or edit a line, set a Buffer (the half-width covered each side), and FlyPath adds parallel passes automatically to cover it at the chosen altitude and side overlap, following the line's curves and corners. Waypoints are generated directly from the line for even coverage: one at every vertex in semi-automatic (the camera interval-captures between them) and one per photo in full-automatic. Divide it into flights by line: set **Min Flights** to split it into contiguous stretches, and/or place **Mission Breaks** on centre-line vertices (with snap-to-vertex) to force exact boundaries, while the Max Waypoints cap still keeps every mission valid. Terrain follow works with corridors too
-- **Orbit (3D Model)** (mission type): circle an object for 3D modelling. Draw the circle on the map (click for the centre, or press and drag to set the radius), then **Edit** it with resize handles or **Remove** it, like a drawn polygon. Set the **Radius** and **Camera Tilt**; FlyPath plans one ring of waypoints, each facing the centre, on a curved path. Full-automatic places a photo at every waypoint from the side overlap you set; semi-automatic flies the ring while you interval-capture, with the start and end kept apart by at most one photo spacing. **Reverse route** flies the ring counterclockwise. Field-test reports are welcome; orbit missions can be saved to and loaded from flypath.io
+- **Orbit (3D Model)** (mission type): circle an object for 3D modelling. Draw the circle on the map (click for the centre, or press and drag to set the radius), then **Edit** it with resize handles or **Remove** it, like a drawn polygon. Every waypoint faces the centre, on a curved path, with an adjustable **Camera Tilt**. Click **+ Add Ring** to fly up to 3 rings around the same centre, each with its own radius, altitude and camera tilt; the drone flies them in order, going from the last waypoint of one ring to the first waypoint of the next. Orbits use a waypoint limit of 200 and split into several flights when they need more waypoints or more than one battery: whole rings go into separate flights first, and a ring is only cut into parts when it does not fit one flight on its own. Full-automatic places a photo at every waypoint from the side overlap you set; semi-automatic flies each ring while you interval-capture, with its start and end kept apart by at most one photo spacing. **Reverse route** flies the rings counterclockwise. One-ring orbits that fit one flight can be saved to and loaded from flypath.io; saving orbits with more rings or flights there is coming soon. Field-test reports are welcome
 - Editable GSD linked two-way with altitude, so you can plan by target resolution, with effective photo spacing synced to drone model, speed, and interval
 - Live map preview that redraws the flight path as you change parameters, so the route always matches the statistics
 - Flight statistics shown in a compact card overlaid on the map next to the flight lines, measured from the actual generated flight path including the turns between lines: distance, coverage, flight-line count, photo count, estimated batteries, and flight time. Battery estimates plan against a 30% reserve, so usable time per battery is 70% of the drone's rated endurance. In full-automatic mode the flight-time and battery estimates also account for the stop at each photo
-- **Multi-battery mission splitting**: divide a large survey into several missions, one per battery, with the split count defaulting to the estimated batteries and editable to any value. Each mission is drawn in its own colour on the preview, and Save to computer writes one KMZ file per mission. Consecutive missions share a seam waypoint, so each mission begins exactly where the previous one ended
+- **Multi-battery mission splitting**: divide a large survey into several missions, one per battery, with the split count defaulting to the estimated batteries and editable to any value. Each mission is drawn in its own colour on the preview, and Save to computer writes one KMZ file per mission. Consecutive missions share a seam waypoint, so each mission begins exactly where the previous one ended (orbit flights split between rings start at the next ring instead)
 - Configurable safety actions: finish action and RC lost action
 - Exports native DJI WPML KMZ, compatible with DJI Fly on DJI RC2
 - **Direct RC export**: auto-detects the connected DJI RC (over USB, or as a removable drive), lists the missions DJI Fly tracks, and replaces the one you pick, transferred silently over USB with no prompts or pop-up windows
@@ -137,13 +137,19 @@ Only one polygon can be active at a time. Switching methods automatically remove
 
 For **Corridor Mapping**, the survey area is a **line** instead of a polygon: the same three ways apply (Draw Line on Map, pick a line layer/feature, or Use QGIS Selection on a selected line), and the drawn line can be edited the same way. The read-out shows the corridor **Length** rather than an area.
 
+For **Orbit (3D Model)**, the survey area is a **circle** around the object:
+
+- **Draw Circle on Map**: click the object to set the centre, or press on it and drag out to set the radius as well. The **Centre Point** shows its latitude and longitude.
+- **Edit**: drag inside the circle to move it (all rings move with it), or drag a square handle or the outline to make the selected ring larger or smaller. **Remove** clears the circle and its rings.
+- **Ring**: under the Draw buttons. **+ Add Ring** adds a ring around the same centre (up to 3; the panel says when the third, and last, ring is added), **Remove Ring** removes the selected one, and the ring list picks the ring whose values Flight Parameters shows.
+
 ### Step 2 - Configure flight parameters
 
 #### Mission Setup
 
 | Parameter | Description |
 |---|---|
-| Mission Type | The kind of mission to plan: **2D Mapping** (a grid over a survey polygon), **Corridor Mapping** (parallel passes along a centre line) or **Orbit (3D Model)** (one ring around a centre point, facing it). The panel adapts to the chosen type |
+| Mission Type | The kind of mission to plan: **2D Mapping** (a grid over a survey polygon), **Corridor Mapping** (parallel passes along a centre line) or **Orbit (3D Model)** (up to 3 rings around a centre point, facing it). The panel adapts to the chosen type |
 | Capture | **Semi** (you set the drone's interval capture before takeoff) or **Full** (a waypoint per photo, the drone shoots automatically) |
 | Flight Path | **Curved** (recommended) matches DJI Fly's native path and survives a save or cloud-sync on the controller unchanged; at photo spacing the lines stay essentially straight and only the turnarounds curve. **Straight** keeps perfectly straight mapping lines, but DJI Fly reconnects the waypoints out of order if the mission is re-saved on the controller, so use it only when you will not re-save there |
 | Drone | Sets camera specs used for GSD and spacing calculations |
@@ -152,7 +158,7 @@ For **Corridor Mapping**, the survey area is a **line** instead of a polygon: th
 
 | Parameter | Description |
 |---|---|
-| Altitude | Flight altitude above ground level (AGL) in metres |
+| Altitude | Flight altitude above ground level (AGL) in metres. In an orbit with several rings, the selected ring's altitude, and the label names that ring, for example **Altitude (Ring 2)** |
 | GSD | Target ground sampling distance in cm/px, editable and linked two-way with altitude |
 | Side Overlap | Cross-track overlap, controls the distance between flight lines |
 | Front Overlap | In **Full** capture: a direct input for the along-track overlap (sets the photo spacing). In **Semi** capture: a derived read-out of the effective along-track overlap, with the drone's minimum shutter interval shown beside it and a warning if it is too low |
@@ -160,6 +166,8 @@ For **Corridor Mapping**, the survey area is a **line** instead of a polygon: th
 | Direction | 2D Mapping only. Angle of flight lines, or click **Auto** to minimise flight time for the survey shape |
 | Margin | 2D Mapping only. Buffer added around the survey polygon boundary in metres |
 | Buffer | Corridor Mapping only (replaces Direction/Margin). Corridor half-width: how far to map on each side of the centre line (total width is twice this). The number of parallel passes is derived automatically from this, the altitude and the side overlap |
+| Radius | Orbit only. Distance from the centre to the selected ring, in metres. Leave enough room around the object for a safe flight |
+| Camera Tilt | Orbit only. Gimbal pitch for the selected ring: 0° looks at the horizon, -90° straight down; -30° to -45° suits 3D models |
 
 The gimbal is fixed at nadir (-90 degrees) for 2D and corridor missions. Orbit missions have an adjustable Camera Tilt.
 
@@ -167,10 +175,10 @@ The gimbal is fixed at nadir (-90 degrees) for 2D and corridor missions. Orbit m
 
 | Parameter | Description |
 |---|---|
-| Split Missions / Min Flights | Minimum number of separate missions, one per battery; defaults to the estimated batteries. The Max Waypoints cap can raise the actual count above this, never below. In **Corridor Mapping** this is labelled **Min Flights** and splits the corridor into that many contiguous stretches along the line (rather than chopping the waypoint route) |
-| Max Waypoints | Maximum waypoints per mission (DJI caps a mission at about 200); the mission is split so none exceeds it. Applies to 2D and corridor missions; orbit uses one flight |
+| Split Missions / Min Flights | Minimum number of separate missions, one per battery; defaults to the estimated batteries. The Max Waypoints cap can raise the actual count above this, never below. In **Corridor Mapping** this is labelled **Min Flights** and splits the corridor into that many contiguous stretches along the line (rather than chopping the waypoint route). In **Orbit** an orbit that fits one flight stays one flight; otherwise whole rings become separate flights first |
+| Max Waypoints | Maximum waypoints per mission (DJI caps a mission at about 200); the mission is split so none exceeds it. Orbit missions default to 200 and go back to your mapping value when you leave Orbit |
 | Cross-hatch | 2D Mapping only. Flies the grid and then again perpendicular to the flight direction (double coverage; roughly doubles flight time, photos and battery use) |
-| Reverse route | 2D Mapping without terrain follow: starts the mission from the opposite end. Orbit: flies the ring counterclockwise instead of clockwise |
+| Reverse route | 2D Mapping without terrain follow: starts the mission from the opposite end. Orbit: flies the rings counterclockwise instead of clockwise |
 | Set Mission Breaks | Corridor Mapping only. Click centre-line vertices (the cursor snaps to them) to force a mission boundary there; click again to remove it. Breaks combine with Min Flights and Max Waypoints, so you can hand-place exact section boundaries (for example at safe landing points) and still cap each mission |
 | Terrain Follow | Optional. Vary each waypoint's height so the drone holds a constant height above ground, using free global elevation data fetched into memory only (never saved to disk). Needs an internet connection while planning, unless you pick a local DEM (below) |
 | DEM | Optional, in the Survey Area section, shown when Terrain Follow is on. Sample ground heights from a loaded single-band elevation raster instead of the online data. Leave it on "none" to use the online source. Points outside the selected raster raise a warning rather than producing invalid heights |
@@ -199,6 +207,8 @@ Click **Preview on Map** to generate the flight grid and display it on the canva
 
 When you set **Split Missions** above 1, each mission's flight path is drawn in its own colour, with its own start and end markers, so you can see how the survey divides across batteries. The missions join at shared seam waypoints where one ends and the next begins.
 
+For an **orbit**, the selected ring is filled pink and labelled with its radius (for example `Ring 2: R 45 m`), the other rings are thin dashed outlines, and the centre is marked with a cross. A split orbit draws each flight in its own colour, the same as a split survey.
+
 Waypoint markers are labelled with their number. With **Terrain Follow** on, each waypoint also carries two values in its attribute table (open the Waypoints layer's attribute table or use Identify): `ground_elevation_m` (the ground elevation from the DEM) and `flight_height_m` (the flight height above the launch point, as shown on the RC).
 
 Flight statistics (distance, coverage, flight lines, photos, batteries, flight time) appear in a compact card overlaid on the top-right of the map, next to the flight lines, measured from the actual flight path including the turns between lines. The card is click-through, so it never blocks map interaction. Once a preview is on the map, changing any parameter redraws the path live and recalculates the statistics, so the numbers always match what you see.
@@ -207,7 +217,7 @@ Flight statistics (distance, coverage, flight lines, photos, batteries, flight t
 
 ### Step 4 - Export KMZ
 
-The action bar has a **Destination** selector with two modes: *Save to computer* and *Send to DJI RC*. The **Export** button changes its label to match what it will do.
+The action bar has a **Destination** selector with two modes: *Save to computer* and *Send to DJI RC*. It starts on *Send to DJI RC* and then remembers the mode you used last. The **Export** button changes its label to match what it will do.
 
 ---
 
@@ -220,7 +230,7 @@ Use this to save the mission as a `.kmz` file on your PC or an external drive.
 3. Click **Export KMZ**. A save dialog opens with a dated default filename.
 4. After saving, FlyPath offers to open the folder.
 
-If **Split Missions** is above 1, FlyPath writes one file per mission from the name you choose, numbered in order: `<name>_1_of_N.kmz`, `<name>_2_of_N.kmz`, and so on.
+If the mission is split, FlyPath writes one file per mission from the name you choose, numbered in order: `<name>_1_of_N.kmz`, `<name>_2_of_N.kmz`, and so on.
 
 ---
 
@@ -241,7 +251,7 @@ This replaces an existing mission directly on the DJI RC over USB, with no manua
 3. If it still is not found, click **Locate folder manually**. This opens a browser of *This PC* that can reach the RC and any drive (unlike the standard folder dialog, which cannot show MTP devices); navigate to the `waypoint` folder and click Select.
 4. If the folder is found but has no missions, FlyPath tells you to create one in DJI Fly first (see the Important note above).
 5. Pick the mission you want to replace. Each mission shows a preview of its flight path and its waypoint count, rendered from that mission's own waypoints, so you can confirm the right one at a glance; click the preview to open a zoomable viewer. Use the date to match what you see in DJI Fly.
-6. If **Split Missions** is above 1, a **Mission part** picker appears. The RC replaces one mission at a time, so choose which part to send into the selected slot and repeat for each part, filling one RC mission per part.
+6. If the mission is split, a **Mission part** picker appears. The RC replaces one mission at a time, so choose which part to send into the selected slot and repeat for each part, filling one RC mission per part.
 7. Click **Replace "…" on RC**. FlyPath writes the new mission into the selected UUID folder.
 8. Disconnect the RC, then close and reopen DJI Fly to see the updated mission.
 
@@ -278,6 +288,8 @@ FlyPath/
 ├── flypath_dialog.py     # Main UI panel and export logic
 ├── map_tools.py          # Interactive polygon drawing tool
 ├── grid_planner.py       # Flight grid generation (QGIS geometry)
+├── orbit_controller.py   # Orbit (3D Model) controls, circle tool and rings
+├── planning_adapter.py   # Requests to and results from the shared engine
 ├── flypath_engine/       # Generated engine (ignored by Git, bundled in ZIP)
 ├── wpml/                 # DJI WPML KMZ writers (consumer / enterprise) via a factory
 ├── hardware/             # Drone registry (drones.json + models)
@@ -297,7 +309,7 @@ FlyPath/
 - Tested and verified on Windows 10 / 11 only, Linux and macOS support is planned for a future release
 - Direct RC export requires a DJI RC2 connected via USB with at least one existing mission
 - DJI Mini 3 Pro droneEnumValue (`97`) is community-verified, not confirmed from a native mission file
-- 2D grid and corridor (linear) missions support optional terrain follow; Orbit (3D Model) missions use one ring without terrain follow. 3D facade missions are planned for a future release
+- 2D grid and corridor (linear) missions support optional terrain follow; Orbit (3D Model) missions use up to 3 rings, split into flights when needed, without terrain follow; orbits with more than one ring or flight cannot be saved to flypath.io yet. 3D facade missions are planned for a future release
 - **Corridor mapping** is nadir (-90 degrees) only, like 2D mapping; oblique imagery for vertical structures is planned for a future release. Mission Breaks are placed on the centre line's existing vertices
 - **Terrain follow** uses a bare-earth ~30 m DEM, so it follows the ground, not trees or buildings; keep a safe margin, and it needs an internet connection while planning unless you select a local DEM raster (which also removes the internet dependency). It assumes takeoff at the first waypoint of each exported flight (where the relative heights are referenced)
 - Mission splitting divides the survey into whole flight-line groups by battery count; sending split missions to the RC replaces one existing mission slot per part, so create enough slots in DJI Fly first

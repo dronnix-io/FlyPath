@@ -211,15 +211,37 @@ def validate_mission(mission):
             if settings.get(key) is not None and (type(settings[key]) not in (int, float)
                                     or not math.isfinite(settings[key])):
                 raise ValueError()
+        if 'orbit_rings' in settings and settings.get('mapping_style') != 'orbit':
+            raise ValueError()
         if settings.get('mapping_style') == 'orbit':
+            rings = settings.get('orbit_rings')
+            if rings is not None:
+                if not isinstance(rings, list) or not 1 <= len(rings) <= 3:
+                    raise ValueError()
+                for ring in rings:
+                    if (not isinstance(ring, dict)
+                            or set(ring) != {'radius_m', 'altitude_m', 'gimbal_pitch_deg'}
+                            or any(type(value) not in (int, float) or not math.isfinite(value)
+                                   for value in ring.values())
+                            or not 5 <= ring['radius_m'] <= 2000
+                            or not 10 <= ring['altitude_m'] <= 500
+                            or not -90 <= ring['gimbal_pitch_deg'] <= 0):
+                        raise ValueError()
+                first = rings[0]
+                if (first['radius_m'] != settings.get('orbit_radius')
+                        or first['altitude_m'] != settings.get('altitude')
+                        or first['gimbal_pitch_deg'] != settings.get('orbit_tilt')):
+                    raise ValueError()
             if (len(mission.get('polygon', [])) != 1
                     or not 5 <= settings.get('orbit_radius', 0) <= 2000
                     or not -90 <= settings.get('orbit_tilt', 1) <= 0
                     or not 10 <= settings.get('altitude', 0) <= 500
                     or settings.get('flight_path', 'curved') != 'curved'
                     or settings.get('terrain_follow', False)
-                    or settings.get('split_enabled', False)
-                    or settings.get('split_count', 1) != 1
+                    or type(settings.get('split_count', 1)) is not int
+                    or not 1 <= settings.get('split_count', 1) <= 99
+                    or (not settings.get('split_enabled', False)
+                        and settings.get('split_count', 1) != 1)
                     or settings.get('cross_hatch', False)):
                 raise ValueError()
     except (ValueError, TypeError, OverflowError, RecursionError):

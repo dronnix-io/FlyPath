@@ -71,6 +71,8 @@ def write(drone, spec, filepath):
         raise ValueError('Terrain heights do not match the waypoints.')
     if spec.headings is not None and len(spec.headings) != len(spec.waypoints):
         raise ValueError('Waypoint headings do not match the waypoints.')
+    if spec.gimbal_pitches is not None and len(spec.gimbal_pitches) != len(spec.waypoints):
+        raise ValueError('Waypoint camera pitches do not match the waypoints.')
 
     mission_config = _mission_config_xml(drone.drone_enum, finish_action,
                                          spec.speed_ms, exit_on_rc_lost, rc_lost_action)
@@ -80,7 +82,8 @@ def write(drone, spec, filepath):
     # back scrambled (issue #13).
     placemarks = _placemark_blocks(spec.waypoints, spec.altitude_m, spec.speed_ms,
                                    spec.gimbal_pitch, spec.capture_mode, spec.heights,
-                                   spec.curved_path, spec.actions, spec.headings)
+                                   spec.curved_path, spec.actions, spec.headings,
+                                   spec.gimbal_pitches)
     template_kml   = _build_template_kml(mission_config, ts_ms, spec.mission_name,
                                          spec.speed_ms, spec.altitude_m, height_mode,
                                          placemarks)
@@ -150,7 +153,7 @@ def _build_template_kml(mission_config, ts_ms, mission_name,
 
 def _placemark_blocks(waypoints, altitude_m, speed_ms, gimbal_pitch,
                       capture_mode='semi', heights=None, curved=True, actions=None,
-                      headings=None):
+                      headings=None, gimbal_pitches=None):
     """Build the waypoint Placemark list shared by template.kml and waylines.wpml.
 
     In 'full' capture mode every waypoint also carries a takePhoto action, so
@@ -187,9 +190,14 @@ def _placemark_blocks(waypoints, altitude_m, speed_ms, gimbal_pitch,
             group_id += 1
         wp_height = heights[idx] if heights is not None else altitude_m
         heading = headings[idx] if headings is not None else None
+        pitch = gimbal_pitch
+        if gimbal_pitches is not None:
+            # Written like the single pitch: -35, not -35.0.
+            pitch = gimbal_pitches[idx]
+            pitch = int(pitch) if float(pitch).is_integer() else pitch
         placemark_blocks.append(
             _placemark(idx, lon, lat, wp_height, speed_ms,
-                       action_groups, gimbal_pitch, curved, heading)
+                       action_groups, pitch, curved, heading)
         )
 
     return '\n'.join(placemark_blocks)

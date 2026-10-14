@@ -194,6 +194,78 @@ def test_orbit_headings_reach_the_flight_and_the_wpml():
     assert '<wpml:gimbalPitchRotateAngle>-35.0</wpml:gimbalPitchRotateAngle>' in wpml
 
 
+RINGS = [(30, 25, -20), (30, 40, -35), (20, 55, -60)]
+
+
+def ring_request(rings=RINGS, **overrides):
+    return orbit_request(radius_m=None, altitude_m=None, gimbal_pitch_deg=None,
+                         rings=rings, **overrides)
+
+
+def test_one_listed_ring_is_the_single_ring_request():
+    # flypath.io and earlier plugins verify single-ring orbits by this request.
+    assert ring_request([(30, 25, -35)]) == orbit_request()
+    planned = ring_request()
+    assert 'radius_m' not in planned and len(planned['rings']) == 3
+    assert planned['rings'][2] == {'radius_m': 20, 'altitude_m': 55, 'gimbal_pitch_deg': -60}
+    single = orbit_request()
+    flight = planning_adapter.consume_result(single, planning_adapter.plan(single))[0]
+    assert flight['heights'] is None and flight['gimbal_pitches'] is None
+
+
+def test_multi_ring_flights_carry_each_ring_altitude_and_tilt():
+    for capture_mode in ('full', 'semi'):
+        planned = ring_request(capture_mode=capture_mode)
+        result = planning_adapter.plan(planned)
+        rows = result['route']['waypoints']
+        flight = planning_adapter.consume_result(planned, result)[0]
+        assert len(flight['heights']) == len(flight['waypoints']) == len(rows)
+        assert flight['heights'] == [RINGS[row['ring_index']][1] for row in rows]
+        assert flight['gimbal_pitches'] == [RINGS[row['ring_index']][2] for row in rows]
+        assert [row['ring_index'] for row in rows] == sorted(row['ring_index'] for row in rows)
+
+
+def test_split_orbit_flights_start_at_their_ring_or_share_a_seam():
+    planned = ring_request(split_enabled=True, requested_flights=3)
+    assert planned['split'] == {'enabled': True, 'requested_flights': 3,
+                                'max_waypoints_per_flight': 200}
+    assert orbit_request()['split'] == {'enabled': False, 'max_waypoints_per_flight': 200}
+    result = planning_adapter.plan(planned)
+    flights = planning_adapter.consume_result(planned, result)
+    assert len(flights) == 3
+    for flight, (_radius, altitude, tilt) in zip(flights, RINGS):
+        assert flight['heights'] == [altitude] * len(flight['waypoints'])
+        assert flight['gimbal_pitches'] == [tilt] * len(flight['waypoints'])
+        assert len(flight['headings']) == len(flight['waypoints'])
+    # A gap that is not a ring boundary is refused.
+    broken = deepcopy(result)
+    broken['flights'][1]['route_start_waypoint_index'] += 1
+    try:
+        planning_adapter.consume_result(planned, broken)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('a gap inside a ring was accepted')
+    # One ring larger than the limit is cut into parts that share their seams.
+    cut = orbit_request(split_enabled=True, max_waypoints_per_flight=10)
+    parts = planning_adapter.consume_result(cut, planning_adapter.plan(cut))
+    assert len(parts) > 1 and all(len(part['waypoints']) <= 10 for part in parts)
+    assert all(part['gimbal_pitches'] == [-35] * len(part['waypoints']) for part in parts)
+
+
+def test_forged_ring_altitudes_are_rejected():
+    planned = ring_request()
+    for altitude in (0, -5, 501, float('nan'), None):
+        result = planning_adapter.plan(planned)
+        result['route']['waypoints'][4]['altitude_m'] = altitude
+        try:
+            planning_adapter.consume_result(planned, result)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('altitude %r accepted' % altitude)
+
+
 def test_2d_flights_have_no_headings():
     planned_request = request()
     flight = planning_adapter.consume_result(planned_request, planning_adapter.plan(planned_request))[0]
@@ -229,6 +301,16 @@ def test_orbit_provenance_verifies_result_and_settings():
     supported, flights = planning_adapter.validate_mission_provenance(mission)
     assert supported and len(flights) == 1 and flights[0]['headings']
     assert mission == saved
+    preferred = deepcopy(saved)
+    preferred['settings'].update(split_enabled=True, split_count=1)
+    assert planning_adapter.validate_mission_provenance(preferred)[0]
+    preferred['settings']['split_count'] = 2
+    try:
+        planning_adapter.validate_mission_provenance(preferred)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('unsplit request accepted with two requested flights')
     with patch.object(planning_adapter, 'SUPPORTED_ENGINE_VERSIONS',
                       planning_adapter.SUPPORTED_ENGINE_VERSIONS + ('1.10.0',)):
         for version in ('1.2.0', '1.10.0', '1.1.0', '9.0.0', '1.2.x'):
@@ -257,6 +339,52 @@ def test_orbit_provenance_verifies_result_and_settings():
         else:
             raise AssertionError('tampered orbit provenance accepted')
 
+
+
+def test_multi_ring_split_provenance_verifies_settings_and_flights():
+    planned = ring_request(split_enabled=True, requested_flights=3)
+    result = planning_adapter.plan(planned)
+    rings = deepcopy(planned['rings'])
+    mission = {
+        'drone_model': 'mini4pro', 'polygon': [[51.0, -114.0]],
+        'planning_request': planned, 'planning_result': result,
+        'waypoints': [[row['position']['latitude_deg'], row['position']['longitude_deg']]
+                      for row in result['route']['waypoints']],
+        'settings': {
+            'mapping_style': 'orbit', 'orbit_rings': rings,
+            'orbit_radius': rings[0]['radius_m'], 'altitude': rings[0]['altitude_m'],
+            'orbit_tilt': rings[0]['gimbal_pitch_deg'], 'speed': 3,
+            'reverse_route': False, 'finish_action': 'goHome',
+            'capture_mode': 'full', 'side_overlap': 90,
+            'split_enabled': True, 'split_count': 3, 'split_max_wp': 200,
+        },
+    }
+    supported, flights = planning_adapter.validate_mission_provenance(mission)
+    assert supported and len(flights) == 3
+    assert all(flight['headings'] and flight['heights'] and flight['gimbal_pitches']
+               for flight in flights)
+    old_label = deepcopy(mission)
+    old_label['planning_result']['engine_version'] = '1.2.0'
+    try:
+        planning_adapter.validate_mission_provenance(old_label)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('multi-ring result accepted with an engine 1.2.0 label')
+    for change in ('ring', 'split', 'boundary'):
+        bad = deepcopy(mission)
+        if change == 'ring':
+            bad['settings']['orbit_rings'][1]['altitude_m'] += 1
+        elif change == 'split':
+            bad['settings']['split_count'] = 2
+        else:
+            bad['planning_result']['flights'][1]['route_start_waypoint_index'] += 1
+        try:
+            planning_adapter.validate_mission_provenance(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('tampered %s provenance accepted' % change)
 
 
 def test_orbit_results_follow_the_supported_engine_versions():
