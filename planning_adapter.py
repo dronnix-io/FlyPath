@@ -14,14 +14,15 @@ PlanningError = _PlanningError
 # These releases have identical planning behavior; revisit on engine upgrades.
 SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0', '1.3.0')
 ORBIT_MIN_ENGINE_VERSION = (1, 2, 0)   # the first engine release with plan_orbit
+ORBIT_RINGS_MIN_ENGINE_VERSION = (1, 3, 0)
 
 
-def _orbit_capable(version):
-    """True for an explicitly supported Orbit release (1.2.0 or newer)."""
+def _orbit_capable(version, minimum=ORBIT_MIN_ENGINE_VERSION):
+    """True for an explicitly supported Orbit release at or above minimum."""
     return (isinstance(version, str)
             and version in SUPPORTED_ENGINE_VERSIONS
             and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version) is not None
-            and tuple(int(part) for part in version.split('.')) >= ORBIT_MIN_ENGINE_VERSION)
+            and tuple(int(part) for part in version.split('.')) >= minimum)
 
 
 FINISH_ACTIONS = {
@@ -274,15 +275,22 @@ def validate_mission_provenance(mission):
     if settings.get('mapping_style') == 'orbit':
         if not _orbit_capable(result.get('engine_version')):
             raise ValueError('This saved orbit engine version is not supported.')
+        rings = settings.get('orbit_rings') or [{
+            'radius_m': settings.get('orbit_radius'),
+            'altitude_m': settings.get('altitude'),
+            'gimbal_pitch_deg': settings.get('orbit_tilt'),
+        }]
+        request_split = request.get('split')
+        if (len(rings) > 1 or (isinstance(request_split, dict)
+                              and request_split.get('enabled') is True)) and not _orbit_capable(
+                result.get('engine_version'), ORBIT_RINGS_MIN_ENGINE_VERSION):
+            raise ValueError('This saved orbit needs planning engine 1.3.0 or newer.')
         expected = {
             'operation': 'plan_orbit',
             'mapping_style': 'orbit',
             'drone_profile_id': mission.get('drone_model'),
             'centre': dict(zip(('latitude_deg', 'longitude_deg'),
                                (mission.get('polygon') or [[None, None]])[0])),
-            'radius_m': settings.get('orbit_radius'),
-            'gimbal_pitch_deg': settings.get('orbit_tilt'),
-            'altitude_m': settings.get('altitude'),
             'speed_m_s': settings.get('speed'),
             'direction': 'counterclockwise' if settings.get('reverse_route') else 'clockwise',
             'finish_action': WEBSITE_FINISH_ACTIONS.get(settings.get('finish_action')),
@@ -290,6 +298,13 @@ def validate_mission_provenance(mission):
         }
         if any(request.get(key) != value for key, value in expected.items()):
             raise ValueError('The saved orbit request does not match the mission settings.')
+        if len(rings) == 1:
+            if (request.get('rings') is not None or any(
+                    request.get(key) != value for key, value in rings[0].items())):
+                raise ValueError('The saved orbit rings do not match the mission settings.')
+        elif (request.get('rings') != rings or any(
+                key in request for key in ('radius_m', 'altitude_m', 'gimbal_pitch_deg'))):
+            raise ValueError('The saved orbit rings do not match the mission settings.')
         capture = request.get('capture')
         full = settings.get('capture_mode') == 'full'
         if (not isinstance(capture, dict)
@@ -297,8 +312,16 @@ def validate_mission_provenance(mission):
                 or (full and capture.get('side_overlap_ratio') != _ratio(settings.get('side_overlap')))):
             raise ValueError('The saved orbit capture does not match the mission settings.')
         split = request.get('split')
-        if (not isinstance(split, dict) or split.get('enabled') is not False
-                or split.get('max_waypoints_per_flight') != settings.get('split_max_wp')):
+        enabled = settings.get('split_enabled', False)
+        request_enabled = split.get('enabled') if isinstance(split, dict) else None
+        # The website can save the checked split preference even when an orbit
+        # fitting one flight has an unsplit planning request.
+        preference_only = (enabled is True and settings.get('split_count', 1) == 1
+                           and request_enabled is False)
+        if (not isinstance(split, dict) or (request_enabled is not enabled and not preference_only)
+                or split.get('max_waypoints_per_flight') != settings.get('split_max_wp')
+                or (request_enabled and split.get('requested_flights') != settings.get('split_count'))
+                or (not request_enabled and 'requested_flights' in split)):
             raise ValueError('The saved orbit split does not match the mission settings.')
     else:
         expected = {
@@ -344,7 +367,8 @@ def validate_mission_provenance(mission):
             raise ValueError('The saved planning area does not match the mission geometry.')
     flights = consume_result(request, result, require_supported=False,
                              legacy_waypoints=mission.get('waypoints') or None)
-    if settings.get('mapping_style') == 'orbit' and (len(flights) != 1 or flights[0]['headings'] is None):
+    if settings.get('mapping_style') == 'orbit' and any(
+            flight['headings'] is None for flight in flights):
         raise ValueError('The saved orbit route is invalid.')
     supported = (request.get('contract_version') == CONTRACT_VERSION
                  and result.get('contract_version') == CONTRACT_VERSION

@@ -200,21 +200,12 @@ class WebsiteSyncLifecycleMixin:
             self._update_web_buttons()
 
     def _on_send_to_website(self, save_as_new=False):
+        """Save the linked mission, or explicitly create and link a new one."""
         if self._planning.save_requires_regeneration():
             QMessageBox.warning(
                 self, 'Regeneration Required',
                 'The saved route no longer matches the editable settings. Choose '
                 'Preview to regenerate it before saving to FlyPath.')
-            return False
-        """Save the linked mission, or explicitly create and link a new one."""
-        if self._mission_kind() == 'orbit' and (
-                len(self._orbit_rings) > 1
-                or (self._planning.request or {}).get('split', {}).get('enabled')):
-            QMessageBox.information(
-                self, 'Coming Soon',
-                'Saving orbits with more than one ring or flight to FlyPath is '
-                'coming soon. You can export this mission to KMZ files or your '
-                'controller now.')
             return False
         if not (self._preview_layer_ids and self._missions):
             QMessageBox.information(self, 'Preview First', 'Preview the mission on the map before saving it to FlyPath.')
@@ -380,10 +371,18 @@ class WebsiteSyncLifecycleMixin:
         if orbit:
             settings['flight_path'] = 'curved'
             settings['terrain_follow'] = False
-            settings['split_enabled'] = False
-            settings['split_count'] = 1
-            settings['orbit_radius'] = self.orbitRadiusSpin.value()
-            settings['orbit_tilt'] = self.orbitTiltSpin.value()
+            rings = self._orbit_rings_from_ui()
+            settings['altitude'] = rings[0][1]
+            settings['orbit_radius'] = rings[0][0]
+            settings['orbit_tilt'] = rings[0][2]
+            split = (self._planning.request or {}).get('split', {})
+            settings['split_enabled'] = split.get('enabled') is True
+            settings['split_count'] = split.get('requested_flights', 1)
+            if len(rings) > 1:
+                settings['orbit_rings'] = [
+                    {'radius_m': radius, 'altitude_m': altitude,
+                     'gimbal_pitch_deg': pitch}
+                    for radius, altitude, pitch in rings]
         elif corridor:
             # The plugin's Buffer is the half-width each side; the website's
             # corridor_width is the full mapped width.
@@ -594,7 +593,7 @@ class WebsiteSyncLifecycleMixin:
             'removePolygonBtn', 'photoIntervalSpin', 'gsdSpin',
             'frontOverlapStack', 'destCombo', 'destStack',
             'orbitRadiusSpin', 'orbitTiltSpin', 'drawCircleBtn', 'editCircleBtn',
-            'removeCircleBtn',
+            'removeCircleBtn', 'orbitRingCombo', 'addRingBtn', 'removeRingBtn',
         )
         widgets = {}
         appearance = {}
@@ -612,7 +611,8 @@ class WebsiteSyncLifecycleMixin:
         combo_items = {name: [(getattr(self, name).itemText(i),
                                getattr(self, name).itemData(i))
                               for i in range(getattr(self, name).count())]
-                       for name in ('layerCombo', 'featureCombo', 'splitPartCombo')}
+                       for name in ('layerCombo', 'featureCombo', 'splitPartCombo',
+                                    'orbitRingCombo')}
         form_labels = []
         for form in (self._flight_form, self._organizer_form, self._area_form):
             for name in controls:
@@ -791,7 +791,7 @@ class WebsiteSyncLifecycleMixin:
         self.missionTypeCombo.setCurrentText(
             'Orbit (3D Model)' if orbit else 'Corridor Mapping' if corridor else '2D Mapping')
         if orbit:
-            self._reset_orbit_rings()   # saved orbits have one ring
+            self._reset_orbit_rings()
         self.droneModelCombo.setCurrentText(drone_name)
         (self.captureFullRadio if capture == 'full'
          else self.captureSemiRadio).setChecked(True)
@@ -832,6 +832,23 @@ class WebsiteSyncLifecycleMixin:
             widget.setValue(type(widget.value())(bounded))
             if abs(widget.value() - float(value)) > 1e-6:
                 adjusted.append('%s: %g -> %g' % (label, value, widget.value()))
+        if orbit and settings.get('orbit_rings'):
+            rings = []
+            for index, ring in enumerate(settings['orbit_rings'], 1):
+                values = []
+                for label, widget, key in (
+                        ('radius', self.orbitRadiusSpin, 'radius_m'),
+                        ('altitude', self.altitudeSpin, 'altitude_m'),
+                        ('tilt', self.orbitTiltSpin, 'gimbal_pitch_deg')):
+                    value = ring[key]
+                    bounded = max(widget.minimum(), min(widget.maximum(), value))
+                    converted = type(widget.value())(bounded)
+                    if abs(converted - value) > 1e-6:
+                        adjusted.append('ring %d %s: %g -> %g' %
+                                        (index, label, value, converted))
+                    values.append(converted)
+                rings.append(tuple(values))
+            self._select_orbit_ring(0, rings)
         self.crossHatchCheck.setChecked(bool(settings.get('cross_hatch')))
         blocked = self.terrainFollowCheck.blockSignals(True)
         self.terrainFollowCheck.setChecked(bool(settings.get('terrain_follow')))

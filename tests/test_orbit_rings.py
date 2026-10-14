@@ -112,10 +112,13 @@ def _test_orbit_rings_plan_export_and_reset():
         assert settings.gimbal_pitches == tuple(rings[row['ring_index']][2] for row in rows)
         assert settings.altitude_m == 25 and settings.gimbal_pitch == -20
 
-        # flypath.io does not store rings yet.
-        with patch.object(sync_controller.QMessageBox, 'information') as information:
-            assert planner._on_send_to_website() is False
-        assert information.call_args.args[1] == 'Coming Soon'
+        multi = planner._website_payload('Three rings')
+        assert multi['settings']['orbit_rings'] == planner._planning.request['rings']
+        assert multi['settings']['orbit_radius'] == rings[0][0]
+        assert multi['settings']['altitude'] == rings[0][1]
+        assert multi['settings']['orbit_tilt'] == rings[0][2]
+        assert multi['settings']['split_enabled'] is False
+        assert multi['settings']['split_count'] == 1
 
         # A failed import keeps the rings; a successful one starts from one ring.
         before = (planner._orbit_rings_from_ui(), planner._orbit_ring_index,
@@ -202,6 +205,7 @@ def _test_orbits_split_into_flights_and_export_one_kmz_each():
             'enabled': False, 'max_waypoints_per_flight': 200}
         planner.addRingBtn.click()
         planner.addRingBtn.click()
+        rings = planner._orbit_rings_from_ui()
         planner.maxWaypointsSpin.setValue(60)
         planner._on_preview()
         result = planner._planning.result
@@ -241,10 +245,26 @@ def _test_orbits_split_into_flights_and_export_one_kmz_each():
             first_tilt = tilts[part[0]['ring_index']]
             assert '<wpml:gimbalPitchRotateAngle>%s</wpml:gimbalPitchRotateAngle>' % float(first_tilt) in wpml
 
-        # flypath.io does not store split orbits yet.
-        with patch.object(sync_controller.QMessageBox, 'information') as information:
-            assert planner._on_send_to_website() is False
-        assert information.call_args.args[1] == 'Coming Soon'
+        saved = planner._website_payload('Split rings')
+        assert saved['settings']['split_enabled'] is True
+        assert saved['settings']['split_count'] == saved['planning_request']['split']['requested_flights']
+        sync_controller.flypath_sync.validate_mission(saved)
+        with patch.object(planner, '_plan_shared', side_effect=AssertionError('regenerated')):
+            adjusted, note = planner._apply_website_mission(saved)
+        assert not adjusted and not note
+        assert planner._orbit_rings_from_ui() == rings
+        assert planner._orbit_ring_index == 0
+        assert planner._planning.result == result
+        assert len(planner._missions) == len(flights)
+        assert planner._export_settings().heights == tuple(row['altitude_m'] for row in rows)
+        assert planner._export_settings().headings == tuple(row['heading_deg'] for row in rows)
+        assert planner.splitSpin.value() == saved['planning_request']['split']['requested_flights']
+        assert planner._orbit_request_from_ui() == saved['planning_request']
+        assert not planner._planning.dirty
+        planner.orbitRingCombo.setCurrentIndex(2)
+        assert planner._orbit_rings_from_ui() == rings
+        assert planner._orbit_request_from_ui() == saved['planning_request']
+        assert not planner._planning.dirty
 
         # Turning splitting off asks for it, with the numbers.
         planner.splitCheck.setChecked(False)

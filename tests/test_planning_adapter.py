@@ -301,6 +301,16 @@ def test_orbit_provenance_verifies_result_and_settings():
     supported, flights = planning_adapter.validate_mission_provenance(mission)
     assert supported and len(flights) == 1 and flights[0]['headings']
     assert mission == saved
+    preferred = deepcopy(saved)
+    preferred['settings'].update(split_enabled=True, split_count=1)
+    assert planning_adapter.validate_mission_provenance(preferred)[0]
+    preferred['settings']['split_count'] = 2
+    try:
+        planning_adapter.validate_mission_provenance(preferred)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('unsplit request accepted with two requested flights')
     with patch.object(planning_adapter, 'SUPPORTED_ENGINE_VERSIONS',
                       planning_adapter.SUPPORTED_ENGINE_VERSIONS + ('1.10.0',)):
         for version in ('1.2.0', '1.10.0', '1.1.0', '9.0.0', '1.2.x'):
@@ -329,6 +339,52 @@ def test_orbit_provenance_verifies_result_and_settings():
         else:
             raise AssertionError('tampered orbit provenance accepted')
 
+
+
+def test_multi_ring_split_provenance_verifies_settings_and_flights():
+    planned = ring_request(split_enabled=True, requested_flights=3)
+    result = planning_adapter.plan(planned)
+    rings = deepcopy(planned['rings'])
+    mission = {
+        'drone_model': 'mini4pro', 'polygon': [[51.0, -114.0]],
+        'planning_request': planned, 'planning_result': result,
+        'waypoints': [[row['position']['latitude_deg'], row['position']['longitude_deg']]
+                      for row in result['route']['waypoints']],
+        'settings': {
+            'mapping_style': 'orbit', 'orbit_rings': rings,
+            'orbit_radius': rings[0]['radius_m'], 'altitude': rings[0]['altitude_m'],
+            'orbit_tilt': rings[0]['gimbal_pitch_deg'], 'speed': 3,
+            'reverse_route': False, 'finish_action': 'goHome',
+            'capture_mode': 'full', 'side_overlap': 90,
+            'split_enabled': True, 'split_count': 3, 'split_max_wp': 200,
+        },
+    }
+    supported, flights = planning_adapter.validate_mission_provenance(mission)
+    assert supported and len(flights) == 3
+    assert all(flight['headings'] and flight['heights'] and flight['gimbal_pitches']
+               for flight in flights)
+    old_label = deepcopy(mission)
+    old_label['planning_result']['engine_version'] = '1.2.0'
+    try:
+        planning_adapter.validate_mission_provenance(old_label)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('multi-ring result accepted with an engine 1.2.0 label')
+    for change in ('ring', 'split', 'boundary'):
+        bad = deepcopy(mission)
+        if change == 'ring':
+            bad['settings']['orbit_rings'][1]['altitude_m'] += 1
+        elif change == 'split':
+            bad['settings']['split_count'] = 2
+        else:
+            bad['planning_result']['flights'][1]['route_start_waypoint_index'] += 1
+        try:
+            planning_adapter.validate_mission_provenance(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('tampered %s provenance accepted' % change)
 
 
 def test_orbit_results_follow_the_supported_engine_versions():

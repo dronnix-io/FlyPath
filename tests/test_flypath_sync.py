@@ -314,13 +314,28 @@ def test_orbit_geometry_and_settings_validation():
         'altitude': 25, 'flight_path': 'curved', 'split_enabled': False,
         'terrain_follow': False}}
     flypath_sync.validate_mission(mission)
+    rings = [{'radius_m': 30, 'altitude_m': 25, 'gimbal_pitch_deg': -35},
+             {'radius_m': 45, 'altitude_m': 40, 'gimbal_pitch_deg': -50}]
+    multi = {**mission, 'settings': {**mission['settings'], 'orbit_rings': rings,
+                                     'split_enabled': True, 'split_count': 2}}
+    flypath_sync.validate_mission(multi)
+    try:
+        flypath_sync.validate_mission({**multi, 'settings': {
+            **multi['settings'], 'mapping_style': '2d'}})
+    except FlypathSyncError:
+        pass
+    else:
+        raise AssertionError('orbit rings accepted on a non-orbit mission')
     for changed in (
             {'polygon': [[51, -114], [51.1, -114.1]]},
             {'settings': {**mission['settings'], 'orbit_radius': 4}},
             {'settings': {**mission['settings'], 'orbit_tilt': 1}},
             {'settings': {**mission['settings'], 'altitude': 501}},
             {'settings': {**mission['settings'], 'flight_path': 'straight'}},
-            {'settings': {**mission['settings'], 'split_enabled': True}},
+            {'settings': {**mission['settings'], 'split_count': 2}},
+            {'settings': {**mission['settings'], 'orbit_rings': [{**rings[0],
+                                                                 'radius_m': 31}]}},
+            {'settings': {**mission['settings'], 'orbit_rings': rings + rings + rings}},
             {'settings': {**mission['settings'], 'terrain_follow': True}},
             {'settings': {**mission['settings'], 'cross_hatch': True}}):
         try:
