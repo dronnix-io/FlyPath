@@ -346,6 +346,22 @@ def test_orbit_geometry_and_settings_validation():
             raise AssertionError('Invalid orbit accepted: %s' % changed)
 
 
+def test_rate_limit_explains_retry_delay_without_exposing_token():
+    from unittest.mock import patch
+
+    for header, expected in [('45', '45 seconds'), ('60', '1 minute'), ('125', '2 minutes 5 seconds'),
+                             ('Thu, 01 Jan 1970 00:02:05 GMT', '2 minutes 5 seconds'),
+                             ('invalid', 'a moment'), ('', 'a moment')]:
+        response = _http_error(429, {'error': 'Sync paused ' + TOKEN})
+        response.headers['Retry-After'] = header
+        with patch('flypath_sync.time.time', return_value=0):
+            error, _ = _run(response, lambda: list_missions(BASE, TOKEN))
+        assert isinstance(error, FlypathSyncError)
+        assert error.status == 429
+        assert 'Wait ' + expected in str(error)
+        assert TOKEN not in str(error)
+
+
 if __name__ == '__main__':
     fns = [v for k, v in sorted(globals().items())
            if k.startswith('test_') and callable(v)]
