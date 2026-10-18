@@ -866,7 +866,13 @@ def style_tabs(tabs):
     """Planner and My missions: traditional tabs with clear contrast. The
     chosen tab is bright with a blue accent along its top; the other is
     muted and brightens on hover."""
-    tabs.tabBar().setExpanding(False)
+    bar = tabs.tabBar()
+    bar.setExpanding(False)
+    # Bold through the font, not only the stylesheet: the tab width is measured
+    # from the bar's font, so a stylesheet-only bold clipped the last letter.
+    font = bar.font()
+    font.setBold(True)
+    bar.setFont(font)
     tabs.setStyleSheet(tabs.styleSheet() + _TAB_STYLE)
 
 
