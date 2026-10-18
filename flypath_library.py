@@ -37,8 +37,8 @@ _ROLES = (
                    'browser, without QGIS.'),
 )
 # What only the website will offer, beyond what an offline plugin can do.
-_COMING = ('Coming to FlyPath.io: cloud 2D map and 3D model generation for each '
-           'mission, beyond what an offline plugin can do.')
+_COMING = ('Coming to FlyPath.io: cloud 2D map and 3D model generation for the '
+           'missions you have flown, beyond what an offline plugin can do.')
 _ROLES_TOGETHER = ('Both use the same planning engine, so a mission opens in either '
                    'one unchanged. Save it here, refine it on the website, then open '
                    'it again here to send it to the RC.')

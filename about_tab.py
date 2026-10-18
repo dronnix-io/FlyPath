@@ -43,13 +43,17 @@ AVAILABLE = (
     'Splitting into flights by battery and waypoint limits.',
     'Export as DJI WPML KMZ files, or straight onto the DJI RC.',
     'Saving and opening missions on FlyPath.io.',
+    '<b>Windows and Linux</b>, on QGIS 3.34 or later and QGIS 4.',
 )
 
 COMING = (
-    '<b>Cloud 2D maps and 3D models</b> generated for each mission on FlyPath.io.',
+    '<b>Panoramic missions</b>.',
     '<b>Oblique mapping</b>: grids flown with a tilted camera.',
-    '<b>3D facade missions</b> for vertical structures.',
-    '<b>Enterprise drones</b>, starting with the DJI Matrice 4E.',
+    '<b>Cloud 2D maps and 3D models</b> on FlyPath.io, for the missions you have flown.',
+    '<b>Enterprise drone support</b>.',
+    '<b>Large survey area splitting</b>.',
+    '<b>A mobile app</b>.',
+    '<b>AI features</b>.',
 )
 
 _STYLE = """
