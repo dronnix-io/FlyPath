@@ -366,9 +366,9 @@ QWidget {
    Labels that need a background set it via their own objectName rule, which is
    more specific and still wins. */
 QLabel { background-color: transparent; }
-/* Field labels ("Altitude", "Drone", ...) in a muted steel blue, so the
-   values beside them (in brighter white) stand out. */
-QLabel#formLabel, QLabel#inlineFormLabel { color: #8FA0B8; }
+/* Field labels ("Altitude", "Drone", ...) in a clear sky blue, semi-bold,
+   so they read sharply and apart from the white values beside them. */
+QLabel#formLabel, QLabel#inlineFormLabel { color: #9CC4F2; font-weight: 600; }
 QGroupBox {
     background-color: #202430;
     border: 1px solid #454A57;
@@ -2102,7 +2102,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Choose where the mission goes: a folder on this computer, '
             'or directly onto a connected DJI RC.')
 
-        dest_layout.addWidget(QLabel('Destination'))
+        dest_label = QLabel('Destination')
+        dest_label.setObjectName('formLabel')
+        dest_layout.addWidget(dest_label)
         dest_layout.addWidget(self.destCombo, 1)
         export_layout.addWidget(dest_row)
 
@@ -2208,6 +2210,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         part_layout.setContentsMargins(0, 0, 0, 0)
         part_layout.setSpacing(4)
         part_label = QLabel('Mission part')
+        part_label.setObjectName('formLabel')
         self.splitPartCombo = QComboBox()
         self._tip(self.splitPartCombo,
             'Which split mission to send into the selected RC slot. The RC '
