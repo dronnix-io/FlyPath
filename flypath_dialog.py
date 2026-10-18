@@ -480,7 +480,7 @@ QPushButton:hover   { background-color: #3A7EC6; }
 QPushButton:pressed { background-color: #1F5A9E; }
 QPushButton:disabled { background-color: #3A3D45; color: #77797F; }
 /* Segmented toggles (Capture, Flight Path, Source): a rounded track with
-   the chosen option as a filled pill inside it. Only whole-corner rounding
+   the chosen option as a pill in its section's colour. Only whole-corner rounding
    is used, which Qt 5 and Qt 6 both draw. */
 QFrame#segmentBox {
     background-color: #23262E; border: 1px solid #3F4450; border-radius: 12px;
@@ -493,6 +493,15 @@ QPushButton[segment]:hover { background-color: #343844; color: #FFFFFF; }
 QPushButton[segment]:checked {
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3A80CC, stop:1 #2D6DB5);
     color: #FFFFFF;
+}
+/* The chosen pill takes its section's colour. */
+QGroupBox#missionGroup QPushButton[segment]:checked {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #94C2F0, stop:1 #7FB3E8);
+    color: #0F1A2A;
+}
+QGroupBox#areaGroup QPushButton[segment]:checked {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #95E2B0, stop:1 #7FD69C);
+    color: #0F1A2A;
 }
 QPushButton#exportBtn {
     background-color: #F0A500; color: #1A1A1A; font-size: 12px;
