@@ -28,12 +28,16 @@ except AttributeError:
 
 
 SIGNUP_URL = flypath_sync.DEFAULT_BASE_URL + '/register/'
-_SIGNUP_REASONS = (
-    'Your missions are saved in your account, ready on any computer.',
-    'Plan and edit in the browser, with no QGIS needed.',
-    'Open the same missions here in QGIS; both stay in sync.',
-    'Built-in elevation profile and contour tools.',
+# Why there are two tools: what each one is for.
+_ROLES = (
+    ('QGIS plugin', 'Plans with your GIS data (layers, selections, DEMs) and sends '
+                    'missions straight to your DJI RC.'),
+    ('FlyPath.io', 'Your missions\' home: they are kept in your account, and you can '
+                   'plan and edit them in any browser, without QGIS.'),
 )
+_ROLES_TOGETHER = ('Both use the same planning engine, so a mission opens in either '
+                   'one unchanged. Save it here, refine it on the website, then open '
+                   'it again here to send it to the RC.')
 _SIGNUP_STYLE = """
 QFrame#signupCard {
     background-color: #1C2836; border: 1px solid #2F4A6E;
@@ -41,6 +45,7 @@ QFrame#signupCard {
 }
 QLabel#signupTitle { color: #FFFFFF; font-size: 13px; font-weight: bold; }
 QLabel#signupText { color: #C8D6E8; }
+QLabel#signupRole { color: #9CC4F2; font-weight: bold; }
 QLabel#signupReason { color: #E6EEF8; }
 QLabel#signupHint { color: #8FA0B8; font-size: 10px; }
 QPushButton#signupButton {
@@ -136,6 +141,11 @@ class MissionLibrary(QWidget):
         self.refresh_button = QPushButton('Refresh')
         self.refresh_button.clicked.connect(self.refresh)
         header.addWidget(self.refresh_button)
+        self.why_button = QPushButton('Why FlyPath.io?')
+        self.why_button.setObjectName('rcBrowseBtn')       # the panel's small secondary style
+        self.why_button.setToolTip('Why FlyPath.io works alongside this plugin.')
+        self.why_button.clicked.connect(self.explain_website)
+        header.addWidget(self.why_button)
         layout.addLayout(header)
         layout.addWidget(self._build_signup_card())
         self.missions = QTreeWidget()
@@ -173,18 +183,26 @@ class MissionLibrary(QWidget):
         column = QVBoxLayout(card)
         column.setContentsMargins(12, 10, 12, 12)
         column.setSpacing(6)
-        title = QLabel('New to FlyPath.io?')
+        title = QLabel('New to FlyPath.io? Why use it with the plugin')
         title.setObjectName('signupTitle')
+        title.setWordWrap(True)
         column.addWidget(title)
-        intro = QLabel('A free FlyPath.io account works alongside this plugin:')
-        intro.setObjectName('signupText')
-        intro.setWordWrap(True)
-        column.addWidget(intro)
-        for reason in _SIGNUP_REASONS:
-            line = QLabel('•  ' + reason)
+        for role, text in _ROLES:
+            name = QLabel(role)
+            name.setObjectName('signupRole')
+            column.addWidget(name)
+            line = QLabel(text)
             line.setObjectName('signupReason')
             line.setWordWrap(True)
             column.addWidget(line)
+        together = QLabel(_ROLES_TOGETHER)
+        together.setObjectName('signupText')
+        together.setWordWrap(True)
+        column.addSpacing(2)
+        column.addWidget(together)
+        free = QLabel('A FlyPath.io account is free.')
+        free.setObjectName('signupText')
+        column.addWidget(free)
         button = QPushButton('Create a free account')
         button.setObjectName('signupButton')
         button.setToolTip(SIGNUP_URL)
@@ -197,6 +215,14 @@ class MissionLibrary(QWidget):
         column.addWidget(hint)
         self.signup_card = card
         return card
+
+    def explain_website(self):
+        """Why there is a website as well as this plugin."""
+        parts = ['<b>%s</b>: %s' % (role, text) for role, text in _ROLES]
+        QMessageBox.information(
+            self, 'Why FlyPath.io?',
+            '<p>' + '</p><p>'.join(parts) + '</p><p>' + _ROLES_TOGETHER + '</p>'
+            '<p>Create a free account at <a href="%s">flypath.io/register</a>.</p>' % SIGNUP_URL)
 
     def update_buttons(self):
         storage_error = None
@@ -240,6 +266,7 @@ class MissionLibrary(QWidget):
         elif not connected:
             self.status.setText(storage_error or 'Connect your FlyPath account to browse missions.')
         self.signup_card.setVisible(not connected and storage_error is None)
+        self.why_button.setVisible(connected)
         self.sync_notice.setVisible(bool(incompatible))
         self.status.setVisible(not incompatible)
         self.controls.setVisible(not incompatible)
