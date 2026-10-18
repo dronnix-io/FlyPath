@@ -8,6 +8,7 @@ from qgis.core import QgsProject
 from . import preview_layers
 from .flypath_dialog import FlyPathDialog, style_tabs
 from .flypath_library import MissionLibrary
+from .about_tab import AboutTab
 
 try:
     _DockLeft  = Qt.DockWidgetArea.LeftDockWidgetArea
@@ -54,6 +55,7 @@ class FlyPath:
         library = MissionLibrary(self.panel, parent=self.tabs)
         self.panel._mission_library = library
         self.tabs.addTab(library, 'My missions')
+        self.tabs.addTab(AboutTab(self.tabs), 'About')
         library.missionOpened.connect(lambda: self.tabs.setCurrentWidget(self.panel))
         self.tabs.currentChanged.connect(
             lambda index: library.refresh() if self.tabs.widget(index) is library else None)

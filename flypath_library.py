@@ -32,9 +32,13 @@ SIGNUP_URL = flypath_sync.DEFAULT_BASE_URL + '/register/'
 _ROLES = (
     ('QGIS plugin', 'Plans with your GIS data (layers, selections, DEMs) and sends '
                     'missions straight to your DJI RC.'),
-    ('FlyPath.io', 'Your missions\' home: they are kept in your account, and you can '
-                   'plan and edit them in any browser, without QGIS.'),
+    ('FlyPath.io', 'Your missions\' home: they are archived in your account, easy to '
+                   'share with other pilots, and you can plan and edit them in any '
+                   'browser, without QGIS.'),
 )
+# What only the website will offer, beyond what an offline plugin can do.
+_COMING = ('Coming to FlyPath.io: cloud 2D map and 3D model generation for each '
+           'mission, beyond what an offline plugin can do.')
 _ROLES_TOGETHER = ('Both use the same planning engine, so a mission opens in either '
                    'one unchanged. Save it here, refine it on the website, then open '
                    'it again here to send it to the RC.')
@@ -46,6 +50,7 @@ QFrame#signupCard {
 QLabel#signupTitle { color: #FFFFFF; font-size: 13px; font-weight: bold; }
 QLabel#signupText { color: #C8D6E8; }
 QLabel#signupRole { color: #9CC4F2; font-weight: bold; }
+QLabel#signupComing { color: #F5C451; }
 QLabel#signupReason { color: #E6EEF8; }
 QLabel#signupHint { color: #8FA0B8; font-size: 10px; }
 QPushButton#signupButton {
@@ -200,6 +205,10 @@ class MissionLibrary(QWidget):
         together.setWordWrap(True)
         column.addSpacing(2)
         column.addWidget(together)
+        coming = QLabel(_COMING)
+        coming.setObjectName('signupComing')
+        coming.setWordWrap(True)
+        column.addWidget(coming)
         free = QLabel('A FlyPath.io account is free.')
         free.setObjectName('signupText')
         column.addWidget(free)
@@ -222,6 +231,7 @@ class MissionLibrary(QWidget):
         QMessageBox.information(
             self, 'Why FlyPath.io?',
             '<p>' + '</p><p>'.join(parts) + '</p><p>' + _ROLES_TOGETHER + '</p>'
+            '<p>' + _COMING + '</p>'
             '<p>Create a free account at <a href="%s">flypath.io/register</a>.</p>' % SIGNUP_URL)
 
     def update_buttons(self):
