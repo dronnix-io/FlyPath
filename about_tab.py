@@ -99,10 +99,12 @@ def plugin_version():
         return 'unknown'
 
 
-def _items(rows, color):
+def _items(rows, color, mark='●'):
+    """Rows with a mark: a bullet, a ticked box (available) or an empty box
+    (coming)."""
     return ''.join(
-        '<tr><td valign="top" style="color:%s; padding-right:6px;">●</td>'
-        '<td style="padding-bottom:4px;">%s</td></tr>' % (color, row) for row in rows)
+        '<tr><td valign="top" style="color:%s; padding-right:6px;">%s</td>'
+        '<td style="padding-bottom:4px;">%s</td></tr>' % (color, mark, row) for row in rows)
 
 
 def about_html():
@@ -136,8 +138,8 @@ project on GitHub. You can also plan online at
         'version': plugin_version(), 'engine': ENGINE_VERSION, 'link': LINK,
         'heading': heading, 'site': SITE_URL,
         'built': _items(BUILT, '#7FB3E8'),
-        'available': _items(AVAILABLE, '#7FD69C'),
-        'coming': _items(COMING, '#F0A500'),
+        'available': _items(AVAILABLE, '#7FD69C', '☑'),
+        'coming': _items(COMING, '#F0A500', '☐'),
     }
 
 
