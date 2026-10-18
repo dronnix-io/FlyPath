@@ -17,6 +17,8 @@ except ImportError:  # the engine is generated; a source checkout may lack it
 REPO_URL = 'https://github.com/dronnix-io/FlyPath'
 BUG_URL = REPO_URL + '/issues/new?template=bug_report.yml'
 FEATURE_URL = REPO_URL + '/issues/new?template=feature_request.yml'
+DOCS_URL = REPO_URL + '#readme'
+CONTRIB_URL = REPO_URL + '/blob/main/CONTRIBUTING.md'
 SITE_URL = 'https://flypath.io/?utm_source=qgis&utm_medium=plugin&utm_campaign=about'
 LINK = 'color:#7FB3E8;'
 
@@ -56,25 +58,30 @@ QPushButton#aboutAction {
     border: 1px solid #3F4450; border-radius: 5px; padding: 6px 8px;
 }
 QPushButton#aboutAction:hover { background-color: #2E333E; border-color: #6A9BD8; }
-QPushButton#aboutStar {
-    background-color: #F0A500; color: #1A1A1A; font-weight: bold;
-    border: none; border-radius: 5px; padding: 6px 8px;
+QPushButton#aboutLink {
+    background-color: transparent; color: #9CC4F2; font-weight: bold;
+    border: 1px solid #2F4A6E; border-radius: 5px; padding: 5px 8px;
 }
-QPushButton#aboutStar:hover { background-color: #FFB520; }
+QPushButton#aboutLink:hover { background-color: #1C2836; color: #FFFFFF; border-color: #3F9BFF; }
 QTextBrowser {
     background-color: #1E2128; border: none; color: #D6DCE6;
     padding: 2px 4px;
 }
 """
 
+# Two rows: tell us about a problem or an idea, then where to read and take part.
 _ACTIONS = (
-    ('Report a bug', BUG_URL, 'aboutAction',
-     'Open a bug report on GitHub: what you did, what happened, and your QGIS '
-     'version and drone.'),
-    ('Request a feature', FEATURE_URL, 'aboutAction',
-     'Suggest a feature on GitHub.'),
-    ('★  Star on GitHub', REPO_URL, 'aboutStar',
-     'Star FlyPath on GitHub; it helps other pilots find it.'),
+    (('Report a bug', BUG_URL, 'aboutAction',
+      'Open a bug report on GitHub: what you did, what happened, and your QGIS '
+      'version and drone.'),
+     ('Request a feature', FEATURE_URL, 'aboutAction',
+      'Suggest a feature on GitHub.')),
+    (('Documentation', DOCS_URL, 'aboutLink',
+      'The FlyPath user guide: workflow, parameters, export and supported drones.'),
+     ('Contribute', CONTRIB_URL, 'aboutLink',
+      'How to contribute code, tests or documentation to FlyPath.'),
+     ('GitHub repository', REPO_URL, 'aboutLink',
+      'The FlyPath project on GitHub: source code, releases and issues.')),
 )
 
 
@@ -118,8 +125,9 @@ lives, and fly them in DJI's own apps. It is free and open source.</p>
 
 <p style="%(heading)s">Get involved</p>
 <p>Ideas, bug reports and field results shape what comes next. Use the buttons above
-to report a bug or ask for a feature, and star the project on GitHub so more pilots
-find it. You can also plan online at <a href="%(site)s" style="%(link)s">FlyPath.io</a>.</p>
+to report a bug or ask for a feature, read the documentation, or contribute to the
+project on GitHub. You can also plan online at
+<a href="%(site)s" style="%(link)s">FlyPath.io</a>.</p>
 """ % {
         'version': plugin_version(), 'engine': ENGINE_VERSION, 'link': LINK,
         'heading': heading, 'site': SITE_URL,
@@ -138,18 +146,19 @@ class AboutTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 0)
         layout.setSpacing(6)
-        # The quickest ways to help: report a bug, ask for a feature, or star
-        # the project so more pilots find it.
-        actions = QHBoxLayout()
-        actions.setSpacing(6)
-        for text, url, name, tip in _ACTIONS:
-            button = QPushButton(text)
-            button.setObjectName(name)
-            button.setToolTip(tip)
-            button.clicked.connect(
-                lambda _checked=False, link=url: QDesktopServices.openUrl(QUrl(link)))
-            actions.addWidget(button, 1)
-        layout.addLayout(actions)
+        # Report a bug or ask for a feature, then the guide, how to take
+        # part, and the project itself.
+        for row in _ACTIONS:
+            actions = QHBoxLayout()
+            actions.setSpacing(6)
+            for text, url, name, tip in row:
+                button = QPushButton(text)
+                button.setObjectName(name)
+                button.setToolTip(tip)
+                button.clicked.connect(
+                    lambda _checked=False, link=url: QDesktopServices.openUrl(QUrl(link)))
+                actions.addWidget(button, 1)
+            layout.addLayout(actions)
         self.text = QTextBrowser()
         self.text.setOpenExternalLinks(True)
         self.text.setHtml(about_html())
