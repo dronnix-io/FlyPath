@@ -23,6 +23,8 @@ import json
 import ipaddress
 import math
 import re
+import time
+from email.utils import parsedate_to_datetime
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -389,6 +391,21 @@ def _server_message(exc):
     except Exception:                          # noqa: BLE001 - any unreadable body
         payload = None
     text = _error_text(payload)
+    if exc.code == 429:
+        value = exc.headers.get('Retry-After', '')
+        try:
+            delay = int(value) if re.fullmatch(r'[0-9]+', value) else parsedate_to_datetime(value).timestamp() - time.time()
+            seconds = max(0, math.ceil(delay))
+        except (ValueError, TypeError, OverflowError):
+            seconds = 0
+        duration = []
+        minutes, remainder = divmod(seconds, 60)
+        if minutes:
+            duration.append('%s minute%s' % (minutes, '' if minutes == 1 else 's'))
+        if remainder:
+            duration.append('%s second%s' % (remainder, '' if remainder == 1 else 's'))
+        wait = 'Wait %s before retrying.' % ' '.join(duration) if duration else 'Wait a moment, then retry.'
+        return '%s %s' % (text or 'Sync is temporarily paused.', wait)
     if text:
         return text
     if exc.code == 401:
