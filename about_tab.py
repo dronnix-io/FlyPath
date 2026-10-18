@@ -112,7 +112,8 @@ def about_html():
     return """
 <p style="font-size:18px; font-weight:bold; color:#FFFFFF; margin-bottom:2px;">FlyPath</p>
 <p style="color:#8FA0B8; margin-top:0;">Version %(version)s · planning engine %(engine)s
- · made by <a href="https://www.dronnix.com" style="%(link)s">Dronnix</a></p>
+<br>Created by Salar Ghaffarian, developed further by the
+<a href="https://www.dronnix.com" style="%(link)s">Dronnix</a> team.</p>
 
 <p style="%(heading)s">Our mission</p>
 <p>Survey cameras got cheap. Survey flying didn't. Almost anyone can afford a drone
