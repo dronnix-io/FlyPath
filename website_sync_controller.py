@@ -614,7 +614,8 @@ class WebsiteSyncLifecycleMixin:
                        for name in ('layerCombo', 'featureCombo', 'splitPartCombo',
                                     'orbitRingCombo')}
         form_labels = []
-        for form in (self._flight_form, self._organizer_form, self._area_form):
+        for form in (self._flight_form, self._organizer_form, self._route_form,
+                     self._area_form):
             for name in controls:
                 label = form.labelForField(getattr(self, name, None))
                 if label is not None and label not in [item[0] for item in form_labels]:

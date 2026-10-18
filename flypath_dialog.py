@@ -391,6 +391,12 @@ QGroupBox#missionGroup   { border-color: #3F6FA8; color: #7FB3E8; }
 QGroupBox#areaGroup      { border-color: #3E8E63; color: #7FD69C; }
 QGroupBox#flightGroup    { border-color: #A6772F; color: #F0B45A; }
 QGroupBox#organizerGroup { border-color: #6E52A6; color: #B98CFF; }
+/* Mission splitting: an inset card inside Adv. Mission Organizers. */
+QFrame#splitCard {
+    background-color: #252336; border: 1px solid #3E3460;
+    border-left: 3px solid #8E6BE0; border-radius: 4px;
+}
+QLabel#subsectionLabel { color: #B98CFF; font-size: 9px; font-weight: bold; }
 QGroupBox#safetyGroup    { border-color: #A65454; color: #F08A8A; }
 QGroupBox#takeoffGroup   { border-color: #37847A; color: #5FD0C0; }
 QGroupBox#exportGroup    { border-color: #9C5C86; color: #E79AD0; }
@@ -947,7 +953,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._tag_form_labels()
         # Collapse hidden rows from here on, so gaps stay even on Qt 5.
         for form in (self._mission_form, self._area_form, self._flight_form,
-                     self._organizer_form):
+                     self._organizer_form, self._route_form):
             form_rows.track(form)
         self._setup_combos()
         self._connect_signals()
@@ -1228,9 +1234,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         layer_layout = QHBoxLayout(self._layerRow)
         layer_layout.setContentsMargins(0, 0, 0, 0)
         layer_layout.setSpacing(4)
-        layer_caption = QLabel('Layer')
-        layer_caption.setObjectName('inlineFormLabel')
-        layer_layout.addWidget(layer_caption)
         layer_layout.addWidget(self.layerCombo, 3)
         self._featureCaption = QLabel('Feature')
         self._featureCaption.setObjectName('inlineFormLabel')
@@ -1300,7 +1303,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._sourceStack.setSizePolicy(_SP_PREFERRED, _SP_FIXED)
         self._sourceStack.currentChanged.connect(self._fit_source_stack)
         self._fit_source_stack()
-        form.addRow(self._sourceStack)
+        # A labelled row ("Layer" for the Layer source), so its box starts and
+        # ends where the DEM box does.
+        form.addRow('Layer', self._sourceStack)
+        self._fit_source_stack()
         self._build_orbit_area_row(form)   # orbit centre, hidden until Orbit
 
         # DEM feeds terrain follow, the takeoff zone and the contours, so it is
@@ -1480,10 +1486,24 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         waypoint cap, and whether to add a perpendicular cross-hatch pass."""
         group = QGroupBox('Adv. Mission Organizers')
         group.setObjectName('organizerGroup')
-        form  = QFormLayout(group)
+        section = QVBoxLayout(group)
+        section.setSpacing(8)
+
+        # Mission splitting: an inset card, so its settings read as one set.
+        split_card = QFrame()
+        split_card.setObjectName('splitCard')
+        card_layout = QVBoxLayout(split_card)
+        card_layout.setContentsMargins(8, 6, 8, 8)
+        card_layout.setSpacing(6)
+        split_title = QLabel('MISSION SPLITTING')
+        split_title.setObjectName('subsectionLabel')
+        card_layout.addWidget(split_title)
+        form = QFormLayout()
         self._organizer_form = form   # kept so capability logic can hide rows
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
+        card_layout.addLayout(form)
+        section.addWidget(split_card)
 
         self.splitSpin = QSpinBox()
         self.splitSpin.setRange(1, 99)
@@ -1500,7 +1520,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Allow the planner to add flights when battery or waypoint limits '
             'require them. Turn this off to request one flight; export is blocked '
             'when that flight cannot satisfy the limits.')
-        form.addRow('Splitting', self.splitCheck)
+        form.addRow(self.splitCheck)
         form.addRow('Minimum Flights', self.splitSpin)
 
         self.maxWaypointsSpin = QSpinBox()
@@ -1526,6 +1546,16 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         # Corridor-only control: hidden on load (2D Mapping is the default);
         # _apply_corridor_layout reveals it when Corridor Mapping is selected.
         self._set_row_visible(form, self.setBreaksBtn, False)
+
+        # Route options: independent of splitting.
+        route_title = QLabel('ROUTE OPTIONS')
+        route_title.setObjectName('subsectionLabel')
+        section.addWidget(route_title)
+        form = QFormLayout()
+        self._route_form = form       # kept so capability logic can hide rows
+        form.setLabelAlignment(_AlignLeft | _AlignVCenter)
+        form.setSpacing(6)
+        section.addLayout(form)
 
         self.crossHatchCheck = QCheckBox('Cross-hatch')
         self._tip(self.crossHatchCheck,
@@ -1744,6 +1774,11 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             policy = _SP_PREFERRED if index == stack.currentIndex() else _SP_IGNORED
             stack.widget(index).setSizePolicy(policy, policy)
         stack.updateGeometry()
+        # The row is labelled for the Layer source only.
+        form = getattr(self, '_area_form', None)
+        label = self._row_label(form, stack) if form is not None else None
+        if label is not None:
+            label.setText('Layer' if stack.currentIndex() == 0 else '')
 
     def _fit_spin_boxes(self):
         """Size number boxes to their longest value, not Qt's estimate.
@@ -2574,7 +2609,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.frontOverlapStack.setCurrentIndex(1 if full else 0)
         # The terrain tolerance only densifies in semi-automatic (full already has
         # a waypoint per photo); show it when terrain follow is on in semi mode.
-        self._set_row_visible(self._organizer_form, self.terrainToleranceSpin,
+        self._set_row_visible(self._route_form, self.terrainToleranceSpin,
                               self.terrainFollowCheck.isChecked() and not full)
         # The DEM feeds both terrain follow and the takeoff zone, so it stays
         # available even when terrain follow is off.
