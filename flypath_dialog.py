@@ -1541,17 +1541,18 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'semi-automatic adds waypoints along the flight lines where the '
             'ground rises or falls by more than the tolerance. It follows the '
             'bare-earth terrain, not trees or buildings, so keep a safe margin.')
-        # Route options are stacked, so they do not widen the panel.
+        # Route options share one row; the panel widens to fit them.
         # Add the layout directly (not wrapped in a QWidget) so no background is
         # painted behind the checkboxes; they then blend into the section card
         # like the other controls. Spanning both columns also left-aligns them
         # with the labelled rows (Max Waypoints, etc.).
-        cover_layout = QVBoxLayout()
+        cover_layout = QHBoxLayout()
         cover_layout.setContentsMargins(0, 0, 0, 0)
-        cover_layout.setSpacing(6)
+        cover_layout.setSpacing(12)
         cover_layout.addWidget(self.crossHatchCheck)
         cover_layout.addWidget(self.reverseRouteCheck)
         cover_layout.addWidget(self.terrainFollowCheck)
+        cover_layout.addStretch()
         form.addRow(cover_layout)
 
         self.terrainToleranceSpin = QDoubleSpinBox()
