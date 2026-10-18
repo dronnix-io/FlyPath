@@ -536,14 +536,6 @@ QPushButton#rcBrowseBtn {
     border-radius: 3px; border: 1px solid #3A5A7A;
 }
 QPushButton#rcBrowseBtn:hover { background-color: #354A5E; }
-QLabel#rcNote {
-    color: #7FB3E8;
-    font-size: 10px;
-    padding: 4px 6px;
-    background-color: #1A2530;
-    border-left: 3px solid #2D6DB5;
-    border-radius: 3px;
-}
 QLabel#rcThumb {
     color: #6A7686;
     font-size: 10px;
@@ -608,6 +600,11 @@ _SITE_URL     = 'https://flypath.io/?utm_source=qgis&utm_medium=plugin&utm_campa
 # ── Map preview colour constants ───────────────────────────────────────────
 _COLOR_START_MARKER = preview_layers.START_COLOR
 _COLOR_END_MARKER = preview_layers.END_COLOR
+
+
+_RC_THUMB_SIZE = QSize(128, 72)     # 16:9 preview beside the mission picker
+_RC_FOLDER_HINT = ('The RC waypoint folder FlyPath writes the mission into: %s. '
+                   'Set by Detect RC or Locate….')
 
 
 class _HoverFilter(QObject):
@@ -1971,10 +1968,13 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         dest_layout.addWidget(self.destCombo, 1)
         export_layout.addWidget(dest_row)
 
-        # Local / RC panels swapped by the selector
+        # Local / RC panels swapped by the selector. The RC panel's Detect and
+        # Locate buttons sit on the Destination line, shown for the RC only.
         self.destStack = QStackedWidget()
         self.destStack.addWidget(self._build_local_dest_panel(settings))
         self.destStack.addWidget(self._build_rc_dest_panel())
+        dest_layout.addWidget(self.rcRefreshBtn)
+        dest_layout.addWidget(self.rcManualBtn)
         export_layout.addWidget(self.destStack)
 
         # Export button (label adapts to the chosen destination)
@@ -1993,10 +1993,17 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         idx  = self.destCombo.findData(mode)
         self.destCombo.setCurrentIndex(idx if idx >= 0 else 0)
         self.destStack.setCurrentIndex(self.destCombo.currentIndex())
+        self._show_rc_buttons()
         self._fit_dest_stack()
         self._update_export_button()
 
         return bar
+
+    def _show_rc_buttons(self):
+        """Detect RC and Locate… sit on the Destination line, for the RC only."""
+        rc = self.destCombo.currentData() == 'rc'
+        self.rcRefreshBtn.setVisible(rc)
+        self.rcManualBtn.setVisible(rc)
 
     def _build_local_dest_panel(self, settings):
         panel = QWidget()
@@ -2033,41 +2040,28 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(4)
 
-        # The two ways to find the RC, side by side.
-        btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 0, 0, 0)
-        btn_row.setSpacing(4)
-
-        self.rcRefreshBtn = QPushButton('Auto Detect RC')
-        self.rcRefreshBtn.setMinimumHeight(28)
+        # The two ways to find the RC; placed on the Destination line.
+        self.rcRefreshBtn = QPushButton('⟳ Detect RC')
+        self.rcRefreshBtn.setMinimumHeight(25)
         self._tip(self.rcRefreshBtn,
             'Automatically find the DJI RC, whether it is connected over USB '
             'or shows up as a removable drive, and list its missions.')
 
-        self.rcManualBtn = QPushButton('Locate folder manually')
+        self.rcManualBtn = QPushButton('Locate…')
         self.rcManualBtn.setObjectName('rcBrowseBtn')
-        self.rcManualBtn.setMinimumHeight(28)
+        self.rcManualBtn.setMinimumHeight(25)
         self._tip(self.rcManualBtn,
-            'Browse This PC yourself — including the RC and any drives — and '
-            'pick the waypoint folder. Use this if Auto Detect did not find it.')
+            'Locate the waypoint folder yourself: browse This PC, including the '
+            'RC and any drives. Use this if Detect RC did not find it.')
 
-        btn_row.addWidget(self.rcRefreshBtn, 1)
-        btn_row.addWidget(self.rcManualBtn, 1)
-        v.addLayout(btn_row)
-
-        self.rcStatusLabel = QLabel('Press Auto Detect RC to find your controller')
+        # One status line; the chosen waypoint folder shows in its hover hint.
+        self.rcStatusLabel = QLabel('Press Detect RC to find your controller')
         self.rcStatusLabel.setObjectName('rcStatusLabel')
         self.rcStatusLabel.setWordWrap(True)
+        self._tip(self.rcStatusLabel, _RC_FOLDER_HINT % 'none selected yet')
         v.addWidget(self.rcStatusLabel)
-
-        # Read-only display of the chosen waypoint folder (auto or manual).
-        self.rcTargetEdit = QLineEdit()
+        self.rcTargetEdit = QLineEdit()     # kept for the chosen folder, not shown
         self.rcTargetEdit.setReadOnly(True)
-        self.rcTargetEdit.setPlaceholderText('No folder selected yet')
-        self._tip(self.rcTargetEdit,
-            'The RC waypoint folder FlyPath will write the mission into. '
-            'Set by Auto Detect RC or Locate folder manually.')
-        v.addWidget(self.rcTargetEdit)
 
         # When the survey is split, choose which part goes into the RC slot.
         # The RC replaces one mission at a time, so parts are sent one by one.
@@ -2084,32 +2078,38 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         part_layout.addWidget(part_label)
         part_layout.addWidget(self.splitPartCombo, 1)
         self.splitPartRow.setVisible(False)
-        v.addWidget(self.splitPartRow)
 
         self.rcMissionCombo = QComboBox()
         self._tip(self.rcMissionCombo,
             'The mission on the RC that will be replaced when you export. '
-            'Match it by date with what you see in DJI Fly.')
-        v.addWidget(self.rcMissionCombo)
+            'Match it by date with what you see in DJI Fly. FlyPath replaces '
+            'an existing mission: to add a new one, create it in DJI Fly first, '
+            'then Detect RC.')
 
         # DJI's own map snapshot of the selected mission, so you can see what
         # you are about to replace. Click to open a zoomable full-size viewer.
         self.rcThumbLabel = _ClickableLabel('')
         self.rcThumbLabel.setObjectName('rcThumb')
         self.rcThumbLabel.setAlignment(_AlignCenter)
-        self.rcThumbLabel.setMinimumHeight(120)
+        self.rcThumbLabel.setFixedSize(_RC_THUMB_SIZE)
         self.rcThumbLabel.setWordWrap(True)
+        self.rcThumbLabel.setVisible(False)     # shown once a mission is picked
         self._tip(self.rcThumbLabel,
             'Flight path of the selected mission, drawn from its waypoints so it '
             'always matches the RC. Click it to open a larger, zoomable view.')
-        v.addWidget(self.rcThumbLabel)
 
-        self.rcNote = QLabel(
-            'ⓘ  FlyPath replaces an existing mission. To add a new one, create '
-            'it in DJI Fly first, then Auto Detect RC.')
-        self.rcNote.setObjectName('rcNote')
-        self.rcNote.setWordWrap(True)
-        v.addWidget(self.rcNote)
+        # The part and the RC mission on the left, its preview on the right.
+        pick_row = QHBoxLayout()
+        pick_row.setContentsMargins(0, 0, 0, 0)
+        pick_row.setSpacing(6)
+        pickers = QVBoxLayout()
+        pickers.setSpacing(4)
+        pickers.addWidget(self.splitPartRow)
+        pickers.addWidget(self.rcMissionCombo)
+        pickers.addStretch()
+        pick_row.addLayout(pickers, 1)
+        pick_row.addWidget(self.rcThumbLabel)
+        v.addLayout(pick_row)
         return panel
 
     # ── Combo population ──────────────────────────────────────────────────
@@ -3148,6 +3148,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self.splitPartCombo.setCurrentIndex(idx if idx >= 0 else 0)
         self.splitPartCombo.blockSignals(False)
         self.splitPartRow.setVisible(n > 1)
+        self._fit_dest_stack()
         self._update_export_button()
 
     def _update_stats(self):
@@ -3579,6 +3580,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
     def _on_destination_changed(self, _=None):
         self.destStack.setCurrentIndex(self.destCombo.currentIndex())
+        self._show_rc_buttons()
         self._fit_dest_stack()
         QSettings('FlyPath', 'FlyPath').setValue(
             'dest_mode', self.destCombo.currentData()
@@ -3594,7 +3596,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         'Send to DJI RC' panel's height), pushing the scrollable sections, and the
         Takeoff Zone, up out of view. Giving the hidden pages an Ignored size
         policy drops them from the stack's size, so it collapses to the visible
-        panel."""
+        panel. The stack's height is also pinned to the shown page, since its
+        minimum still counted the hidden one; it is refitted when the preview
+        or the Mission part picker appears."""
         current = self.destStack.currentIndex()
         for i in range(self.destStack.count()):
             page = self.destStack.widget(i)
@@ -3602,8 +3606,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                 page.setSizePolicy(_SP_PREFERRED, _SP_PREFERRED)
             else:
                 page.setSizePolicy(_SP_IGNORED, _SP_IGNORED)
-        self.destStack.currentWidget().adjustSize()
-        self.destStack.adjustSize()
+        page = self.destStack.currentWidget()
+        if page.layout() is not None:
+            page.layout().activate()
+        self.destStack.setFixedHeight(page.sizeHint().height())
         self.destStack.updateGeometry()
 
     def _on_local_folder_changed(self, text):
@@ -3673,6 +3679,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         """Draw a preview of the selected RC mission from its waypoints."""
         self._current_thumb_full = None
         mission = self.rcMissionCombo.currentData()
+        self.rcThumbLabel.setVisible(bool(mission))
+        self._fit_dest_stack()
         if not mission:
             self.rcThumbLabel.setPixmap(QPixmap())
             self.rcThumbLabel.setText('')
@@ -3683,7 +3691,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         if not pix.isNull():
             self.rcThumbLabel.setText('')
             self.rcThumbLabel.setPixmap(
-                pix.scaled(QSize(240, 135), _KeepAspect, _SmoothTrans)
+                pix.scaled(_RC_THUMB_SIZE, _KeepAspect, _SmoothTrans)
             )
         else:
             self.rcThumbLabel.setPixmap(QPixmap())
@@ -3763,6 +3771,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         """Record the chosen waypoint folder and show it in the panel."""
         self._rc_waypoint_path = path
         self.rcTargetEdit.setText(path or '')
+        hint = self.rcStatusLabel.findChild(_HoverFilter)
+        if hint is not None:
+            hint._text = _RC_FOLDER_HINT % (path or 'none selected yet')
 
     def _warn_no_missions(self):
         """Guidance shown when a waypoint folder is found but holds no missions."""
@@ -3775,8 +3786,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             '  1. On the RC, open DJI Fly.\n'
             '  2. Make a waypoint mission (even a 3-point dummy will do) and '
             'save it.\n'
-            '  3. Back here, press Auto Detect RC (or Locate folder manually) '
-            'again.'
+            '  3. Back here, press Detect RC (or Locate…) again.'
         )
 
     def _on_refresh_rc_missions(self):
@@ -3813,16 +3823,15 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self._warn_no_missions()
         elif status == 'not_connected':
             self.rcStatusLabel.setText(
-                'No DJI RC detected — connect via USB, or Locate folder manually'
+                'No DJI RC detected · connect it via USB, or use Locate…'
             )
             QMessageBox.information(
                 self, 'No DJI RC Detected',
                 'No DJI Remote Controller was found.\n\n'
                 'FlyPath checked both your drives and USB devices.\n\n'
                 'Connect the RC via USB and enable file transfer on it, then '
-                'press Auto Detect RC. If it still is not found, use '
-                '"Locate folder manually" to point FlyPath at the waypoint '
-                'folder yourself.'
+                'press Detect RC. If it still is not found, use Locate… to '
+                'point FlyPath at the waypoint folder yourself.'
             )
         else:
             self.rcStatusLabel.setText('Could not read the RC')
@@ -4199,10 +4208,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         if not target or not self._rc_waypoint_path:
             QMessageBox.information(
                 self, 'No Mission Selected',
-                'Press Auto Detect RC and choose a mission on the RC to '
+                'Press Detect RC and choose a mission on the RC to '
                 'replace.\n\n'
                 'If the list is empty, create a waypoint mission in DJI Fly '
-                'first, then Auto Detect RC.'
+                'first, then Detect RC.'
             )
             return
 
