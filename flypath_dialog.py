@@ -11,10 +11,10 @@ from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QGroupBox, QScrollArea, QFrame,
     QLabel, QLineEdit, QPushButton, QComboBox,
-    QSpinBox, QDoubleSpinBox, QCheckBox, QRadioButton, QButtonGroup,
+    QAbstractSpinBox, QSpinBox, QDoubleSpinBox, QCheckBox, QRadioButton, QButtonGroup,
     QMessageBox, QFileDialog, QApplication,
     QStackedWidget, QDialog, QTreeWidget, QTreeWidgetItem, QDialogButtonBox,
-    QGraphicsView, QGraphicsScene, QSizePolicy,
+    QGraphicsView, QGraphicsScene, QLayout, QSizePolicy,
 )
 from qgis.PyQt.QtCore import (
     Qt, QObject, QEvent, QSettings, QSize, QPointF, QUrl, pyqtSignal,
@@ -53,6 +53,7 @@ try:
     _SP_IGNORED   = QSizePolicy.Policy.Ignored
     _SP_PREFERRED = QSizePolicy.Policy.Preferred
     _SP_FIXED     = QSizePolicy.Policy.Fixed
+    _WrapAllRows  = QFormLayout.RowWrapPolicy.WrapAllRows
 except AttributeError:
     # Old PyQt5 without scoped enums; fetch unscoped names dynamically so the
     # scoped forms above remain the only static enum references in the file.
@@ -83,6 +84,7 @@ except AttributeError:
     _SP_IGNORED   = getattr(QSizePolicy, 'Ignored')
     _SP_PREFERRED = getattr(QSizePolicy, 'Preferred')
     _SP_FIXED     = getattr(QSizePolicy, 'Fixed')
+    _WrapAllRows  = getattr(QFormLayout, 'WrapAllRows')
 
 from qgis.core import (
     Qgis,
@@ -824,7 +826,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
         self._build_ui()
         # Collapse hidden rows from here on, so gaps stay even on Qt 5.
-        for form in (self._area_form, self._flight_form, self._organizer_form):
+        for form in (self._mission_form, self._area_form, self._flight_form,
+                     self._organizer_form):
             form_rows.track(form)
         self._setup_combos()
         self._connect_signals()
@@ -836,6 +839,30 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._update_gsd()
         self._update_interval()
         self._update_takeoff_gsd_var()
+        self._fit_panel_width()
+
+    def _fit_panel_width(self):
+        """Let the dock shrink only down to the natural minimum width of its
+        content (where the two-column sections still fit), not smaller. The
+        scroll area would otherwise let the content be squeezed indefinitely.
+
+        Runs once the panel is filled in (dropdown items, read-outs), since
+        those widen it. Widgets are styled lazily, on first show; measured
+        before that, Qt 5 sizes them with the default style, far wider than
+        the panel's own."""
+        content = self._scroll_content
+        self.ensurePolished()
+        self._equalize_overlay_buttons()
+        self._fit_spin_boxes()
+        for widget in self.findChildren(QWidget):      # drop the unstyled sizes
+            widget.updateGeometry()
+        for layout in self.findChildren(QLayout):
+            layout.invalidate()
+        content.layout().activate()
+        # + vertical scrollbar allowance so the content is not clipped at min;
+        # small floor guards against a degenerate hint before the first show.
+        min_w = content.minimumSizeHint().width() + 10
+        self.setMinimumWidth(max(min_w, 260))
 
     # ── Hover-hint helper ─────────────────────────────────────────────────
 
@@ -921,19 +948,13 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         outer.addWidget(self._build_action_bar())
         outer.addWidget(self._build_links_footer())
 
-        # Let the dock shrink only down to the natural minimum width of its
-        # content (where the two-column sections still fit), not smaller. The
-        # scroll area would otherwise let the content be squeezed indefinitely.
-        content.layout().activate()
-        # + vertical scrollbar allowance so the content is not clipped at min;
-        # small floor guards against a degenerate hint before the first show.
-        min_w = content.minimumSizeHint().width() + 16
-        self.setMinimumWidth(max(min_w, 260))
+        self._scroll_content = content
 
     def _build_mission_group(self):
         group = QGroupBox('Mission Setup')
         group.setObjectName('missionGroup')
         form  = QFormLayout(group)
+        self._mission_form = form   # kept so orbit mode can hide Flight Path
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
 
@@ -983,23 +1004,27 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'you save or cloud-sync the mission on the controller, so use this '
             'only when you will not re-save it there.')
 
-        # Capture and Flight Path share one compact row.
+        # Capture and Flight Path each have their own row, so neither widens
+        # the panel.
         capture_row = QWidget()
         capture_layout = QHBoxLayout(capture_row)
         capture_layout.setContentsMargins(0, 0, 0, 0)
         capture_layout.setSpacing(8)
         capture_layout.addWidget(self.captureSemiRadio)
         capture_layout.addWidget(self.captureFullRadio)
-        capture_layout.addSpacing(16)
-        self._pathInlineLabel = QLabel('Flight Path')
-        self._pathInlineLabel.setObjectName('inlineFormLabel')
-        capture_layout.addWidget(self._pathInlineLabel)
-        capture_layout.addWidget(self.pathCurvedRadio)
-        capture_layout.addWidget(self.pathStraightRadio)
         capture_layout.addStretch()
         self._captureRow = capture_row
-        self._pathRow = capture_row
         form.addRow('Capture', capture_row)
+
+        path_row = QWidget()
+        path_layout = QHBoxLayout(path_row)
+        path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.setSpacing(8)
+        path_layout.addWidget(self.pathCurvedRadio)
+        path_layout.addWidget(self.pathStraightRadio)
+        path_layout.addStretch()
+        self._pathRow = path_row
+        form.addRow('Flight Path', path_row)
 
         self.droneModelCombo = QComboBox()
         self._tip(self.droneModelCombo,
@@ -1381,18 +1406,17 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'semi-automatic adds waypoints along the flight lines where the '
             'ground rises or falls by more than the tolerance. It follows the '
             'bare-earth terrain, not trees or buildings, so keep a safe margin.')
-        # Route options share one row to keep the panel compact.
+        # Route options are stacked, so they do not widen the panel.
         # Add the layout directly (not wrapped in a QWidget) so no background is
         # painted behind the checkboxes; they then blend into the section card
         # like the other controls. Spanning both columns also left-aligns them
         # with the labelled rows (Max Waypoints, etc.).
-        cover_layout = QHBoxLayout()
+        cover_layout = QVBoxLayout()
         cover_layout.setContentsMargins(0, 0, 0, 0)
-        cover_layout.setSpacing(12)
+        cover_layout.setSpacing(6)
         cover_layout.addWidget(self.crossHatchCheck)
         cover_layout.addWidget(self.reverseRouteCheck)
         cover_layout.addWidget(self.terrainFollowCheck)
-        cover_layout.addStretch()
         form.addRow(cover_layout)
 
         self.terrainToleranceSpin = QDoubleSpinBox()
@@ -1431,6 +1455,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         form  = QFormLayout(group)
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
+        # Labels above the actions: "Land at last waypoint" then fits the
+        # column without widening the panel.
+        form.setRowWrapPolicy(_WrapAllRows)
 
         self.finishActionCombo = QComboBox()
         self._tip(self.finishActionCombo,
@@ -1495,7 +1522,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         contour_row.addWidget(self.contourExtentCombo, 1)
         outer.addLayout(contour_row)
 
-        # ── Show Takeoff Zone on the left, Elevation Tolerance + GSD Variance right ──
+        # ── Show Takeoff Zone, then its settings as labelled rows ──
         self.showTakeoffZoneBtn = QPushButton('Show Takeoff Zone')
         self.showTakeoffZoneBtn.setObjectName('showTakeoffZoneBtn')
         self.showTakeoffZoneBtn.setCheckable(True)
@@ -1503,12 +1530,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Toggle the takeoff-zone overlay: sample the DEM around the first '
             'waypoint and highlight the ground that keeps the mission at the same '
             'altitude within the tolerance. Click again to hide it.')
-        # Give both overlay toggle buttons the same width (the wider one's), so
-        # Show Contours lines up with Show Takeoff Zone.
-        btn_w = max(self.showTakeoffZoneBtn.sizeHint().width(),
-                    self.showContoursBtn.sizeHint().width())
-        self.showTakeoffZoneBtn.setFixedWidth(btn_w)
-        self.showContoursBtn.setFixedWidth(btn_w)
 
         self.takeoffToleranceSpin = QDoubleSpinBox()
         self.takeoffToleranceSpin.setRange(0.1, 50.0)
@@ -1530,16 +1551,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         tz_row.setContentsMargins(0, 0, 0, 0)
         tz_row.setSpacing(6)
         tz_row.addWidget(self.showTakeoffZoneBtn)
-        tz_row.addSpacing(8)
-        tol_cap = QLabel('Elevation Tolerance')
-        tol_cap.setObjectName('inlineFormLabel')
-        tz_row.addWidget(tol_cap)
-        tz_row.addWidget(self.takeoffToleranceSpin)
-        tz_row.addSpacing(8)
-        gsd_cap = QLabel('GSD Variance')
-        gsd_cap.setObjectName('inlineFormLabel')
-        tz_row.addWidget(gsd_cap)
-        tz_row.addWidget(self.takeoffGsdVarLabel)
         tz_row.addStretch()
         outer.addLayout(tz_row)
 
@@ -1570,19 +1581,51 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Positive when your takeoff is higher than the reference, negative '
             'when lower. Leave at 0 for a ground launch at the first waypoint.')
 
-        # Same takeoff for all splits on the left, Launch Offset on the right.
-        same_lo_row = QHBoxLayout()
-        same_lo_row.setContentsMargins(0, 0, 0, 0)
-        same_lo_row.setSpacing(6)
-        same_lo_row.addWidget(self.sameTakeoffCheck)
-        same_lo_row.addStretch()
-        lo_cap = QLabel('Launch Offset')
-        lo_cap.setObjectName('inlineFormLabel')
-        same_lo_row.addWidget(lo_cap)
-        same_lo_row.addWidget(self.launchOffsetSpin)
-        outer.addLayout(same_lo_row)
+        # Tolerance, its GSD variance and the launch offset as labelled rows,
+        # then the split option, so the section stays narrow.
+        settings_form = QFormLayout()
+        settings_form.setContentsMargins(0, 2, 0, 0)
+        settings_form.setLabelAlignment(_AlignLeft | _AlignVCenter)
+        settings_form.setSpacing(6)
+        settings_form.addRow('Elevation Tolerance', self.takeoffToleranceSpin)
+        settings_form.addRow('GSD Variance', self.takeoffGsdVarLabel)
+        settings_form.addRow('Launch Offset', self.launchOffsetSpin)
+        outer.addLayout(settings_form)
+        outer.addWidget(self.sameTakeoffCheck)
 
         return group
+
+    def _fit_spin_boxes(self):
+        """Size number boxes to their longest value, not Qt's estimate.
+
+        Qt 6 asks for about twice the width a box needs, which widened the
+        panel. The width allows for the stylesheet's padding, border and the
+        16 px step buttons, and is never more than Qt's own minimum."""
+        for spin in self.findChildren(QAbstractSpinBox):
+            if isinstance(spin, QDoubleSpinBox):
+                texts = ['%.*f' % (spin.decimals(), value)
+                         for value in (spin.minimum(), spin.maximum())]
+            elif isinstance(spin, QSpinBox):
+                texts = [str(spin.minimum()), str(spin.maximum())]
+            else:
+                continue
+            metrics = spin.fontMetrics()
+            text = max((metrics.horizontalAdvance(spin.prefix() + value + spin.suffix())
+                        for value in texts + [spin.specialValueText()]))
+            needed = text + 2 * 6 + 2 + 16 + 6   # padding, border, buttons, cursor
+            spin.setMinimumWidth(min(spin.minimumSizeHint().width(), needed))
+
+    def _equalize_overlay_buttons(self):
+        """Give both overlay toggle buttons the wider one's width, so Show
+        Contours lines up with Show Takeoff Zone. Run once styled: unstyled
+        sizes are wider on Qt 5."""
+        buttons = (self.showTakeoffZoneBtn, self.showContoursBtn)
+        for button in buttons:
+            button.setMinimumWidth(0)
+            button.setMaximumWidth(16777215)
+        width = max(button.sizeHint().width() for button in buttons)
+        for button in buttons:
+            button.setFixedWidth(width)
 
     def _build_stats_hud(self):
         """Flight-stats HUD: a compact, semi-transparent card overlaid on a

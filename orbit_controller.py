@@ -402,8 +402,7 @@ class OrbitMixin:
         self._set_row_visible(self._area_form, self._sourceStack, not orbit)
 
         # An orbit always flies a curved path, so the path choice is hidden.
-        for widget in (self._pathInlineLabel, self.pathCurvedRadio, self.pathStraightRadio):
-            widget.setVisible(not orbit)
+        self._set_row_visible(self._mission_form, self._pathRow, not orbit)
 
         # Orbits split into flights like mapping, but have no terrain follow.
         drone = self.droneModelCombo.currentText()
