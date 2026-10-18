@@ -366,9 +366,10 @@ QWidget {
    Labels that need a background set it via their own objectName rule, which is
    more specific and still wins. */
 QLabel { background-color: transparent; }
-/* Field labels ("Altitude", "Drone", ...) in a clear sky blue, semi-bold,
-   so they read sharply and apart from the white values beside them. */
-QLabel#formLabel, QLabel#inlineFormLabel { color: #9CC4F2; font-weight: 600; }
+/* Field labels ("Altitude", "Drone", ...) in a clear sky blue, bold (the
+   same weight on Qt 5 and Qt 6), so they read sharply and apart from the
+   white values beside them. */
+QLabel#formLabel, QLabel#inlineFormLabel { color: #9CC4F2; font-weight: bold; }
 QGroupBox {
     background-color: #202430;
     border: 1px solid #454A57;
@@ -969,6 +970,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                 label = item.widget() if item is not None else None
                 if isinstance(label, QLabel) and not label.objectName():
                     label.setObjectName('formLabel')
+                    # Qt 6 may have styled it already: apply the label rule now.
+                    label.style().unpolish(label)
+                    label.style().polish(label)
 
     def _fit_panel_width(self):
         """Let the dock shrink only down to the natural minimum width of its
@@ -1541,18 +1545,22 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'semi-automatic adds waypoints along the flight lines where the '
             'ground rises or falls by more than the tolerance. It follows the '
             'bare-earth terrain, not trees or buildings, so keep a safe margin.')
-        # Route options share one row; the panel widens to fit them.
-        # Add the layout directly (not wrapped in a QWidget) so no background is
-        # painted behind the checkboxes; they then blend into the section card
-        # like the other controls. Spanning both columns also left-aligns them
-        # with the labelled rows (Max Waypoints, etc.).
-        cover_layout = QHBoxLayout()
+        # Route options: Cross-hatch and Reverse route on one line, Terrain
+        # follow under them, so they fit the column without widening the panel.
+        # Add the layouts directly (not wrapped in a QWidget) so no background
+        # is painted behind the checkboxes; they then blend into the section
+        # card like the other controls. Spanning both columns also left-aligns
+        # them with the labelled rows (Max Waypoints, etc.).
+        cover_layout = QVBoxLayout()
         cover_layout.setContentsMargins(0, 0, 0, 0)
-        cover_layout.setSpacing(12)
-        cover_layout.addWidget(self.crossHatchCheck)
-        cover_layout.addWidget(self.reverseRouteCheck)
+        cover_layout.setSpacing(6)
+        pair_layout = QHBoxLayout()
+        pair_layout.setSpacing(12)
+        pair_layout.addWidget(self.crossHatchCheck)
+        pair_layout.addWidget(self.reverseRouteCheck)
+        pair_layout.addStretch()
+        cover_layout.addLayout(pair_layout)
         cover_layout.addWidget(self.terrainFollowCheck)
-        cover_layout.addStretch()
         form.addRow(cover_layout)
 
         self.terrainToleranceSpin = QDoubleSpinBox()
