@@ -296,17 +296,13 @@ class OrbitMixin:
         self.removeCircleBtn.setObjectName('removeCircleBtn')
         self._tip(self.removeCircleBtn, 'Remove the circle and its waypoints.')
         self.removeCircleBtn.setVisible(False)
-        # Draw on its own line; Edit and Remove under it once there is a circle.
         row = QWidget()
-        layout = QVBoxLayout(row)
+        layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 6, 0, 0)   # a little more room under Centre Point
         layout.setSpacing(4)
-        layout.addWidget(self.drawCircleBtn)
-        edit_row = QHBoxLayout()
-        edit_row.setSpacing(4)
-        edit_row.addWidget(self.editCircleBtn)
-        edit_row.addWidget(self.removeCircleBtn)
-        layout.addLayout(edit_row)
+        layout.addWidget(self.drawCircleBtn, 2)
+        layout.addWidget(self.editCircleBtn, 1)
+        layout.addWidget(self.removeCircleBtn, 1)
         for button in (self.drawCircleBtn, self.editCircleBtn, self.removeCircleBtn):
             button.setMinimumHeight(28)     # same height as the 2D Draw buttons
         form_rows.fit_to_row(self.drawCircleBtn, self.editCircleBtn, self.removeCircleBtn)
@@ -337,25 +333,19 @@ class OrbitMixin:
         column = QVBoxLayout(row)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(4)
-        # "Ring" and the ring list, then Add and Remove under it, across the box.
-        ring_line = QHBoxLayout()
-        ring_line.setSpacing(4)
-        ring_caption = QLabel('Ring')
-        ring_caption.setObjectName('inlineFormLabel')
-        ring_line.addWidget(ring_caption)
-        ring_line.addWidget(self.orbitRingCombo, 1)
-        column.addLayout(ring_line)
+        # The ring list with Add and Remove beside it.
         buttons = QHBoxLayout()
         buttons.setSpacing(4)
-        buttons.addWidget(self.addRingBtn)
-        buttons.addWidget(self.removeRingBtn)
+        buttons.addWidget(self.orbitRingCombo, 1)
+        buttons.addWidget(self.addRingBtn, 1)
+        buttons.addWidget(self.removeRingBtn, 1)
         for widget in (self.orbitRingCombo, self.addRingBtn, self.removeRingBtn):
             widget.setMinimumHeight(28)     # same height as the Draw buttons
         form_rows.fit_to_row(self.addRingBtn, self.removeRingBtn)
         column.addLayout(buttons)
         column.addWidget(self.orbitRingLimitLabel)
         self._orbitRingRow = row
-        form.addRow(row)
+        form.addRow('Ring', row)
         self._set_row_visible(form, row, False)
 
     def _build_orbit_flight_rows(self, form):
@@ -416,7 +406,7 @@ class OrbitMixin:
         self._set_row_visible(self._area_form, self._sourceStack, not orbit)
 
         # An orbit always flies a curved path, so the path choice is hidden.
-        self._set_row_visible(self._mission_form, self._pathRow, not orbit)
+        self._pathRow.setVisible(not orbit)
 
         # Orbits split into flights like mapping, but have no terrain follow.
         drone = self.droneModelCombo.currentText()

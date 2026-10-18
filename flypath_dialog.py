@@ -53,7 +53,6 @@ try:
     _SP_IGNORED   = QSizePolicy.Policy.Ignored
     _SP_PREFERRED = QSizePolicy.Policy.Preferred
     _SP_FIXED     = QSizePolicy.Policy.Fixed
-    _WrapAllRows  = QFormLayout.RowWrapPolicy.WrapAllRows
 except AttributeError:
     # Old PyQt5 without scoped enums; fetch unscoped names dynamically so the
     # scoped forms above remain the only static enum references in the file.
@@ -84,7 +83,6 @@ except AttributeError:
     _SP_IGNORED   = getattr(QSizePolicy, 'Ignored')
     _SP_PREFERRED = getattr(QSizePolicy, 'Preferred')
     _SP_FIXED     = getattr(QSizePolicy, 'Fixed')
-    _WrapAllRows  = getattr(QFormLayout, 'WrapAllRows')
 
 from qgis.core import (
     Qgis,
@@ -905,15 +903,11 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.infoBar.setObjectName('infoBarIdle')
         self.infoBar.setWordWrap(True)
 
-        # Two columns throughout: Mission Setup beside Survey Area, then
+        # Mission Setup and Survey Area across the panel, then two columns:
         # Flight Parameters and Safety Actions (left) beside Adv. Mission
-        # Organizers and Takeoff Zone (right), so no section leaves half the
-        # panel empty.
-        setup_row = QHBoxLayout()
-        setup_row.setSpacing(6)
-        setup_row.addWidget(self._build_mission_group(), 1)
-        setup_row.addWidget(self._build_area_group(), 1)
-        scroll_layout.addLayout(setup_row)
+        # Organizers and Takeoff Zone (right).
+        scroll_layout.addWidget(self._build_mission_group())
+        scroll_layout.addWidget(self._build_area_group())
 
         params_row = QHBoxLayout()
         params_row.setSpacing(6)
@@ -961,7 +955,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         group = QGroupBox('Mission Setup')
         group.setObjectName('missionGroup')
         form  = QFormLayout(group)
-        self._mission_form = form   # kept so orbit mode can hide Flight Path
+        self._mission_form = form   # kept so hidden rows collapse evenly
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
 
@@ -1011,27 +1005,27 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'you save or cloud-sync the mission on the controller, so use this '
             'only when you will not re-save it there.')
 
-        # Capture and Flight Path each have their own row, so neither widens
-        # the panel.
+        # Capture and Flight Path share one line; orbits hide the path part.
         capture_row = QWidget()
         capture_layout = QHBoxLayout(capture_row)
         capture_layout.setContentsMargins(0, 0, 0, 0)
         capture_layout.setSpacing(8)
         capture_layout.addWidget(self.captureSemiRadio)
         capture_layout.addWidget(self.captureFullRadio)
+        capture_layout.addSpacing(16)
+        self._pathRow = QWidget()
+        path_layout = QHBoxLayout(self._pathRow)
+        path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.setSpacing(8)
+        path_caption = QLabel('Flight Path')
+        path_caption.setObjectName('inlineFormLabel')
+        path_layout.addWidget(path_caption)
+        path_layout.addWidget(self.pathCurvedRadio)
+        path_layout.addWidget(self.pathStraightRadio)
+        capture_layout.addWidget(self._pathRow)
         capture_layout.addStretch()
         self._captureRow = capture_row
         form.addRow('Capture', capture_row)
-
-        path_row = QWidget()
-        path_layout = QHBoxLayout(path_row)
-        path_layout.setContentsMargins(0, 0, 0, 0)
-        path_layout.setSpacing(8)
-        path_layout.addWidget(self.pathCurvedRadio)
-        path_layout.addWidget(self.pathStraightRadio)
-        path_layout.addStretch()
-        self._pathRow = path_row
-        form.addRow('Flight Path', path_row)
 
         self.droneModelCombo = QComboBox()
         self._tip(self.droneModelCombo,
@@ -1041,7 +1035,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
         self.cameraInfoLabel = QLabel('—')
         self.cameraInfoLabel.setObjectName('cameraInfoLabel')
-        self.cameraInfoLabel.setWordWrap(True)   # fits the half-width column
         self._tip(self.cameraInfoLabel,
             'Camera sensor summary for the selected drone. '
             'Used to calculate GSD, footprint size, and photo interval.')
@@ -1083,7 +1076,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         source_layout.addWidget(self.sourceDrawRadio)
         source_layout.addStretch()
         self._sourceRow = source_row   # kept so orbit mode can hide it
-        form.addRow(source_row)        # spans the box: the choices name the source
+        form.addRow('Source', source_row)
 
         # From-layer: the layer and its feature (FID) picker share one line.
         self.layerCombo = QComboBox()
@@ -1096,26 +1089,19 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Which feature of the layer to use as the survey area, when the '
             'layer has more than one.')
         self._featureLabel = None   # the feature picker shares the Layer row now
-        # The layer, then (for a multi-feature layer) the feature under it.
         self._layerRow = QWidget()
-        layer_page = QVBoxLayout(self._layerRow)
-        layer_page.setContentsMargins(0, 0, 0, 0)
-        layer_page.setSpacing(4)
-        layer_layout = QHBoxLayout()
+        layer_layout = QHBoxLayout(self._layerRow)
+        layer_layout.setContentsMargins(0, 0, 0, 0)
         layer_layout.setSpacing(4)
         layer_caption = QLabel('Layer')
         layer_caption.setObjectName('inlineFormLabel')
         layer_layout.addWidget(layer_caption)
-        layer_layout.addWidget(self.layerCombo, 1)
-        layer_page.addLayout(layer_layout)
-        feature_layout = QHBoxLayout()
-        feature_layout.setSpacing(4)
+        layer_layout.addWidget(self.layerCombo, 3)
         self._featureCaption = QLabel('Feature')
         self._featureCaption.setObjectName('inlineFormLabel')
         self._featureCaption.setVisible(False)   # only when a feature picker shows
-        feature_layout.addWidget(self._featureCaption)
-        feature_layout.addWidget(self.featureCombo, 1)
-        layer_page.addLayout(feature_layout)
+        layer_layout.addWidget(self._featureCaption)
+        layer_layout.addWidget(self.featureCombo, 2)
 
         self.useSelectionBtn = QPushButton('Use QGIS Selection')
         self.useSelectionBtn.setObjectName('useSelectionBtn')
@@ -1156,17 +1142,13 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Remove the drawn polygon and reset the survey area.')
         self.removePolygonBtn.setVisible(False)
 
-        # Draw on its own line; Edit and Remove under it once there is a shape.
         self._drawRow = QWidget()
-        draw_page = QVBoxLayout(self._drawRow)
-        draw_page.setContentsMargins(0, 0, 0, 0)
-        draw_page.setSpacing(4)
-        draw_page.addWidget(self.drawPolygonBtn)
-        draw_layout = QHBoxLayout()
+        draw_layout = QHBoxLayout(self._drawRow)
+        draw_layout.setContentsMargins(0, 0, 0, 0)
         draw_layout.setSpacing(4)
-        draw_layout.addWidget(self.editPolygonBtn)
-        draw_layout.addWidget(self.removePolygonBtn)
-        draw_page.addLayout(draw_layout)
+        draw_layout.addWidget(self.drawPolygonBtn, 2)
+        draw_layout.addWidget(self.editPolygonBtn, 1)
+        draw_layout.addWidget(self.removePolygonBtn, 1)
         form_rows.fit_to_row(self.drawPolygonBtn, self.editPolygonBtn, self.removePolygonBtn)
 
         # All three sources share ONE stacked row, so the control that appears
@@ -1477,9 +1459,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         form  = QFormLayout(group)
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
-        # Labels above the actions: "Land at last waypoint" then fits the
-        # column without widening the panel.
-        form.setRowWrapPolicy(_WrapAllRows)
 
         self.finishActionCombo = QComboBox()
         self._tip(self.finishActionCombo,
@@ -1487,7 +1466,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Return to Home: flies back and lands at takeoff. '
             'Hover: holds position at the last waypoint. '
             'Land: lands immediately at the last waypoint.')
-        form.addRow('Finish Action', self.finishActionCombo)
+        form.addRow('Finish', self.finishActionCombo)
 
         self.rcLostActionCombo = QComboBox()
         self._tip(self.rcLostActionCombo,
@@ -1496,7 +1475,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Hover: holds position and waits for signal. '
             'Land: lands immediately at current position. '
             'Continue: keeps flying the mission regardless.')
-        form.addRow('RC Lost Action', self.rcLostActionCombo)
+        form.addRow('RC Lost', self.rcLostActionCombo)
 
         return group
 
