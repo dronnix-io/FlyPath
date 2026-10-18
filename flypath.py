@@ -6,7 +6,7 @@ from qgis.PyQt.QtCore import Qt, QTimer
 from qgis.core import QgsProject
 
 from . import preview_layers
-from .flypath_dialog import FlyPathDialog
+from .flypath_dialog import FlyPathDialog, style_tabs
 from .flypath_library import MissionLibrary
 
 try:
@@ -62,8 +62,9 @@ class FlyPath:
         # Lock the dock to the panel's natural width so it can't be dragged
         # wider or narrower. The two-column layout is designed for one width,
         # and stretching it only adds empty space.
-        self.dock_widget.setFixedWidth(max(self.panel.minimumWidth() + 8,
-                                           self.tabs.minimumSizeHint().width()))
+        width = max(self.panel.minimumWidth() + 8, self.tabs.minimumSizeHint().width())
+        self.dock_widget.setFixedWidth(width)
+        style_tabs(self.tabs)
 
         self.iface.mainWindow().addDockWidget(
             _DockRight, self.dock_widget

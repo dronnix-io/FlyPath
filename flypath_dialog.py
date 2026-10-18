@@ -862,6 +862,33 @@ def _draw_bin(painter, color):
     painter.drawLine(QPointF(9, 7.5), QPointF(9, 12.5))
 
 
+def style_tabs(tabs):
+    """Planner and My missions: two full-width tabs with centred bold text,
+    and a blue bar under the chosen one."""
+    tabs.setDocumentMode(True)        # the tabs then fill the bar, icon and text centred
+    bar = tabs.tabBar()
+    bar.setExpanding(True)
+    bar.setDrawBase(False)
+    tabs.setStyleSheet(tabs.styleSheet() + _TAB_STYLE)
+
+
+_TAB_STYLE = """
+QTabWidget::pane { border: none; border-top: 1px solid #2E323C; top: -1px; }
+QTabBar { background-color: #16181D; }
+QTabBar::tab {
+    background-color: #191C22; color: #8A93A2;
+    font-size: 13px; font-weight: bold;
+    padding: 8px 12px;
+    border: none; border-bottom: 3px solid #23262E;
+}
+QTabBar::tab:hover { background-color: #22262E; color: #E0E4EA; }
+QTabBar::tab:selected {
+    background-color: #1E2128; color: #FFFFFF;
+    border-bottom: 3px solid #3F9BFF;
+}
+"""
+
+
 class _PreviewButton(QPushButton):
     """Preview on Map, a gradient pill with a flight-path icon. It turns
     amber with a refresh icon while it reads Regenerate on Map, so an
