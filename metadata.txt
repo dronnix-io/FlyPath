@@ -3,8 +3,15 @@ name=FlyPath
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D, corridor and orbit (3D model) drone missions directly from QGIS
-version=3.1.1
-changelog=3.1.1 - When flypath.io sync is busy, FlyPath now says how long to wait before retrying.
+version=3.2.0
+changelog=3.2.0 - A redesigned, narrower panel: about half the previous width, with sections in
+    two balanced columns and a more compact Export Mission area. Capture, Flight Path and Source are
+    segmented toggles; labels and values have distinct colours; Preview on Map shows when a plan
+    needs regenerating. Mission splitting settings are grouped together. My missions explains what
+    FlyPath.io adds and how to sign up, and a new About tab covers FlyPath's mission, features and
+    roadmap, with links to report bugs, request features and contribute. Send to DJI RC is the
+    default destination on first use. Includes 3.1.0 (multi-ring orbits and orbit splitting) and 3.1.1.
+    3.1.1 - When flypath.io sync is busy, FlyPath now says how long to wait before retrying.
     3.1.0 - Orbit missions can now fly up to 3 rings around the same centre, each with
     its own radius, altitude and camera tilt. Add rings with + Add Ring under the Draw buttons, and
     pick a ring to edit its values in Flight Parameters. The drone flies the rings in order. Orbits
