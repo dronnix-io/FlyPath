@@ -3,7 +3,7 @@
 from qgis.PyQt.QtCore import Qt, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
-    QFrame, QWidget, QHBoxLayout, QLabel, QPushButton, QTabWidget, QTreeWidget,
+    QFrame, QGridLayout, QWidget, QHBoxLayout, QLabel, QPushButton, QTabWidget, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QMessageBox,
 )
 
@@ -14,6 +14,7 @@ try:
     _PlainText = Qt.TextFormat.PlainText
     _AlignCenter = Qt.AlignmentFlag.AlignCenter
     _AlignLeft = Qt.AlignmentFlag.AlignLeft
+    _AlignTopLeft = Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
     _ActionRole = QMessageBox.ButtonRole.ActionRole
     _Cancel = QMessageBox.StandardButton.Cancel
     _Descending = Qt.SortOrder.DescendingOrder
@@ -22,26 +23,20 @@ except AttributeError:
     _PlainText = getattr(Qt, 'PlainText')
     _AlignCenter = getattr(Qt, 'AlignCenter')
     _AlignLeft = getattr(Qt, 'AlignLeft')
+    _AlignTopLeft = getattr(Qt, 'AlignTop') | getattr(Qt, 'AlignLeft')
     _ActionRole = getattr(QMessageBox, 'ActionRole')
     _Cancel = getattr(QMessageBox, 'Cancel')
     _Descending = getattr(Qt, 'DescendingOrder')
 
 
 SIGNUP_URL = flypath_sync.DEFAULT_BASE_URL + '/register/'
-# Why there are two tools: what each one is for.
-_ROLES = (
-    ('QGIS plugin', 'Plans with your GIS data (layers, selections, DEMs) and sends '
-                    'missions straight to your DJI RC.'),
-    ('FlyPath.io', 'Your missions\' home: they are archived in your account, easy to '
-                   'share with other pilots, and you can plan and edit them in any '
-                   'browser, without QGIS.'),
+# Why there are two tools, as short labelled lines. The last one is coming.
+_WHY = (
+    ('QGIS plugin', 'Plan with your GIS data; send to the DJI RC.'),
+    ('FlyPath.io', 'Archive, share and plan in any browser.'),
+    ('Both', 'Same engine: missions open unchanged in each.'),
+    ('Coming', 'Cloud 2D maps and 3D models of flown missions.'),
 )
-# What only the website will offer, beyond what an offline plugin can do.
-_COMING = ('Coming to FlyPath.io: cloud 2D map and 3D model generation for the '
-           'missions you have flown, beyond what an offline plugin can do.')
-_ROLES_TOGETHER = ('Both use the same planning engine, so a mission opens in either '
-                   'one unchanged. Save it here, refine it on the website, then open '
-                   'it again here to send it to the RC.')
 _SIGNUP_STYLE = """
 QFrame#signupCard {
     background-color: #1C2836; border: 1px solid #2F4A6E;
@@ -50,7 +45,7 @@ QFrame#signupCard {
 QLabel#signupTitle { color: #FFFFFF; font-size: 13px; font-weight: bold; }
 QLabel#signupText { color: #C8D6E8; }
 QLabel#signupRole { color: #9CC4F2; font-weight: bold; }
-QLabel#signupComing { color: #F5C451; }
+QLabel#signupComing { color: #F5C451; font-weight: bold; }
 QLabel#signupReason { color: #E6EEF8; }
 QLabel#signupHint { color: #8FA0B8; font-size: 10px; }
 QPushButton#signupButton {
@@ -188,51 +183,45 @@ class MissionLibrary(QWidget):
         column = QVBoxLayout(card)
         column.setContentsMargins(12, 10, 12, 12)
         column.setSpacing(6)
-        title = QLabel('New to FlyPath.io? Why use it with the plugin')
+        title = QLabel('Why use FlyPath.io too?')
         title.setObjectName('signupTitle')
-        title.setWordWrap(True)
         column.addWidget(title)
-        for role, text in _ROLES:
-            name = QLabel(role)
-            name.setObjectName('signupRole')
-            column.addWidget(name)
-            line = QLabel(text)
-            line.setObjectName('signupReason')
-            line.setWordWrap(True)
-            column.addWidget(line)
-        together = QLabel(_ROLES_TOGETHER)
-        together.setObjectName('signupText')
-        together.setWordWrap(True)
-        column.addSpacing(2)
-        column.addWidget(together)
-        coming = QLabel(_COMING)
-        coming.setObjectName('signupComing')
-        coming.setWordWrap(True)
-        column.addWidget(coming)
-        free = QLabel('A FlyPath.io account is free.')
-        free.setObjectName('signupText')
-        column.addWidget(free)
+        rows = QGridLayout()
+        rows.setHorizontalSpacing(10)
+        rows.setVerticalSpacing(4)
+        for row, (name, line) in enumerate(_WHY):
+            label = QLabel(name)
+            label.setObjectName('signupComing' if name == 'Coming' else 'signupRole')
+            rows.addWidget(label, row, 0, _AlignTopLeft)
+            value = QLabel(line)
+            value.setObjectName('signupReason')
+            value.setWordWrap(True)
+            rows.addWidget(value, row, 1)
+        rows.setColumnStretch(1, 1)
+        column.addLayout(rows)
+        actions = QHBoxLayout()
+        actions.setSpacing(10)
         button = QPushButton('Create a free account')
         button.setObjectName('signupButton')
         button.setToolTip(SIGNUP_URL)
         button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(SIGNUP_URL)))
-        column.addSpacing(4)
-        column.addWidget(button, 0, _AlignLeft)
-        hint = QLabel('Already have an account? Use Connect account above.')
+        actions.addWidget(button)
+        hint = QLabel('Have one? Use Connect account.')
         hint.setObjectName('signupHint')
-        hint.setWordWrap(True)
-        column.addWidget(hint)
+        actions.addWidget(hint, 1)
+        column.addSpacing(4)
+        column.addLayout(actions)
         self.signup_card = card
         return card
 
     def explain_website(self):
         """Why there is a website as well as this plugin."""
-        parts = ['<b>%s</b>: %s' % (role, text) for role, text in _ROLES]
+        rows = ''.join('<tr><td style="padding-right:10px;"><b>%s</b></td><td>%s</td></tr>'
+                       % (name, line) for name, line in _WHY)
         QMessageBox.information(
             self, 'Why FlyPath.io?',
-            '<p>' + '</p><p>'.join(parts) + '</p><p>' + _ROLES_TOGETHER + '</p>'
-            '<p>' + _COMING + '</p>'
-            '<p>Create a free account at <a href="%s">flypath.io/register</a>.</p>' % SIGNUP_URL)
+            '<table cellspacing="3">%s</table><p>Free account: '
+            '<a href="%s">flypath.io/register</a></p>' % (rows, SIGNUP_URL))
 
     def update_buttons(self):
         storage_error = None
