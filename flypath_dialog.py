@@ -467,10 +467,25 @@ QPushButton#exportBtn {
 QPushButton#exportBtn:hover   { background-color: #FFB520; }
 QPushButton#exportBtn:pressed { background-color: #D09000; }
 
-QPushButton#clearPreviewBtn {
-    background-color: #3A3D45; color: #D0D0D0; font-weight: normal;
+QPushButton#previewBtn {
+    background-color: #2D6DB5; color: white;
+    border: 1px solid #3F82CC; border-radius: 6px;
+    padding: 6px 12px; font-size: 12px; font-weight: bold;
 }
-QPushButton#clearPreviewBtn:hover { background-color: #4A4D55; }
+QPushButton#previewBtn:hover   { background-color: #3A7BC8; border-color: #5A9BE0; }
+QPushButton#previewBtn:pressed { background-color: #245A96; }
+QPushButton#previewBtn[stale="true"] {
+    border: 2px solid #F0A500; color: #FFE2A0;
+}
+QPushButton#clearPreviewBtn {
+    background-color: transparent; color: #C8CCD4;
+    border: 1px solid #4A4F5A; border-radius: 6px;
+    padding: 6px 12px; font-weight: normal;
+}
+QPushButton#clearPreviewBtn:hover {
+    background-color: #3A1F22; color: #FF9A9A; border-color: #A04048;
+}
+QPushButton#clearPreviewBtn:pressed { background-color: #4A2428; }
 QPushButton#drawPolygonBtn, QPushButton#drawCircleBtn, QPushButton#addRingBtn {
     background-color: #1E3A1E; color: #80C880;
     border: 1px solid #2E5A2E; font-weight: bold;
@@ -602,7 +617,7 @@ _COLOR_START_MARKER = preview_layers.START_COLOR
 _COLOR_END_MARKER = preview_layers.END_COLOR
 
 
-_RC_THUMB_SIZE = QSize(128, 72)     # 16:9 preview beside the mission picker
+_RC_THUMB_SIZE = QSize(192, 108)    # 16:9 preview beside the mission picker
 _RC_FOLDER_HINT = ('The RC waypoint folder FlyPath writes the mission into: %s. '
                    'Set by Detect RC or Locate….')
 
@@ -714,6 +729,35 @@ class _RcFolderBrowser(QDialog):
     def selected_parts(self):
         item = self.tree.currentItem()
         return item.data(0, _ROLE_PARTS) if item else None
+
+
+class _PreviewButton(QPushButton):
+    """Preview on Map, outlined in amber while it reads Regenerate on Map,
+    so an out-of-date plan stands out."""
+
+    def setText(self, text):
+        super().setText(text)
+        self.setProperty('stale', text.startswith('Regenerate'))
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+
+def _glyph_icon(glyph, color, size=14):
+    """A small icon drawn from a text symbol, so it matches the dark style."""
+    pixmap = QPixmap(size * 2, size * 2)        # drawn at 2x for sharp scaling
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(_Antialias, True)
+        font = QFont()
+        font.setPixelSize(int(size * 1.5))
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor(color))
+        painter.drawText(pixmap.rect(), int(_AlignCenter), glyph)
+    finally:
+        painter.end()
+    return QIcon(pixmap)
 
 
 class _ClickableLabel(QLabel):
@@ -1860,17 +1904,20 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         row.setObjectName('previewRow')
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(4)
+        row_layout.setSpacing(6)
 
-        self.previewBtn = QPushButton('Preview on Map')
-        self.previewBtn.setMinimumHeight(30)
+        self.previewBtn = _PreviewButton('Preview on Map')
+        self.previewBtn.setObjectName('previewBtn')
+        self.previewBtn.setMinimumHeight(34)
+        self.previewBtn.setIcon(_glyph_icon('▶', '#FFFFFF'))
         self._tip(self.previewBtn,
             'Generate the flight grid and display the waypoint path '
             'on the QGIS map canvas for review before exporting.')
 
         self.clearPreviewBtn = QPushButton('Clear Preview')
         self.clearPreviewBtn.setObjectName('clearPreviewBtn')
-        self.clearPreviewBtn.setMinimumHeight(30)
+        self.clearPreviewBtn.setMinimumHeight(34)
+        self.clearPreviewBtn.setIcon(_glyph_icon('✕', '#C8CCD4'))
         self._tip(self.clearPreviewBtn,
             'Remove the flight path preview layers from the map '
             'and reset the survey area selection.')
