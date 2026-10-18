@@ -11,7 +11,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QGroupBox, QScrollArea, QFrame,
     QLabel, QLineEdit, QPushButton, QComboBox,
-    QAbstractSpinBox, QSpinBox, QDoubleSpinBox, QCheckBox, QRadioButton, QButtonGroup,
+    QAbstractSpinBox, QSpinBox, QDoubleSpinBox, QCheckBox, QButtonGroup,
     QMessageBox, QFileDialog, QApplication,
     QStackedWidget, QDialog, QTreeWidget, QTreeWidgetItem, QDialogButtonBox,
     QGraphicsView, QGraphicsScene, QLayout, QSizePolicy,
@@ -479,6 +479,21 @@ QPushButton {
 QPushButton:hover   { background-color: #3A7EC6; }
 QPushButton:pressed { background-color: #1F5A9E; }
 QPushButton:disabled { background-color: #3A3D45; color: #77797F; }
+/* Segmented toggles (Capture, Flight Path, Source): a rounded track with
+   the chosen option as a filled pill inside it. Only whole-corner rounding
+   is used, which Qt 5 and Qt 6 both draw. */
+QFrame#segmentBox {
+    background-color: #23262E; border: 1px solid #3F4450; border-radius: 12px;
+}
+QPushButton[segment] {
+    background-color: transparent; color: #C8CCD4;
+    border: none; border-radius: 10px; padding: 3px 12px; font-weight: bold;
+}
+QPushButton[segment]:hover { background-color: #343844; color: #FFFFFF; }
+QPushButton[segment]:checked {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3A80CC, stop:1 #2D6DB5);
+    color: #FFFFFF;
+}
 QPushButton#exportBtn {
     background-color: #F0A500; color: #1A1A1A; font-size: 12px;
 }
@@ -752,6 +767,34 @@ class _RcFolderBrowser(QDialog):
     def selected_parts(self):
         item = self.tree.currentItem()
         return item.data(0, _ROLE_PARTS) if item else None
+
+
+class _SegmentButton(QPushButton):
+    """One choice of a segmented toggle: a checkable button that, in an
+    exclusive QButtonGroup, behaves like a radio button."""
+
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self.setCheckable(True)
+        self.setCursor(_PointingCursor)
+
+
+def _segmented(*radios):
+    """Join choice buttons into one segmented toggle: a rounded track with the
+    chosen option as a filled pill. Their button groups keep one checked."""
+    box = QFrame()       # a frame, so Qt 5 also rounds the track
+    box.setObjectName('segmentBox')
+    layout = QHBoxLayout(box)
+    layout.setContentsMargins(2, 2, 2, 2)     # the track shows around the pill
+    layout.setSpacing(2)
+    for index, radio in enumerate(radios):
+        place = ('only' if len(radios) == 1 else 'first' if index == 0
+                 else 'last' if index == len(radios) - 1 else 'middle')
+        radio.setProperty('segment', place)
+        radio.style().unpolish(radio)     # apply the segment rules now
+        radio.style().polish(radio)
+        layout.addWidget(radio)
+    return box
 
 
 def _drawn_icon(draw, color, size=18):
@@ -1112,8 +1155,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         form.addRow('Mission Type', self.missionTypeCombo)
 
         # Capture mode for mapping missions: how the camera is triggered.
-        self.captureSemiRadio = QRadioButton('Semi')
-        self.captureFullRadio = QRadioButton('Full')
+        self.captureSemiRadio = _SegmentButton('Semi')
+        self.captureFullRadio = _SegmentButton('Full')
         self.captureSemiRadio.setChecked(True)
         self._captureGroup = QButtonGroup(self)
         self._captureGroup.addButton(self.captureSemiRadio)
@@ -1129,8 +1172,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         # Flight Path: how the drone connects waypoints. DJI Fly reshuffles a
         # straight-line mission if it is saved or cloud-synced on the controller
         # (issue #13), so Curved is the recommended default.
-        self.pathCurvedRadio = QRadioButton('Curved')
-        self.pathStraightRadio = QRadioButton('Straight')
+        self.pathCurvedRadio = _SegmentButton('Curved')
+        self.pathStraightRadio = _SegmentButton('Straight')
         self.pathCurvedRadio.setChecked(True)
         self._pathGroup = QButtonGroup(self)
         self._pathGroup.addButton(self.pathCurvedRadio)
@@ -1151,9 +1194,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         capture_layout = QHBoxLayout(capture_row)
         capture_layout.setContentsMargins(0, 0, 0, 0)
         capture_layout.setSpacing(8)
-        capture_layout.addWidget(self.captureSemiRadio)
-        capture_layout.addWidget(self.captureFullRadio)
-        capture_layout.addSpacing(16)
+        capture_layout.addWidget(_segmented(self.captureSemiRadio, self.captureFullRadio))
+        capture_layout.addSpacing(10)
         self._pathRow = QWidget()
         path_layout = QHBoxLayout(self._pathRow)
         path_layout.setContentsMargins(0, 0, 0, 0)
@@ -1161,8 +1203,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         path_caption = QLabel('Flight Path')
         path_caption.setObjectName('inlineFormLabel')
         path_layout.addWidget(path_caption)
-        path_layout.addWidget(self.pathCurvedRadio)
-        path_layout.addWidget(self.pathStraightRadio)
+        path_layout.addWidget(_segmented(self.pathCurvedRadio, self.pathStraightRadio))
         capture_layout.addWidget(self._pathRow)
         capture_layout.addStretch()
         self._captureRow = capture_row
@@ -1193,9 +1234,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
         # Source: use an existing polygon (layer / selection) or draw one. Only
         # the fields for the chosen source are shown, keeping the section compact.
-        self.sourceLayerRadio     = QRadioButton('Layer')
-        self.sourceSelectionRadio = QRadioButton('Selection')
-        self.sourceDrawRadio      = QRadioButton('Draw')
+        self.sourceLayerRadio     = _SegmentButton('Layer')
+        self.sourceSelectionRadio = _SegmentButton('Selection')
+        self.sourceDrawRadio      = _SegmentButton('Draw')
         self.sourceLayerRadio.setChecked(True)
         self._sourceGroup = QButtonGroup(self)
         self._sourceGroup.addButton(self.sourceLayerRadio)
@@ -1211,10 +1252,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         source_row = QWidget()
         source_layout = QHBoxLayout(source_row)
         source_layout.setContentsMargins(0, 0, 0, 0)
-        source_layout.setSpacing(10)
-        source_layout.addWidget(self.sourceLayerRadio)
-        source_layout.addWidget(self.sourceSelectionRadio)
-        source_layout.addWidget(self.sourceDrawRadio)
+        source_layout.addWidget(_segmented(
+            self.sourceLayerRadio, self.sourceSelectionRadio, self.sourceDrawRadio))
         source_layout.addStretch()
         self._sourceRow = source_row   # kept so orbit mode can hide it
         form.addRow('Source', source_row)
