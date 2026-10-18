@@ -17,11 +17,11 @@ from qgis.PyQt.QtWidgets import (
     QGraphicsView, QGraphicsScene, QLayout, QSizePolicy,
 )
 from qgis.PyQt.QtCore import (
-    Qt, QObject, QEvent, QSettings, QSize, QPointF, QUrl, pyqtSignal,
+    Qt, QObject, QEvent, QSettings, QSize, QPointF, QRectF, QUrl, pyqtSignal,
 )
 from qgis.PyQt.QtGui import (
-    QColor, QFont, QPixmap, QPainter, QPen, QPolygonF, QImage, QDesktopServices,
-    QIcon,
+    QColor, QFont, QPixmap, QPainter, QPainterPath, QPen, QPolygonF, QImage,
+    QDesktopServices, QIcon,
 )
 from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
@@ -43,6 +43,9 @@ try:
     _ScrollHandDrag  = QGraphicsView.DragMode.ScrollHandDrag
     _AnchorUnderMouse = QGraphicsView.ViewportAnchor.AnchorUnderMouse
     _Antialias    = QPainter.RenderHint.Antialiasing
+    _RoundCap     = Qt.PenCapStyle.RoundCap
+    _RoundJoin    = Qt.PenJoinStyle.RoundJoin
+    _NoPen        = Qt.PenStyle.NoPen
     _MB_YES       = QMessageBox.StandardButton.Yes
     _MB_NO        = QMessageBox.StandardButton.No
     _DBB_OK       = QDialogButtonBox.StandardButton.Ok
@@ -73,6 +76,9 @@ except AttributeError:
     _ScrollHandDrag   = getattr(QGraphicsView, 'ScrollHandDrag')
     _AnchorUnderMouse = getattr(QGraphicsView, 'AnchorUnderMouse')
     _Antialias    = getattr(QPainter, 'Antialiasing')
+    _RoundCap     = getattr(Qt, 'RoundCap')
+    _RoundJoin    = getattr(Qt, 'RoundJoin')
+    _NoPen        = getattr(Qt, 'NoPen')
     _MB_YES       = getattr(QMessageBox, 'Yes')
     _MB_NO        = getattr(QMessageBox, 'No')
     _DBB_OK       = getattr(QDialogButtonBox, 'Ok')
@@ -468,23 +474,28 @@ QPushButton#exportBtn:hover   { background-color: #FFB520; }
 QPushButton#exportBtn:pressed { background-color: #D09000; }
 
 QPushButton#previewBtn {
-    background-color: #2D6DB5; color: white;
-    border: 1px solid #3F82CC; border-radius: 6px;
-    padding: 6px 12px; font-size: 12px; font-weight: bold;
+    color: white; border: none; border-radius: 18px;
+    padding: 0 16px; font-size: 12px; font-weight: bold;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2D6DB5, stop:1 #1FA3A0);
 }
-QPushButton#previewBtn:hover   { background-color: #3A7BC8; border-color: #5A9BE0; }
-QPushButton#previewBtn:pressed { background-color: #245A96; }
+QPushButton#previewBtn:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3A80CC, stop:1 #27B8B4);
+}
+QPushButton#previewBtn:pressed {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #245A96, stop:1 #188783);
+}
 QPushButton#previewBtn[stale="true"] {
-    border: 2px solid #F0A500; color: #FFE2A0;
+    color: #1A1A1A;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #F0A500, stop:1 #F07A2A);
+}
+QPushButton#previewBtn[stale="true"]:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FFB520, stop:1 #FF8A3A);
 }
 QPushButton#clearPreviewBtn {
-    background-color: transparent; color: #C8CCD4;
-    border: 1px solid #4A4F5A; border-radius: 6px;
-    padding: 6px 12px; font-weight: normal;
+    background-color: #23262D; border: 1px solid #4A4F5A; border-radius: 18px;
+    padding: 0;
 }
-QPushButton#clearPreviewBtn:hover {
-    background-color: #3A1F22; color: #FF9A9A; border-color: #A04048;
-}
+QPushButton#clearPreviewBtn:hover   { background-color: #3A1F22; border-color: #C0505A; }
 QPushButton#clearPreviewBtn:pressed { background-color: #4A2428; }
 QPushButton#drawPolygonBtn, QPushButton#drawCircleBtn, QPushButton#addRingBtn {
     background-color: #1E3A1E; color: #80C880;
@@ -731,33 +742,96 @@ class _RcFolderBrowser(QDialog):
         return item.data(0, _ROLE_PARTS) if item else None
 
 
-class _PreviewButton(QPushButton):
-    """Preview on Map, outlined in amber while it reads Regenerate on Map,
-    so an out-of-date plan stands out."""
-
-    def setText(self, text):
-        super().setText(text)
-        self.setProperty('stale', text.startswith('Regenerate'))
-        self.style().unpolish(self)
-        self.style().polish(self)
-
-
-def _glyph_icon(glyph, color, size=14):
-    """A small icon drawn from a text symbol, so it matches the dark style."""
-    pixmap = QPixmap(size * 2, size * 2)        # drawn at 2x for sharp scaling
+def _drawn_icon(draw, color, size=18):
+    """An icon drawn with the painter (at 3x, for sharp scaling) in `color`."""
+    pixmap = QPixmap(size * 3, size * 3)
     pixmap.fill(QColor(0, 0, 0, 0))
     painter = QPainter(pixmap)
     try:
         painter.setRenderHint(_Antialias, True)
-        font = QFont()
-        font.setPixelSize(int(size * 1.5))
-        font.setBold(True)
-        painter.setFont(font)
-        painter.setPen(QColor(color))
-        painter.drawText(pixmap.rect(), int(_AlignCenter), glyph)
+        painter.scale(3, 3)
+        draw(painter, QColor(color))
     finally:
         painter.end()
     return QIcon(pixmap)
+
+
+def _round_pen(color, width):
+    pen = QPen(color, width)
+    pen.setCapStyle(_RoundCap)
+    pen.setJoinStyle(_RoundJoin)
+    return pen
+
+
+def _draw_route(painter, color):
+    """A flight path: a zig-zag survey line with its waypoints."""
+    points = [QPointF(3, 14), QPointF(7, 5), QPointF(11, 13), QPointF(15, 4)]
+    painter.setPen(_round_pen(color, 1.8))
+    painter.drawPolyline(QPolygonF(points))
+    painter.setPen(_NoPen)
+    painter.setBrush(color)
+    for point in points:
+        painter.drawEllipse(point, 1.9, 1.9)
+
+
+def _draw_refresh(painter, color):
+    """A circular arrow, for Regenerate on Map."""
+    painter.setPen(_round_pen(color, 1.9))
+    painter.drawArc(QRectF(3.5, 3.5, 11, 11), 40 * 16, 280 * 16)
+    painter.setPen(_NoPen)
+    painter.setBrush(color)
+    tip = QPainterPath(QPointF(14.8, 2.5))
+    tip.lineTo(QPointF(15.5, 8.0))
+    tip.lineTo(QPointF(10.6, 6.3))
+    tip.closeSubpath()
+    painter.drawPath(tip)
+
+
+def _draw_bin(painter, color):
+    """A waste bin, for Clear Preview."""
+    painter.setPen(_round_pen(color, 1.6))
+    painter.drawLine(QPointF(3.5, 5), QPointF(14.5, 5))
+    painter.drawPolyline(QPolygonF([QPointF(7, 5), QPointF(7.6, 3),
+                                    QPointF(10.4, 3), QPointF(11, 5)]))
+    painter.drawPolyline(QPolygonF([QPointF(5, 5), QPointF(6, 15),
+                                    QPointF(12, 15), QPointF(13, 5)]))
+    painter.drawLine(QPointF(9, 7.5), QPointF(9, 12.5))
+
+
+class _PreviewButton(QPushButton):
+    """Preview on Map, a gradient pill with a flight-path icon. It turns
+    amber with a refresh icon while it reads Regenerate on Map, so an
+    out-of-date plan stands out."""
+
+    def __init__(self, text, parent=None):
+        super().__init__(parent)
+        self.setText(text)          # sets the matching icon and state too
+
+    def setText(self, text):
+        super().setText(text)
+        stale = text.startswith('Regenerate')
+        self.setIcon(_drawn_icon(_draw_refresh if stale else _draw_route,
+                                 '#1A1A1A' if stale else '#FFFFFF'))
+        self.setProperty('stale', stale)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+
+class _ClearButton(QPushButton):
+    """Clear Preview as a round bin that turns red on hover."""
+
+    def __init__(self, parent=None):
+        super().__init__('', parent)
+        self._icons = (_drawn_icon(_draw_bin, '#C8CCD4'), _drawn_icon(_draw_bin, '#FF9A9A'))
+        self.setIcon(self._icons[0])
+
+    def enterEvent(self, event):
+        self.setIcon(self._icons[1])
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.setIcon(self._icons[0])
+        super().leaveEvent(event)
 
 
 class _ClickableLabel(QLabel):
@@ -1908,22 +1982,23 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
         self.previewBtn = _PreviewButton('Preview on Map')
         self.previewBtn.setObjectName('previewBtn')
-        self.previewBtn.setMinimumHeight(34)
-        self.previewBtn.setIcon(_glyph_icon('▶', '#FFFFFF'))
+        self.previewBtn.setFixedHeight(36)
+        self.previewBtn.setIconSize(QSize(18, 18))
         self._tip(self.previewBtn,
             'Generate the flight grid and display the waypoint path '
             'on the QGIS map canvas for review before exporting.')
 
-        self.clearPreviewBtn = QPushButton('Clear Preview')
+        # A round bin beside the pill; the hint names it.
+        self.clearPreviewBtn = _ClearButton()
         self.clearPreviewBtn.setObjectName('clearPreviewBtn')
-        self.clearPreviewBtn.setMinimumHeight(34)
-        self.clearPreviewBtn.setIcon(_glyph_icon('✕', '#C8CCD4'))
+        self.clearPreviewBtn.setFixedSize(36, 36)
+        self.clearPreviewBtn.setIconSize(QSize(18, 18))
         self._tip(self.clearPreviewBtn,
-            'Remove the flight path preview layers from the map '
-            'and reset the survey area selection.')
+            'Clear Preview: remove the flight path preview layers from the '
+            'map and reset the survey area selection.')
 
-        row_layout.addWidget(self.previewBtn, 2)
-        row_layout.addWidget(self.clearPreviewBtn, 1)
+        row_layout.addWidget(self.previewBtn, 1)
+        row_layout.addWidget(self.clearPreviewBtn)
         return row
 
     def _footer_link(self, text, tip, url, object_name='footerLink', icon=None):
