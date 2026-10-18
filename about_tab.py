@@ -108,9 +108,11 @@ def _items(rows, color, mark='●'):
 
 
 def about_html():
+    # The title takes the logo's colours: "Fly" blue, "Path" orange.
     heading = 'color:#9CC4F2; font-size:13px; font-weight:bold; margin-top:14px;'
     return """
-<p style="font-size:18px; font-weight:bold; color:#FFFFFF; margin-bottom:2px;">FlyPath</p>
+<p style="font-size:20px; font-weight:bold; margin-bottom:2px;"><span
+ style="color:#2D6DB5;">Fly</span><span style="color:#F0A500;">Path</span></p>
 <p style="color:#8FA0B8; margin-top:0;">Version %(version)s · planning engine %(engine)s
 <br>Created by Salar Ghaffarian, developed further by the
 <a href="https://www.dronnix.com" style="%(link)s">Dronnix</a> team.</p>
