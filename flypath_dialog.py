@@ -1671,7 +1671,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.takeoffToleranceSpin.setSingleStep(0.5)
         self.takeoffToleranceSpin.setDecimals(1)
         self.takeoffToleranceSpin.setSuffix(' m')
-        self.takeoffToleranceSpin.setMaximumWidth(80)
         self._tip(self.takeoffToleranceSpin,
             'How far the takeoff ground elevation may differ from the mission '
             'start. A tighter tolerance keeps the GSD more consistent between '
@@ -1702,7 +1701,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.launchOffsetSpin.setSingleStep(0.5)
         self.launchOffsetSpin.setDecimals(1)
         self.launchOffsetSpin.setSuffix(' m')
-        self.launchOffsetSpin.setMaximumWidth(90)
         self._tip(self.launchOffsetSpin,
             'Height of your actual takeoff spot relative to the ground at the '
             'reference first waypoint (for example about 2 m from a car roof, or '
