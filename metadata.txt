@@ -3,8 +3,9 @@ name=FlyPath
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D, corridor and orbit (3D model) drone missions directly from QGIS
-version=3.1.0
-changelog=3.1.0 - Orbit missions can now fly up to 3 rings around the same centre, each with
+version=3.1.1
+changelog=3.1.1 - When flypath.io sync is busy, FlyPath now says how long to wait before retrying.
+    3.1.0 - Orbit missions can now fly up to 3 rings around the same centre, each with
     its own radius, altitude and camera tilt. Add rings with + Add Ring under the Draw buttons, and
     pick a ring to edit its values in Flight Parameters. The drone flies the rings in order. Orbits
     use a waypoint limit of 200 and split into several flights when they need more waypoints or
