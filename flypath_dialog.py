@@ -56,6 +56,7 @@ try:
     _SP_IGNORED   = QSizePolicy.Policy.Ignored
     _SP_PREFERRED = QSizePolicy.Policy.Preferred
     _SP_FIXED     = QSizePolicy.Policy.Fixed
+    _LabelRole    = QFormLayout.ItemRole.LabelRole
 except AttributeError:
     # Old PyQt5 without scoped enums; fetch unscoped names dynamically so the
     # scoped forms above remain the only static enum references in the file.
@@ -89,6 +90,7 @@ except AttributeError:
     _SP_IGNORED   = getattr(QSizePolicy, 'Ignored')
     _SP_PREFERRED = getattr(QSizePolicy, 'Preferred')
     _SP_FIXED     = getattr(QSizePolicy, 'Fixed')
+    _LabelRole    = getattr(QFormLayout, 'LabelRole')
 
 from qgis.core import (
     Qgis,
@@ -364,6 +366,9 @@ QWidget {
    Labels that need a background set it via their own objectName rule, which is
    more specific and still wins. */
 QLabel { background-color: transparent; }
+/* Field labels ("Altitude", "Drone", ...) in a muted steel blue, so the
+   values beside them (in brighter white) stand out. */
+QLabel#formLabel, QLabel#inlineFormLabel { color: #8FA0B8; }
 QGroupBox {
     background-color: #202430;
     border: 1px solid #454A57;
@@ -393,7 +398,7 @@ QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox {
     border: 1px solid #3A3D45;
     border-radius: 3px;
     padding: 3px 6px;
-    color: #E0E0E0;
+    color: #F2F4F8;
     selection-background-color: #2D6DB5;
 }
 QLineEdit:focus, QDoubleSpinBox:focus, QSpinBox:focus, QComboBox:focus {
@@ -429,7 +434,7 @@ QDoubleSpinBox::down-arrow, QSpinBox::down-arrow {
     image: url(ARROW_DOWN_PATH); width: 8px; height: 5px;
 }
 QCheckBox {
-    color: #D0D0D0;
+    color: #EEF1F5;
     spacing: 6px;
     background-color: transparent;
 }
@@ -445,7 +450,7 @@ QCheckBox::indicator:checked {
     border: 1px solid #7FB3E8;
 }
 QRadioButton {
-    color: #D0D0D0;
+    color: #EEF1F5;
     spacing: 6px;
 }
 QRadioButton::indicator {
@@ -938,6 +943,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._source_mode        = 'layer'  # survey-area source: layer|selection|draw
 
         self._build_ui()
+        self._tag_form_labels()
         # Collapse hidden rows from here on, so gaps stay even on Qt 5.
         for form in (self._mission_form, self._area_form, self._flight_form,
                      self._organizer_form):
@@ -953,6 +959,16 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._update_interval()
         self._update_takeoff_gsd_var()
         self._fit_panel_width()
+
+    def _tag_form_labels(self):
+        """Name every form label, so the stylesheet can colour labels apart
+        from the values beside them."""
+        for form in self.findChildren(QFormLayout):
+            for row in range(form.rowCount()):
+                item = form.itemAt(row, _LabelRole)
+                label = item.widget() if item is not None else None
+                if isinstance(label, QLabel) and not label.objectName():
+                    label.setObjectName('formLabel')
 
     def _fit_panel_width(self):
         """Let the dock shrink only down to the natural minimum width of its
