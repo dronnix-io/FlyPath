@@ -11,17 +11,17 @@ from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QGroupBox, QScrollArea, QFrame,
     QLabel, QLineEdit, QPushButton, QComboBox,
-    QSpinBox, QDoubleSpinBox, QCheckBox, QRadioButton, QButtonGroup,
+    QAbstractSpinBox, QSpinBox, QDoubleSpinBox, QCheckBox, QButtonGroup,
     QMessageBox, QFileDialog, QApplication,
     QStackedWidget, QDialog, QTreeWidget, QTreeWidgetItem, QDialogButtonBox,
-    QGraphicsView, QGraphicsScene, QSizePolicy,
+    QGraphicsView, QGraphicsScene, QLayout, QSizePolicy,
 )
 from qgis.PyQt.QtCore import (
-    Qt, QObject, QEvent, QSettings, QSize, QPointF, QUrl, pyqtSignal,
+    Qt, QObject, QEvent, QSettings, QSize, QPointF, QRectF, QUrl, pyqtSignal,
 )
 from qgis.PyQt.QtGui import (
-    QColor, QFont, QPixmap, QPainter, QPen, QPolygonF, QImage, QDesktopServices,
-    QIcon,
+    QColor, QFont, QPixmap, QPainter, QPainterPath, QPen, QPolygonF, QImage,
+    QDesktopServices, QIcon,
 )
 from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
@@ -43,6 +43,9 @@ try:
     _ScrollHandDrag  = QGraphicsView.DragMode.ScrollHandDrag
     _AnchorUnderMouse = QGraphicsView.ViewportAnchor.AnchorUnderMouse
     _Antialias    = QPainter.RenderHint.Antialiasing
+    _RoundCap     = Qt.PenCapStyle.RoundCap
+    _RoundJoin    = Qt.PenJoinStyle.RoundJoin
+    _NoPen        = Qt.PenStyle.NoPen
     _MB_YES       = QMessageBox.StandardButton.Yes
     _MB_NO        = QMessageBox.StandardButton.No
     _DBB_OK       = QDialogButtonBox.StandardButton.Ok
@@ -53,6 +56,7 @@ try:
     _SP_IGNORED   = QSizePolicy.Policy.Ignored
     _SP_PREFERRED = QSizePolicy.Policy.Preferred
     _SP_FIXED     = QSizePolicy.Policy.Fixed
+    _LabelRole    = QFormLayout.ItemRole.LabelRole
 except AttributeError:
     # Old PyQt5 without scoped enums; fetch unscoped names dynamically so the
     # scoped forms above remain the only static enum references in the file.
@@ -73,6 +77,9 @@ except AttributeError:
     _ScrollHandDrag   = getattr(QGraphicsView, 'ScrollHandDrag')
     _AnchorUnderMouse = getattr(QGraphicsView, 'AnchorUnderMouse')
     _Antialias    = getattr(QPainter, 'Antialiasing')
+    _RoundCap     = getattr(Qt, 'RoundCap')
+    _RoundJoin    = getattr(Qt, 'RoundJoin')
+    _NoPen        = getattr(Qt, 'NoPen')
     _MB_YES       = getattr(QMessageBox, 'Yes')
     _MB_NO        = getattr(QMessageBox, 'No')
     _DBB_OK       = getattr(QDialogButtonBox, 'Ok')
@@ -83,6 +90,7 @@ except AttributeError:
     _SP_IGNORED   = getattr(QSizePolicy, 'Ignored')
     _SP_PREFERRED = getattr(QSizePolicy, 'Preferred')
     _SP_FIXED     = getattr(QSizePolicy, 'Fixed')
+    _LabelRole    = getattr(QFormLayout, 'LabelRole')
 
 from qgis.core import (
     Qgis,
@@ -358,6 +366,10 @@ QWidget {
    Labels that need a background set it via their own objectName rule, which is
    more specific and still wins. */
 QLabel { background-color: transparent; }
+/* Field labels ("Altitude", "Drone", ...) in a clear sky blue, bold (the
+   same weight on Qt 5 and Qt 6), so they read sharply and apart from the
+   white values beside them. */
+QLabel#formLabel, QLabel#inlineFormLabel { color: #9CC4F2; font-weight: bold; }
 QGroupBox {
     background-color: #202430;
     border: 1px solid #454A57;
@@ -379,6 +391,12 @@ QGroupBox#missionGroup   { border-color: #3F6FA8; color: #7FB3E8; }
 QGroupBox#areaGroup      { border-color: #3E8E63; color: #7FD69C; }
 QGroupBox#flightGroup    { border-color: #A6772F; color: #F0B45A; }
 QGroupBox#organizerGroup { border-color: #6E52A6; color: #B98CFF; }
+/* Mission splitting: an inset card inside Adv. Mission Organizers. */
+QFrame#splitCard {
+    background-color: #252336; border: 1px solid #3E3460;
+    border-left: 3px solid #8E6BE0; border-radius: 4px;
+}
+QLabel#subsectionLabel { color: #B98CFF; font-size: 9px; font-weight: bold; }
 QGroupBox#safetyGroup    { border-color: #A65454; color: #F08A8A; }
 QGroupBox#takeoffGroup   { border-color: #37847A; color: #5FD0C0; }
 QGroupBox#exportGroup    { border-color: #9C5C86; color: #E79AD0; }
@@ -387,7 +405,7 @@ QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox {
     border: 1px solid #3A3D45;
     border-radius: 3px;
     padding: 3px 6px;
-    color: #E0E0E0;
+    color: #F2F4F8;
     selection-background-color: #2D6DB5;
 }
 QLineEdit:focus, QDoubleSpinBox:focus, QSpinBox:focus, QComboBox:focus {
@@ -423,7 +441,7 @@ QDoubleSpinBox::down-arrow, QSpinBox::down-arrow {
     image: url(ARROW_DOWN_PATH); width: 8px; height: 5px;
 }
 QCheckBox {
-    color: #D0D0D0;
+    color: #EEF1F5;
     spacing: 6px;
     background-color: transparent;
 }
@@ -439,7 +457,7 @@ QCheckBox::indicator:checked {
     border: 1px solid #7FB3E8;
 }
 QRadioButton {
-    color: #D0D0D0;
+    color: #EEF1F5;
     spacing: 6px;
 }
 QRadioButton::indicator {
@@ -461,16 +479,60 @@ QPushButton {
 QPushButton:hover   { background-color: #3A7EC6; }
 QPushButton:pressed { background-color: #1F5A9E; }
 QPushButton:disabled { background-color: #3A3D45; color: #77797F; }
+/* Segmented toggles (Capture, Flight Path, Source): a rounded track with
+   the chosen option as a pill in its section's colour. Only whole-corner rounding
+   is used, which Qt 5 and Qt 6 both draw. */
+QFrame#segmentBox {
+    background-color: #23262E; border: 1px solid #3F4450; border-radius: 12px;
+}
+QPushButton[segment] {
+    background-color: transparent; color: #C8CCD4;
+    border: none; border-radius: 10px; padding: 3px 12px; font-weight: bold;
+}
+QPushButton[segment]:hover { background-color: #343844; color: #FFFFFF; }
+QPushButton[segment]:checked {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3A80CC, stop:1 #2D6DB5);
+    color: #FFFFFF;
+}
+/* The chosen pill takes its section's colour. */
+QGroupBox#missionGroup QPushButton[segment]:checked {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #94C2F0, stop:1 #7FB3E8);
+    color: #0F1A2A;
+}
+QGroupBox#areaGroup QPushButton[segment]:checked {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #95E2B0, stop:1 #7FD69C);
+    color: #0F1A2A;
+}
 QPushButton#exportBtn {
     background-color: #F0A500; color: #1A1A1A; font-size: 12px;
 }
 QPushButton#exportBtn:hover   { background-color: #FFB520; }
 QPushButton#exportBtn:pressed { background-color: #D09000; }
 
-QPushButton#clearPreviewBtn {
-    background-color: #3A3D45; color: #D0D0D0; font-weight: normal;
+QPushButton#previewBtn {
+    color: white; border: none; border-radius: 18px;
+    padding: 0 16px; font-size: 12px; font-weight: bold;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2D6DB5, stop:1 #1FA3A0);
 }
-QPushButton#clearPreviewBtn:hover { background-color: #4A4D55; }
+QPushButton#previewBtn:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3A80CC, stop:1 #27B8B4);
+}
+QPushButton#previewBtn:pressed {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #245A96, stop:1 #188783);
+}
+QPushButton#previewBtn[stale="true"] {
+    color: #1A1A1A;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #F0A500, stop:1 #F07A2A);
+}
+QPushButton#previewBtn[stale="true"]:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FFB520, stop:1 #FF8A3A);
+}
+QPushButton#clearPreviewBtn {
+    background-color: #23262D; border: 1px solid #4A4F5A; border-radius: 18px;
+    padding: 0;
+}
+QPushButton#clearPreviewBtn:hover   { background-color: #3A1F22; border-color: #C0505A; }
+QPushButton#clearPreviewBtn:pressed { background-color: #4A2428; }
 QPushButton#drawPolygonBtn, QPushButton#drawCircleBtn, QPushButton#addRingBtn {
     background-color: #1E3A1E; color: #80C880;
     border: 1px solid #2E5A2E; font-weight: bold;
@@ -536,14 +598,6 @@ QPushButton#rcBrowseBtn {
     border-radius: 3px; border: 1px solid #3A5A7A;
 }
 QPushButton#rcBrowseBtn:hover { background-color: #354A5E; }
-QLabel#rcNote {
-    color: #7FB3E8;
-    font-size: 10px;
-    padding: 4px 6px;
-    background-color: #1A2530;
-    border-left: 3px solid #2D6DB5;
-    border-radius: 3px;
-}
 QLabel#rcThumb {
     color: #6A7686;
     font-size: 10px;
@@ -608,6 +662,11 @@ _SITE_URL     = 'https://flypath.io/?utm_source=qgis&utm_medium=plugin&utm_campa
 # ── Map preview colour constants ───────────────────────────────────────────
 _COLOR_START_MARKER = preview_layers.START_COLOR
 _COLOR_END_MARKER = preview_layers.END_COLOR
+
+
+_RC_THUMB_SIZE = QSize(192, 108)    # 16:9 preview beside the mission picker
+_RC_FOLDER_HINT = ('The RC waypoint folder FlyPath writes the mission into: %s. '
+                   'Set by Detect RC or Locate….')
 
 
 class _HoverFilter(QObject):
@@ -719,6 +778,157 @@ class _RcFolderBrowser(QDialog):
         return item.data(0, _ROLE_PARTS) if item else None
 
 
+class _SegmentButton(QPushButton):
+    """One choice of a segmented toggle: a checkable button that, in an
+    exclusive QButtonGroup, behaves like a radio button."""
+
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self.setCheckable(True)
+        self.setCursor(_PointingCursor)
+
+
+def _segmented(*radios):
+    """Join choice buttons into one segmented toggle: a rounded track with the
+    chosen option as a filled pill. Their button groups keep one checked."""
+    box = QFrame()       # a frame, so Qt 5 also rounds the track
+    box.setObjectName('segmentBox')
+    layout = QHBoxLayout(box)
+    layout.setContentsMargins(2, 2, 2, 2)     # the track shows around the pill
+    layout.setSpacing(2)
+    for index, radio in enumerate(radios):
+        place = ('only' if len(radios) == 1 else 'first' if index == 0
+                 else 'last' if index == len(radios) - 1 else 'middle')
+        radio.setProperty('segment', place)
+        radio.style().unpolish(radio)     # apply the segment rules now
+        radio.style().polish(radio)
+        layout.addWidget(radio)
+    return box
+
+
+def _drawn_icon(draw, color, size=18):
+    """An icon drawn with the painter (at 3x, for sharp scaling) in `color`."""
+    pixmap = QPixmap(size * 3, size * 3)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(_Antialias, True)
+        painter.scale(3, 3)
+        draw(painter, QColor(color))
+    finally:
+        painter.end()
+    return QIcon(pixmap)
+
+
+def _round_pen(color, width):
+    pen = QPen(color, width)
+    pen.setCapStyle(_RoundCap)
+    pen.setJoinStyle(_RoundJoin)
+    return pen
+
+
+def _draw_route(painter, color):
+    """A flight path: a zig-zag survey line with its waypoints."""
+    points = [QPointF(3, 14), QPointF(7, 5), QPointF(11, 13), QPointF(15, 4)]
+    painter.setPen(_round_pen(color, 1.8))
+    painter.drawPolyline(QPolygonF(points))
+    painter.setPen(_NoPen)
+    painter.setBrush(color)
+    for point in points:
+        painter.drawEllipse(point, 1.9, 1.9)
+
+
+def _draw_refresh(painter, color):
+    """A circular arrow, for Regenerate on Map."""
+    painter.setPen(_round_pen(color, 1.9))
+    painter.drawArc(QRectF(3.5, 3.5, 11, 11), 40 * 16, 280 * 16)
+    painter.setPen(_NoPen)
+    painter.setBrush(color)
+    tip = QPainterPath(QPointF(14.8, 2.5))
+    tip.lineTo(QPointF(15.5, 8.0))
+    tip.lineTo(QPointF(10.6, 6.3))
+    tip.closeSubpath()
+    painter.drawPath(tip)
+
+
+def _draw_bin(painter, color):
+    """A waste bin, for Clear Preview."""
+    painter.setPen(_round_pen(color, 1.6))
+    painter.drawLine(QPointF(3.5, 5), QPointF(14.5, 5))
+    painter.drawPolyline(QPolygonF([QPointF(7, 5), QPointF(7.6, 3),
+                                    QPointF(10.4, 3), QPointF(11, 5)]))
+    painter.drawPolyline(QPolygonF([QPointF(5, 5), QPointF(6, 15),
+                                    QPointF(12, 15), QPointF(13, 5)]))
+    painter.drawLine(QPointF(9, 7.5), QPointF(9, 12.5))
+
+
+def style_tabs(tabs):
+    """Planner and My missions: traditional tabs with clear contrast. The
+    chosen tab is bright with a blue accent along its top; the other is
+    muted and brightens on hover."""
+    bar = tabs.tabBar()
+    bar.setExpanding(False)
+    # Bold through the font, not only the stylesheet: the tab width is measured
+    # from the bar's font, so a stylesheet-only bold clipped the last letter.
+    font = bar.font()
+    font.setBold(True)
+    bar.setFont(font)
+    tabs.setStyleSheet(tabs.styleSheet() + _TAB_STYLE)
+
+
+_TAB_STYLE = """
+QTabWidget::pane { border: 1px solid #343843; top: -1px; background-color: #1E2128; }
+QTabBar::tab {
+    background-color: #262A33; color: #A8B0BE;
+    font-weight: bold; padding: 5px 16px; margin-right: 2px;
+    border: 1px solid #343843; border-bottom: none;
+    border-top-left-radius: 5px; border-top-right-radius: 5px;
+}
+QTabBar::tab:hover { background-color: #2E333E; color: #E6EAF0; }
+QTabBar::tab:selected {
+    background-color: #1E2128; color: #FFFFFF;
+    border-top: 2px solid #3F9BFF;
+}
+QTabBar::tab:!selected { margin-top: 2px; }
+"""
+
+
+class _PreviewButton(QPushButton):
+    """Preview on Map, a gradient pill with a flight-path icon. It turns
+    amber with a refresh icon while it reads Regenerate on Map, so an
+    out-of-date plan stands out."""
+
+    def __init__(self, text, parent=None):
+        super().__init__(parent)
+        self.setText(text)          # sets the matching icon and state too
+
+    def setText(self, text):
+        super().setText(text)
+        stale = text.startswith('Regenerate')
+        self.setIcon(_drawn_icon(_draw_refresh if stale else _draw_route,
+                                 '#1A1A1A' if stale else '#FFFFFF'))
+        self.setProperty('stale', stale)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+
+class _ClearButton(QPushButton):
+    """Clear Preview as a round bin that turns red on hover."""
+
+    def __init__(self, parent=None):
+        super().__init__('', parent)
+        self._icons = (_drawn_icon(_draw_bin, '#C8CCD4'), _drawn_icon(_draw_bin, '#FF9A9A'))
+        self.setIcon(self._icons[0])
+
+    def enterEvent(self, event):
+        self.setIcon(self._icons[1])
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.setIcon(self._icons[0])
+        super().leaveEvent(event)
+
+
 class _ClickableLabel(QLabel):
     """A QLabel that emits `clicked` when it holds an image and is pressed."""
     clicked = pyqtSignal()
@@ -823,8 +1033,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._source_mode        = 'layer'  # survey-area source: layer|selection|draw
 
         self._build_ui()
+        self._tag_form_labels()
         # Collapse hidden rows from here on, so gaps stay even on Qt 5.
-        for form in (self._area_form, self._flight_form, self._organizer_form):
+        for form in (self._mission_form, self._area_form, self._flight_form,
+                     self._organizer_form, self._route_form):
             form_rows.track(form)
         self._setup_combos()
         self._connect_signals()
@@ -836,6 +1048,42 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._update_gsd()
         self._update_interval()
         self._update_takeoff_gsd_var()
+        self._fit_panel_width()
+
+    def _tag_form_labels(self):
+        """Name every form label, so the stylesheet can colour labels apart
+        from the values beside them."""
+        for form in self.findChildren(QFormLayout):
+            for row in range(form.rowCount()):
+                item = form.itemAt(row, _LabelRole)
+                label = item.widget() if item is not None else None
+                if isinstance(label, QLabel) and not label.objectName():
+                    label.setObjectName('formLabel')
+                    # Qt 6 may have styled it already: apply the label rule now.
+                    label.style().unpolish(label)
+                    label.style().polish(label)
+
+    def _fit_panel_width(self):
+        """Let the dock shrink only down to the natural minimum width of its
+        content (where the two-column sections still fit), not smaller. The
+        scroll area would otherwise let the content be squeezed indefinitely.
+
+        Runs once the panel is filled in (dropdown items, read-outs), since
+        those widen it. Widgets are styled lazily, on first show; measured
+        before that, Qt 5 sizes them with the default style, far wider than
+        the panel's own."""
+        content = self._scroll_content
+        self.ensurePolished()
+        self._fit_spin_boxes()
+        for widget in self.findChildren(QWidget):      # drop the unstyled sizes
+            widget.updateGeometry()
+        for layout in self.findChildren(QLayout):
+            layout.invalidate()
+        content.layout().activate()
+        # + vertical scrollbar allowance so the content is not clipped at min;
+        # small floor guards against a degenerate hint before the first show.
+        min_w = content.minimumSizeHint().width() + 10
+        self.setMinimumWidth(max(min_w, 260))
 
     # ── Hover-hint helper ─────────────────────────────────────────────────
 
@@ -879,11 +1127,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.infoBar.setObjectName('infoBarIdle')
         self.infoBar.setWordWrap(True)
 
+        # Mission Setup and Survey Area across the panel, then two columns:
+        # Flight Parameters and Safety Actions (left) beside Adv. Mission
+        # Organizers and Takeoff Zone (right).
         scroll_layout.addWidget(self._build_mission_group())
         scroll_layout.addWidget(self._build_area_group())
 
-        # Flight Parameters (left) beside Adv. Mission Organizers + Safety
-        # Actions (right).
         params_row = QHBoxLayout()
         params_row.setSpacing(6)
 
@@ -894,20 +1143,23 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         flight_col = QVBoxLayout()
         flight_col.setSpacing(8)
         flight_col.addWidget(self._build_flight_group())
+        self._safetyGroup = self._build_advanced_group()
+        flight_col.addWidget(self._safetyGroup)
         flight_col.addStretch()
+        self._flight_col = flight_col
 
-        # Right column: how the grid becomes deliverable missions, then safety.
+        # Right column: how the grid becomes deliverable missions, then where
+        # to take off from.
         right_col = QVBoxLayout()
         right_col.setSpacing(8)
         right_col.addWidget(self._build_organizer_group())
-        right_col.addWidget(self._build_advanced_group())
+        right_col.addWidget(self._build_takeoff_group())
         right_col.addStretch()
+        self._right_col = right_col
 
         params_row.addLayout(flight_col, 1)
         params_row.addLayout(right_col, 1)
         scroll_layout.addLayout(params_row)
-
-        scroll_layout.addWidget(self._build_takeoff_group())
 
         # Statistics live in a HUD card overlaid on the map canvas (outside the
         # panel), shown when a plan exists. Built here so the stat labels exist
@@ -921,19 +1173,13 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         outer.addWidget(self._build_action_bar())
         outer.addWidget(self._build_links_footer())
 
-        # Let the dock shrink only down to the natural minimum width of its
-        # content (where the two-column sections still fit), not smaller. The
-        # scroll area would otherwise let the content be squeezed indefinitely.
-        content.layout().activate()
-        # + vertical scrollbar allowance so the content is not clipped at min;
-        # small floor guards against a degenerate hint before the first show.
-        min_w = content.minimumSizeHint().width() + 16
-        self.setMinimumWidth(max(min_w, 260))
+        self._scroll_content = content
 
     def _build_mission_group(self):
         group = QGroupBox('Mission Setup')
         group.setObjectName('missionGroup')
         form  = QFormLayout(group)
+        self._mission_form = form   # kept so hidden rows collapse evenly
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
 
@@ -949,8 +1195,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         form.addRow('Mission Type', self.missionTypeCombo)
 
         # Capture mode for mapping missions: how the camera is triggered.
-        self.captureSemiRadio = QRadioButton('Semi')
-        self.captureFullRadio = QRadioButton('Full')
+        self.captureSemiRadio = _SegmentButton('Semi')
+        self.captureFullRadio = _SegmentButton('Full')
         self.captureSemiRadio.setChecked(True)
         self._captureGroup = QButtonGroup(self)
         self._captureGroup.addButton(self.captureSemiRadio)
@@ -966,8 +1212,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         # Flight Path: how the drone connects waypoints. DJI Fly reshuffles a
         # straight-line mission if it is saved or cloud-synced on the controller
         # (issue #13), so Curved is the recommended default.
-        self.pathCurvedRadio = QRadioButton('Curved')
-        self.pathStraightRadio = QRadioButton('Straight')
+        self.pathCurvedRadio = _SegmentButton('Curved')
+        self.pathStraightRadio = _SegmentButton('Straight')
         self.pathCurvedRadio.setChecked(True)
         self._pathGroup = QButtonGroup(self)
         self._pathGroup.addButton(self.pathCurvedRadio)
@@ -983,22 +1229,24 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'you save or cloud-sync the mission on the controller, so use this '
             'only when you will not re-save it there.')
 
-        # Capture and Flight Path share one compact row.
+        # Capture and Flight Path share one line; orbits hide the path part.
         capture_row = QWidget()
         capture_layout = QHBoxLayout(capture_row)
         capture_layout.setContentsMargins(0, 0, 0, 0)
         capture_layout.setSpacing(8)
-        capture_layout.addWidget(self.captureSemiRadio)
-        capture_layout.addWidget(self.captureFullRadio)
-        capture_layout.addSpacing(16)
-        self._pathInlineLabel = QLabel('Flight Path')
-        self._pathInlineLabel.setObjectName('inlineFormLabel')
-        capture_layout.addWidget(self._pathInlineLabel)
-        capture_layout.addWidget(self.pathCurvedRadio)
-        capture_layout.addWidget(self.pathStraightRadio)
+        capture_layout.addWidget(_segmented(self.captureSemiRadio, self.captureFullRadio))
+        capture_layout.addSpacing(10)
+        self._pathRow = QWidget()
+        path_layout = QHBoxLayout(self._pathRow)
+        path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.setSpacing(8)
+        path_caption = QLabel('Flight Path')
+        path_caption.setObjectName('inlineFormLabel')
+        path_layout.addWidget(path_caption)
+        path_layout.addWidget(_segmented(self.pathCurvedRadio, self.pathStraightRadio))
+        capture_layout.addWidget(self._pathRow)
         capture_layout.addStretch()
         self._captureRow = capture_row
-        self._pathRow = capture_row
         form.addRow('Capture', capture_row)
 
         self.droneModelCombo = QComboBox()
@@ -1026,9 +1274,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
         # Source: use an existing polygon (layer / selection) or draw one. Only
         # the fields for the chosen source are shown, keeping the section compact.
-        self.sourceLayerRadio     = QRadioButton('Layer')
-        self.sourceSelectionRadio = QRadioButton('Selection')
-        self.sourceDrawRadio      = QRadioButton('Draw')
+        self.sourceLayerRadio     = _SegmentButton('Layer')
+        self.sourceSelectionRadio = _SegmentButton('Selection')
+        self.sourceDrawRadio      = _SegmentButton('Draw')
         self.sourceLayerRadio.setChecked(True)
         self._sourceGroup = QButtonGroup(self)
         self._sourceGroup.addButton(self.sourceLayerRadio)
@@ -1044,10 +1292,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         source_row = QWidget()
         source_layout = QHBoxLayout(source_row)
         source_layout.setContentsMargins(0, 0, 0, 0)
-        source_layout.setSpacing(10)
-        source_layout.addWidget(self.sourceLayerRadio)
-        source_layout.addWidget(self.sourceSelectionRadio)
-        source_layout.addWidget(self.sourceDrawRadio)
+        source_layout.addWidget(_segmented(
+            self.sourceLayerRadio, self.sourceSelectionRadio, self.sourceDrawRadio))
         source_layout.addStretch()
         self._sourceRow = source_row   # kept so orbit mode can hide it
         form.addRow('Source', source_row)
@@ -1067,9 +1313,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         layer_layout = QHBoxLayout(self._layerRow)
         layer_layout.setContentsMargins(0, 0, 0, 0)
         layer_layout.setSpacing(4)
-        layer_caption = QLabel('Layer')
-        layer_caption.setObjectName('inlineFormLabel')
-        layer_layout.addWidget(layer_caption)
         layer_layout.addWidget(self.layerCombo, 3)
         self._featureCaption = QLabel('Feature')
         self._featureCaption.setObjectName('inlineFormLabel')
@@ -1107,7 +1350,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._tip(self.editPolygonBtn,
             'Edit the drawn polygon: drag a vertex to move it, click an edge '
             'to add a vertex, or select a vertex and press Delete to remove '
-            'it. Click Finish Editing when done.')
+            'it. Click Finish when done.')
         self.editPolygonBtn.setVisible(False)
 
         self.removePolygonBtn = QPushButton('✕ Remove')
@@ -1120,14 +1363,15 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         draw_layout = QHBoxLayout(self._drawRow)
         draw_layout.setContentsMargins(0, 0, 0, 0)
         draw_layout.setSpacing(4)
-        draw_layout.addWidget(self.drawPolygonBtn)
-        draw_layout.addWidget(self.editPolygonBtn)
-        draw_layout.addWidget(self.removePolygonBtn)
+        draw_layout.addWidget(self.drawPolygonBtn, 2)
+        draw_layout.addWidget(self.editPolygonBtn, 1)
+        draw_layout.addWidget(self.removePolygonBtn, 1)
+        form_rows.fit_to_row(self.drawPolygonBtn, self.editPolygonBtn, self.removePolygonBtn)
 
         # All three sources share ONE stacked row, so the control that appears
-        # under Source is always at the exact same position and height and only
-        # its content swaps. (Separate form rows drift, because hidden QFormLayout
-        # rows do not collapse identically.)
+        # under Source is always at the same position and only its content
+        # swaps. (Separate form rows drift, because hidden QFormLayout rows do
+        # not collapse identically.) The row takes the shown page's height.
         self._sourceStack = QStackedWidget()
         self._sourceStack.addWidget(self._layerRow)      # index 0 = Layer
         self._sourceStack.addWidget(self._selectionRow)  # index 1 = Selection
@@ -1136,7 +1380,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         # freed when the Export section is short (Save to computer). Otherwise the
         # Survey Area grew taller in that mode, opening a gap under Source.
         self._sourceStack.setSizePolicy(_SP_PREFERRED, _SP_FIXED)
-        form.addRow(self._sourceStack)
+        self._sourceStack.currentChanged.connect(self._fit_source_stack)
+        self._fit_source_stack()
+        # A labelled row ("Layer" for the Layer source), so its box starts and
+        # ends where the DEM box does.
+        form.addRow('Layer', self._sourceStack)
+        self._fit_source_stack()
         self._build_orbit_area_row(form)   # orbit centre, hidden until Orbit
 
         # DEM feeds terrain follow, the takeoff zone and the contours, so it is
@@ -1316,10 +1565,24 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         waypoint cap, and whether to add a perpendicular cross-hatch pass."""
         group = QGroupBox('Adv. Mission Organizers')
         group.setObjectName('organizerGroup')
-        form  = QFormLayout(group)
+        section = QVBoxLayout(group)
+        section.setSpacing(8)
+
+        # Mission splitting: an inset card, so its settings read as one set.
+        split_card = QFrame()
+        split_card.setObjectName('splitCard')
+        card_layout = QVBoxLayout(split_card)
+        card_layout.setContentsMargins(8, 6, 8, 8)
+        card_layout.setSpacing(6)
+        split_title = QLabel('MISSION SPLITTING')
+        split_title.setObjectName('subsectionLabel')
+        card_layout.addWidget(split_title)
+        form = QFormLayout()
         self._organizer_form = form   # kept so capability logic can hide rows
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         form.setSpacing(6)
+        card_layout.addLayout(form)
+        section.addWidget(split_card)
 
         self.splitSpin = QSpinBox()
         self.splitSpin.setRange(1, 99)
@@ -1336,7 +1599,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Allow the planner to add flights when battery or waypoint limits '
             'require them. Turn this off to request one flight; export is blocked '
             'when that flight cannot satisfy the limits.')
-        form.addRow('Splitting', self.splitCheck)
+        form.addRow(self.splitCheck)
         form.addRow('Minimum Flights', self.splitSpin)
 
         self.maxWaypointsSpin = QSpinBox()
@@ -1363,6 +1626,16 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         # _apply_corridor_layout reveals it when Corridor Mapping is selected.
         self._set_row_visible(form, self.setBreaksBtn, False)
 
+        # Route options: independent of splitting.
+        route_title = QLabel('ROUTE OPTIONS')
+        route_title.setObjectName('subsectionLabel')
+        section.addWidget(route_title)
+        form = QFormLayout()
+        self._route_form = form       # kept so capability logic can hide rows
+        form.setLabelAlignment(_AlignLeft | _AlignVCenter)
+        form.setSpacing(6)
+        section.addLayout(form)
+
         self.crossHatchCheck = QCheckBox('Cross-hatch')
         self._tip(self.crossHatchCheck,
             'Fly the grid, then fly it again perpendicular to the flight '
@@ -1381,18 +1654,22 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'semi-automatic adds waypoints along the flight lines where the '
             'ground rises or falls by more than the tolerance. It follows the '
             'bare-earth terrain, not trees or buildings, so keep a safe margin.')
-        # Route options share one row to keep the panel compact.
-        # Add the layout directly (not wrapped in a QWidget) so no background is
-        # painted behind the checkboxes; they then blend into the section card
-        # like the other controls. Spanning both columns also left-aligns them
-        # with the labelled rows (Max Waypoints, etc.).
-        cover_layout = QHBoxLayout()
+        # Route options: Cross-hatch and Reverse route on one line, Terrain
+        # follow under them, so they fit the column without widening the panel.
+        # Add the layouts directly (not wrapped in a QWidget) so no background
+        # is painted behind the checkboxes; they then blend into the section
+        # card like the other controls. Spanning both columns also left-aligns
+        # them with the labelled rows (Max Waypoints, etc.).
+        cover_layout = QVBoxLayout()
         cover_layout.setContentsMargins(0, 0, 0, 0)
-        cover_layout.setSpacing(12)
-        cover_layout.addWidget(self.crossHatchCheck)
-        cover_layout.addWidget(self.reverseRouteCheck)
+        cover_layout.setSpacing(6)
+        pair_layout = QHBoxLayout()
+        pair_layout.setSpacing(12)
+        pair_layout.addWidget(self.crossHatchCheck)
+        pair_layout.addWidget(self.reverseRouteCheck)
+        pair_layout.addStretch()
+        cover_layout.addLayout(pair_layout)
         cover_layout.addWidget(self.terrainFollowCheck)
-        cover_layout.addStretch()
         form.addRow(cover_layout)
 
         self.terrainToleranceSpin = QDoubleSpinBox()
@@ -1438,7 +1715,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Return to Home: flies back and lands at takeoff. '
             'Hover: holds position at the last waypoint. '
             'Land: lands immediately at the last waypoint.')
-        form.addRow('Finish Action', self.finishActionCombo)
+        form.addRow('Finish', self.finishActionCombo)
 
         self.rcLostActionCombo = QComboBox()
         self._tip(self.rcLostActionCombo,
@@ -1447,7 +1724,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Hover: holds position and waits for signal. '
             'Land: lands immediately at current position. '
             'Continue: keeps flying the mission regardless.')
-        form.addRow('RC Lost Action', self.rcLostActionCombo)
+        form.addRow('RC Lost', self.rcLostActionCombo)
 
         return group
 
@@ -1473,7 +1750,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(5)
 
-        # ── Contours: show/hide toggle on the left, extent selector on the right ──
+        # ── Contours: show/hide toggle, and where to draw them ──
         self.showContoursBtn = QPushButton('Show Contours')
         self.showContoursBtn.setObjectName('showContoursBtn')
         self.showContoursBtn.setCheckable(True)
@@ -1488,14 +1765,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Where to draw the DEM contours: across the whole survey area for '
             'terrain context, or only inside the takeoff circles. The contour '
             'interval matches the elevation tolerance below.')
-        contour_row = QHBoxLayout()
-        contour_row.setContentsMargins(0, 0, 0, 0)
-        contour_row.setSpacing(6)
-        contour_row.addWidget(self.showContoursBtn)
-        contour_row.addWidget(self.contourExtentCombo, 1)
-        outer.addLayout(contour_row)
-
-        # ── Show Takeoff Zone on the left, Elevation Tolerance + GSD Variance right ──
+        # ── Show Takeoff Zone, then its settings as labelled rows ──
         self.showTakeoffZoneBtn = QPushButton('Show Takeoff Zone')
         self.showTakeoffZoneBtn.setObjectName('showTakeoffZoneBtn')
         self.showTakeoffZoneBtn.setCheckable(True)
@@ -1503,12 +1773,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Toggle the takeoff-zone overlay: sample the DEM around the first '
             'waypoint and highlight the ground that keeps the mission at the same '
             'altitude within the tolerance. Click again to hide it.')
-        # Give both overlay toggle buttons the same width (the wider one's), so
-        # Show Contours lines up with Show Takeoff Zone.
-        btn_w = max(self.showTakeoffZoneBtn.sizeHint().width(),
-                    self.showContoursBtn.sizeHint().width())
-        self.showTakeoffZoneBtn.setFixedWidth(btn_w)
-        self.showContoursBtn.setFixedWidth(btn_w)
 
         self.takeoffToleranceSpin = QDoubleSpinBox()
         self.takeoffToleranceSpin.setRange(0.1, 50.0)
@@ -1516,7 +1780,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.takeoffToleranceSpin.setSingleStep(0.5)
         self.takeoffToleranceSpin.setDecimals(1)
         self.takeoffToleranceSpin.setSuffix(' m')
-        self.takeoffToleranceSpin.setMaximumWidth(80)
         self._tip(self.takeoffToleranceSpin,
             'How far the takeoff ground elevation may differ from the mission '
             'start. A tighter tolerance keeps the GSD more consistent between '
@@ -1526,22 +1789,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._tip(self.takeoffGsdVarLabel,
             'The GSD change this tolerance allows at the current altitude. '
             'Smaller is better when comparing maps between flights.')
-        tz_row = QHBoxLayout()
-        tz_row.setContentsMargins(0, 0, 0, 0)
-        tz_row.setSpacing(6)
-        tz_row.addWidget(self.showTakeoffZoneBtn)
-        tz_row.addSpacing(8)
-        tol_cap = QLabel('Elevation Tolerance')
-        tol_cap.setObjectName('inlineFormLabel')
-        tz_row.addWidget(tol_cap)
-        tz_row.addWidget(self.takeoffToleranceSpin)
-        tz_row.addSpacing(8)
-        gsd_cap = QLabel('GSD Variance')
-        gsd_cap.setObjectName('inlineFormLabel')
-        tz_row.addWidget(gsd_cap)
-        tz_row.addWidget(self.takeoffGsdVarLabel)
-        tz_row.addStretch()
-        outer.addLayout(tz_row)
+        # The two overlay toggles, one per line, fill the column.
+        outer.addWidget(self.showTakeoffZoneBtn)
+        outer.addWidget(self.showContoursBtn)
 
         # ── Same takeoff for all splits, then Launch Offset ──
         self.sameTakeoffCheck = QCheckBox('Same takeoff for all splits')
@@ -1560,7 +1810,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.launchOffsetSpin.setSingleStep(0.5)
         self.launchOffsetSpin.setDecimals(1)
         self.launchOffsetSpin.setSuffix(' m')
-        self.launchOffsetSpin.setMaximumWidth(90)
         self._tip(self.launchOffsetSpin,
             'Height of your actual takeoff spot relative to the ground at the '
             'reference first waypoint (for example about 2 m from a car roof, or '
@@ -1570,19 +1819,65 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Positive when your takeoff is higher than the reference, negative '
             'when lower. Leave at 0 for a ground launch at the first waypoint.')
 
-        # Same takeoff for all splits on the left, Launch Offset on the right.
-        same_lo_row = QHBoxLayout()
-        same_lo_row.setContentsMargins(0, 0, 0, 0)
-        same_lo_row.setSpacing(6)
-        same_lo_row.addWidget(self.sameTakeoffCheck)
-        same_lo_row.addStretch()
-        lo_cap = QLabel('Launch Offset')
-        lo_cap.setObjectName('inlineFormLabel')
-        same_lo_row.addWidget(lo_cap)
-        same_lo_row.addWidget(self.launchOffsetSpin)
-        outer.addLayout(same_lo_row)
+        # Tolerance, its GSD variance and the launch offset as labelled rows,
+        # then the split option, so the section stays narrow.
+        settings_form = QFormLayout()
+        settings_form.setContentsMargins(0, 2, 0, 0)
+        settings_form.setLabelAlignment(_AlignLeft | _AlignVCenter)
+        settings_form.setSpacing(6)
+        settings_form.addRow('Contours', self.contourExtentCombo)
+        settings_form.addRow('Tolerance', self.takeoffToleranceSpin)
+        settings_form.addRow('GSD Variance', self.takeoffGsdVarLabel)
+        settings_form.addRow('Launch Offset', self.launchOffsetSpin)
+        outer.addLayout(settings_form)
+        outer.addWidget(self.sameTakeoffCheck)
 
         return group
+
+    def _place_safety_group(self):
+        """Keep the columns even: Safety Actions sits under Flight Parameters
+        beside the Takeoff Zone, and moves under the Organizers when the
+        Takeoff Zone is hidden (orbits)."""
+        column = self._right_col if self._takeoffGroup.isHidden() else self._flight_col
+        if column.indexOf(self._safetyGroup) >= 0:
+            return
+        for other in (self._flight_col, self._right_col):
+            other.removeWidget(self._safetyGroup)
+        column.insertWidget(column.count() - 1, self._safetyGroup)   # above the stretch
+
+    def _fit_source_stack(self, _index=None):
+        """Size the source row to the shown page only, so the two-line Draw
+        page does not leave a gap under the Layer and Selection pages."""
+        stack = self._sourceStack
+        for index in range(stack.count()):
+            policy = _SP_PREFERRED if index == stack.currentIndex() else _SP_IGNORED
+            stack.widget(index).setSizePolicy(policy, policy)
+        stack.updateGeometry()
+        # The row is labelled for the Layer source only.
+        form = getattr(self, '_area_form', None)
+        label = self._row_label(form, stack) if form is not None else None
+        if label is not None:
+            label.setText('Layer' if stack.currentIndex() == 0 else '')
+
+    def _fit_spin_boxes(self):
+        """Size number boxes to their longest value, not Qt's estimate.
+
+        Qt 6 asks for about twice the width a box needs, which widened the
+        panel. The width allows for the stylesheet's padding, border and the
+        16 px step buttons, and is never more than Qt's own minimum."""
+        for spin in self.findChildren(QAbstractSpinBox):
+            if isinstance(spin, QDoubleSpinBox):
+                texts = ['%.*f' % (spin.decimals(), value)
+                         for value in (spin.minimum(), spin.maximum())]
+            elif isinstance(spin, QSpinBox):
+                texts = [str(spin.minimum()), str(spin.maximum())]
+            else:
+                continue
+            metrics = spin.fontMetrics()
+            text = max((metrics.horizontalAdvance(spin.prefix() + value + spin.suffix())
+                        for value in texts + [spin.specialValueText()]))
+            needed = text + 2 * 6 + 2 + 16 + 6   # padding, border, buttons, cursor
+            spin.setMinimumWidth(min(spin.minimumSizeHint().width(), needed))
 
     def _build_stats_hud(self):
         """Flight-stats HUD: a compact, semi-transparent card overlaid on a
@@ -1820,23 +2115,27 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         row.setObjectName('previewRow')
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(4)
+        row_layout.setSpacing(6)
 
-        self.previewBtn = QPushButton('Preview on Map')
-        self.previewBtn.setMinimumHeight(30)
+        self.previewBtn = _PreviewButton('Preview on Map')
+        self.previewBtn.setObjectName('previewBtn')
+        self.previewBtn.setFixedHeight(36)
+        self.previewBtn.setIconSize(QSize(18, 18))
         self._tip(self.previewBtn,
             'Generate the flight grid and display the waypoint path '
             'on the QGIS map canvas for review before exporting.')
 
-        self.clearPreviewBtn = QPushButton('Clear Preview')
+        # A round bin beside the pill; the hint names it.
+        self.clearPreviewBtn = _ClearButton()
         self.clearPreviewBtn.setObjectName('clearPreviewBtn')
-        self.clearPreviewBtn.setMinimumHeight(30)
+        self.clearPreviewBtn.setFixedSize(36, 36)
+        self.clearPreviewBtn.setIconSize(QSize(18, 18))
         self._tip(self.clearPreviewBtn,
-            'Remove the flight path preview layers from the map '
-            'and reset the survey area selection.')
+            'Clear Preview: remove the flight path preview layers from the '
+            'map and reset the survey area selection.')
 
-        row_layout.addWidget(self.previewBtn, 2)
-        row_layout.addWidget(self.clearPreviewBtn, 1)
+        row_layout.addWidget(self.previewBtn, 1)
+        row_layout.addWidget(self.clearPreviewBtn)
         return row
 
     def _footer_link(self, text, tip, url, object_name='footerLink', icon=None):
@@ -1924,14 +2223,19 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Choose where the mission goes: a folder on this computer, '
             'or directly onto a connected DJI RC.')
 
-        dest_layout.addWidget(QLabel('Destination'))
+        dest_label = QLabel('Destination')
+        dest_label.setObjectName('formLabel')
+        dest_layout.addWidget(dest_label)
         dest_layout.addWidget(self.destCombo, 1)
         export_layout.addWidget(dest_row)
 
-        # Local / RC panels swapped by the selector
+        # Local / RC panels swapped by the selector. The RC panel's Detect and
+        # Locate buttons sit on the Destination line, shown for the RC only.
         self.destStack = QStackedWidget()
         self.destStack.addWidget(self._build_local_dest_panel(settings))
         self.destStack.addWidget(self._build_rc_dest_panel())
+        dest_layout.addWidget(self.rcRefreshBtn)
+        dest_layout.addWidget(self.rcManualBtn)
         export_layout.addWidget(self.destStack)
 
         # Export button (label adapts to the chosen destination)
@@ -1950,10 +2254,17 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         idx  = self.destCombo.findData(mode)
         self.destCombo.setCurrentIndex(idx if idx >= 0 else 0)
         self.destStack.setCurrentIndex(self.destCombo.currentIndex())
+        self._show_rc_buttons()
         self._fit_dest_stack()
         self._update_export_button()
 
         return bar
+
+    def _show_rc_buttons(self):
+        """Detect RC and Locate… sit on the Destination line, for the RC only."""
+        rc = self.destCombo.currentData() == 'rc'
+        self.rcRefreshBtn.setVisible(rc)
+        self.rcManualBtn.setVisible(rc)
 
     def _build_local_dest_panel(self, settings):
         panel = QWidget()
@@ -1990,41 +2301,28 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(4)
 
-        # The two ways to find the RC, side by side.
-        btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 0, 0, 0)
-        btn_row.setSpacing(4)
-
-        self.rcRefreshBtn = QPushButton('Auto Detect RC')
-        self.rcRefreshBtn.setMinimumHeight(28)
+        # The two ways to find the RC; placed on the Destination line.
+        self.rcRefreshBtn = QPushButton('⟳ Detect RC')
+        self.rcRefreshBtn.setMinimumHeight(25)
         self._tip(self.rcRefreshBtn,
             'Automatically find the DJI RC, whether it is connected over USB '
             'or shows up as a removable drive, and list its missions.')
 
-        self.rcManualBtn = QPushButton('Locate folder manually')
+        self.rcManualBtn = QPushButton('Locate…')
         self.rcManualBtn.setObjectName('rcBrowseBtn')
-        self.rcManualBtn.setMinimumHeight(28)
+        self.rcManualBtn.setMinimumHeight(25)
         self._tip(self.rcManualBtn,
-            'Browse This PC yourself — including the RC and any drives — and '
-            'pick the waypoint folder. Use this if Auto Detect did not find it.')
+            'Locate the waypoint folder yourself: browse This PC, including the '
+            'RC and any drives. Use this if Detect RC did not find it.')
 
-        btn_row.addWidget(self.rcRefreshBtn, 1)
-        btn_row.addWidget(self.rcManualBtn, 1)
-        v.addLayout(btn_row)
-
-        self.rcStatusLabel = QLabel('Press Auto Detect RC to find your controller')
+        # One status line; the chosen waypoint folder shows in its hover hint.
+        self.rcStatusLabel = QLabel('Press Detect RC to find your controller')
         self.rcStatusLabel.setObjectName('rcStatusLabel')
         self.rcStatusLabel.setWordWrap(True)
+        self._tip(self.rcStatusLabel, _RC_FOLDER_HINT % 'none selected yet')
         v.addWidget(self.rcStatusLabel)
-
-        # Read-only display of the chosen waypoint folder (auto or manual).
-        self.rcTargetEdit = QLineEdit()
+        self.rcTargetEdit = QLineEdit()     # kept for the chosen folder, not shown
         self.rcTargetEdit.setReadOnly(True)
-        self.rcTargetEdit.setPlaceholderText('No folder selected yet')
-        self._tip(self.rcTargetEdit,
-            'The RC waypoint folder FlyPath will write the mission into. '
-            'Set by Auto Detect RC or Locate folder manually.')
-        v.addWidget(self.rcTargetEdit)
 
         # When the survey is split, choose which part goes into the RC slot.
         # The RC replaces one mission at a time, so parts are sent one by one.
@@ -2033,6 +2331,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         part_layout.setContentsMargins(0, 0, 0, 0)
         part_layout.setSpacing(4)
         part_label = QLabel('Mission part')
+        part_label.setObjectName('formLabel')
         self.splitPartCombo = QComboBox()
         self._tip(self.splitPartCombo,
             'Which split mission to send into the selected RC slot. The RC '
@@ -2041,32 +2340,38 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         part_layout.addWidget(part_label)
         part_layout.addWidget(self.splitPartCombo, 1)
         self.splitPartRow.setVisible(False)
-        v.addWidget(self.splitPartRow)
 
         self.rcMissionCombo = QComboBox()
         self._tip(self.rcMissionCombo,
             'The mission on the RC that will be replaced when you export. '
-            'Match it by date with what you see in DJI Fly.')
-        v.addWidget(self.rcMissionCombo)
+            'Match it by date with what you see in DJI Fly. FlyPath replaces '
+            'an existing mission: to add a new one, create it in DJI Fly first, '
+            'then Detect RC.')
 
         # DJI's own map snapshot of the selected mission, so you can see what
         # you are about to replace. Click to open a zoomable full-size viewer.
         self.rcThumbLabel = _ClickableLabel('')
         self.rcThumbLabel.setObjectName('rcThumb')
         self.rcThumbLabel.setAlignment(_AlignCenter)
-        self.rcThumbLabel.setMinimumHeight(120)
+        self.rcThumbLabel.setFixedSize(_RC_THUMB_SIZE)
         self.rcThumbLabel.setWordWrap(True)
+        self.rcThumbLabel.setVisible(False)     # shown once a mission is picked
         self._tip(self.rcThumbLabel,
             'Flight path of the selected mission, drawn from its waypoints so it '
             'always matches the RC. Click it to open a larger, zoomable view.')
-        v.addWidget(self.rcThumbLabel)
 
-        self.rcNote = QLabel(
-            'ⓘ  FlyPath replaces an existing mission. To add a new one, create '
-            'it in DJI Fly first, then Auto Detect RC.')
-        self.rcNote.setObjectName('rcNote')
-        self.rcNote.setWordWrap(True)
-        v.addWidget(self.rcNote)
+        # The part and the RC mission on the left, its preview on the right.
+        pick_row = QHBoxLayout()
+        pick_row.setContentsMargins(0, 0, 0, 0)
+        pick_row.setSpacing(6)
+        pickers = QVBoxLayout()
+        pickers.setSpacing(4)
+        pickers.addWidget(self.splitPartRow)
+        pickers.addWidget(self.rcMissionCombo)
+        pickers.addStretch()
+        pick_row.addLayout(pickers, 1)
+        pick_row.addWidget(self.rcThumbLabel)
+        v.addLayout(pick_row)
         return panel
 
     # ── Combo population ──────────────────────────────────────────────────
@@ -2350,6 +2655,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
         # Orbit swaps the survey area for a centre point and its own controls.
         self._apply_orbit_layout(kind == 'orbit')
+        self._place_safety_group()
 
     # ── Corridor mission breaks (manual line grouping) ────────────────────
 
@@ -2382,7 +2688,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.frontOverlapStack.setCurrentIndex(1 if full else 0)
         # The terrain tolerance only densifies in semi-automatic (full already has
         # a waypoint per photo); show it when terrain follow is on in semi mode.
-        self._set_row_visible(self._organizer_form, self.terrainToleranceSpin,
+        self._set_row_visible(self._route_form, self.terrainToleranceSpin,
                               self.terrainFollowCheck.isChecked() and not full)
         # The DEM feeds both terrain follow and the takeoff zone, so it stays
         # available even when terrain follow is off.
@@ -3104,6 +3410,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self.splitPartCombo.setCurrentIndex(idx if idx >= 0 else 0)
         self.splitPartCombo.blockSignals(False)
         self.splitPartRow.setVisible(n > 1)
+        self._fit_dest_stack()
         self._update_export_button()
 
     def _update_stats(self):
@@ -3535,6 +3842,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
     def _on_destination_changed(self, _=None):
         self.destStack.setCurrentIndex(self.destCombo.currentIndex())
+        self._show_rc_buttons()
         self._fit_dest_stack()
         QSettings('FlyPath', 'FlyPath').setValue(
             'dest_mode', self.destCombo.currentData()
@@ -3550,7 +3858,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         'Send to DJI RC' panel's height), pushing the scrollable sections, and the
         Takeoff Zone, up out of view. Giving the hidden pages an Ignored size
         policy drops them from the stack's size, so it collapses to the visible
-        panel."""
+        panel. The stack's height is also pinned to the shown page, since its
+        minimum still counted the hidden one; it is refitted when the preview
+        or the Mission part picker appears."""
         current = self.destStack.currentIndex()
         for i in range(self.destStack.count()):
             page = self.destStack.widget(i)
@@ -3558,8 +3868,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                 page.setSizePolicy(_SP_PREFERRED, _SP_PREFERRED)
             else:
                 page.setSizePolicy(_SP_IGNORED, _SP_IGNORED)
-        self.destStack.currentWidget().adjustSize()
-        self.destStack.adjustSize()
+        page = self.destStack.currentWidget()
+        if page.layout() is not None:
+            page.layout().activate()
+        self.destStack.setFixedHeight(page.sizeHint().height())
         self.destStack.updateGeometry()
 
     def _on_local_folder_changed(self, text):
@@ -3629,6 +3941,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         """Draw a preview of the selected RC mission from its waypoints."""
         self._current_thumb_full = None
         mission = self.rcMissionCombo.currentData()
+        self.rcThumbLabel.setVisible(bool(mission))
+        self._fit_dest_stack()
         if not mission:
             self.rcThumbLabel.setPixmap(QPixmap())
             self.rcThumbLabel.setText('')
@@ -3639,7 +3953,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         if not pix.isNull():
             self.rcThumbLabel.setText('')
             self.rcThumbLabel.setPixmap(
-                pix.scaled(QSize(240, 135), _KeepAspect, _SmoothTrans)
+                pix.scaled(_RC_THUMB_SIZE, _KeepAspect, _SmoothTrans)
             )
         else:
             self.rcThumbLabel.setPixmap(QPixmap())
@@ -3719,6 +4033,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         """Record the chosen waypoint folder and show it in the panel."""
         self._rc_waypoint_path = path
         self.rcTargetEdit.setText(path or '')
+        hint = self.rcStatusLabel.findChild(_HoverFilter)
+        if hint is not None:
+            hint._text = _RC_FOLDER_HINT % (path or 'none selected yet')
 
     def _warn_no_missions(self):
         """Guidance shown when a waypoint folder is found but holds no missions."""
@@ -3731,8 +4048,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             '  1. On the RC, open DJI Fly.\n'
             '  2. Make a waypoint mission (even a 3-point dummy will do) and '
             'save it.\n'
-            '  3. Back here, press Auto Detect RC (or Locate folder manually) '
-            'again.'
+            '  3. Back here, press Detect RC (or Locate…) again.'
         )
 
     def _on_refresh_rc_missions(self):
@@ -3769,16 +4085,15 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self._warn_no_missions()
         elif status == 'not_connected':
             self.rcStatusLabel.setText(
-                'No DJI RC detected — connect via USB, or Locate folder manually'
+                'No DJI RC detected · connect it via USB, or use Locate…'
             )
             QMessageBox.information(
                 self, 'No DJI RC Detected',
                 'No DJI Remote Controller was found.\n\n'
                 'FlyPath checked both your drives and USB devices.\n\n'
                 'Connect the RC via USB and enable file transfer on it, then '
-                'press Auto Detect RC. If it still is not found, use '
-                '"Locate folder manually" to point FlyPath at the waypoint '
-                'folder yourself.'
+                'press Detect RC. If it still is not found, use Locate… to '
+                'point FlyPath at the waypoint folder yourself.'
             )
         else:
             self.rcStatusLabel.setText('Could not read the RC')
@@ -4155,10 +4470,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         if not target or not self._rc_waypoint_path:
             QMessageBox.information(
                 self, 'No Mission Selected',
-                'Press Auto Detect RC and choose a mission on the RC to '
+                'Press Detect RC and choose a mission on the RC to '
                 'replace.\n\n'
                 'If the list is empty, create a waypoint mission in DJI Fly '
-                'first, then Auto Detect RC.'
+                'first, then Detect RC.'
             )
             return
 

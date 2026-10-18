@@ -586,7 +586,7 @@ class SurveyLifecycleMixin:
             self._draw_tool.polygon_completed.connect(self._on_polygon_drawn)
             self._draw_tool.drawing_cancelled.connect(self._on_drawing_cancelled)
             canvas.setMapTool(self._draw_tool)
-            self.drawPolygonBtn.setText('Drawing…  (right-click or double-click to finish)')
+            self.drawPolygonBtn.setText('Drawing… right-click to finish')
         else:
             self._cancel_draw_tool()
 
@@ -684,7 +684,7 @@ class SurveyLifecycleMixin:
             self._draw_tool.line_completed.connect(self._on_line_drawn)
             self._draw_tool.drawing_cancelled.connect(self._on_drawing_cancelled)
             canvas.setMapTool(self._draw_tool)
-            self.drawPolygonBtn.setText('Drawing…  (right-click or double-click to finish)')
+            self.drawPolygonBtn.setText('Drawing… right-click to finish')
         else:
             self._cancel_draw_tool()
 
@@ -902,13 +902,13 @@ class SurveyLifecycleMixin:
                 self.iface.actionNodeTool().trigger()   # older QGIS name
             except AttributeError:
                 pass
-        self.editPolygonBtn.setText('✓ Finish Editing')
+        self.editPolygonBtn.setText('✓ Finish')
         noun = ('corridor centre line' if self._mission_kind() == 'corridor'
                 else 'survey polygon')
         self._set_info(
             f'Editing the {noun}: drag a vertex to move it, click an '
             'edge to add one, or select a vertex and press Delete to remove '
-            'it. Click Finish Editing when done.'
+            'it. Click Finish when done.'
         )
 
     def _finish_polygon_edit(self):

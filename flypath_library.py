@@ -3,7 +3,7 @@
 from qgis.PyQt.QtCore import Qt, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
-    QWidget, QHBoxLayout, QLabel, QPushButton, QTabWidget, QTreeWidget,
+    QFrame, QGridLayout, QWidget, QHBoxLayout, QLabel, QPushButton, QTabWidget, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QMessageBox,
 )
 
@@ -13,6 +13,8 @@ try:
     _UserRole = Qt.ItemDataRole.UserRole
     _PlainText = Qt.TextFormat.PlainText
     _AlignCenter = Qt.AlignmentFlag.AlignCenter
+    _AlignLeft = Qt.AlignmentFlag.AlignLeft
+    _AlignTopLeft = Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
     _ActionRole = QMessageBox.ButtonRole.ActionRole
     _Cancel = QMessageBox.StandardButton.Cancel
     _Descending = Qt.SortOrder.DescendingOrder
@@ -20,9 +22,52 @@ except AttributeError:
     _UserRole = getattr(Qt, 'UserRole')
     _PlainText = getattr(Qt, 'PlainText')
     _AlignCenter = getattr(Qt, 'AlignCenter')
+    _AlignLeft = getattr(Qt, 'AlignLeft')
+    _AlignTopLeft = getattr(Qt, 'AlignTop') | getattr(Qt, 'AlignLeft')
     _ActionRole = getattr(QMessageBox, 'ActionRole')
     _Cancel = getattr(QMessageBox, 'Cancel')
     _Descending = getattr(Qt, 'DescendingOrder')
+
+
+SIGNUP_URL = flypath_sync.DEFAULT_BASE_URL + '/register/'
+# Why there are two tools, as short labelled lines. The last one is coming.
+_WHY = (
+    ('QGIS plugin', 'Plan with your GIS data; send to the DJI RC.'),
+    ('FlyPath.io', 'Archive, share and plan in any browser.'),
+    ('Both', 'Same engine: missions open unchanged in each.'),
+    ('Coming', 'Cloud 2D maps and 3D models of flown missions.'),
+)
+_SIGNUP_STYLE = """
+QFrame#signupCard {
+    background-color: #1C2836; border: 1px solid #2F4A6E;
+    border-left: 3px solid #3F9BFF; border-radius: 5px;
+}
+QLabel#signupTitle { color: #FFFFFF; font-size: 13px; font-weight: bold; }
+QLabel#signupText { color: #C8D6E8; }
+QLabel#signupRole { color: #9CC4F2; font-weight: bold; }
+QLabel#signupComing { color: #F5C451; font-weight: bold; }
+QLabel#signupReason { color: #E6EEF8; }
+QLabel#signupHint { color: #8FA0B8; font-size: 10px; }
+QPushButton#signupButton {
+    background-color: #F0A500; color: #1A1A1A; font-weight: bold;
+    border: none; border-radius: 4px; padding: 6px 14px;
+}
+QPushButton#signupButton:hover { background-color: #FFB520; }
+"""
+
+
+# The mission list in the panel's dark style. Set on the list itself, since
+# on QGIS 3 the dock-wide stylesheet does not reach its header.
+_LIST_STYLE = """
+QTreeWidget { background-color: #1A1D23; border: 1px solid #343843; color: #E6EAF0; }
+QTreeWidget::item:selected { background-color: #2D6DB5; color: #FFFFFF; }
+QHeaderView { background-color: #262A33; border: none; }
+QHeaderView::section {
+    background-color: #262A33; color: #A8B0BE; font-weight: bold;
+    border: none; border-right: 1px solid #343843; border-bottom: 1px solid #343843;
+    padding: 4px 6px;
+}
+"""
 
 
 def conflict_choice(parent):
@@ -96,8 +141,15 @@ class MissionLibrary(QWidget):
         self.refresh_button = QPushButton('Refresh')
         self.refresh_button.clicked.connect(self.refresh)
         header.addWidget(self.refresh_button)
+        self.why_button = QPushButton('Why FlyPath.io?')
+        self.why_button.setObjectName('rcBrowseBtn')       # the panel's small secondary style
+        self.why_button.setToolTip('Why FlyPath.io works alongside this plugin.')
+        self.why_button.clicked.connect(self.explain_website)
+        header.addWidget(self.why_button)
         layout.addLayout(header)
+        layout.addWidget(self._build_signup_card())
         self.missions = QTreeWidget()
+        self.missions.setStyleSheet(_LIST_STYLE)
         self.missions.setHeaderLabels(['Mission', 'Updated'])
         self.missions.setRootIsDecorated(False)
         self.missions.setColumnWidth(0, 210)
@@ -122,6 +174,54 @@ class MissionLibrary(QWidget):
         self.link_label.setWordWrap(True)
         layout.addWidget(self.link_label)
         self.update_buttons()
+
+    def _build_signup_card(self):
+        """Why and where to sign up for flypath.io, for a user not connected."""
+        card = QFrame()
+        card.setObjectName('signupCard')
+        card.setStyleSheet(_SIGNUP_STYLE)
+        column = QVBoxLayout(card)
+        column.setContentsMargins(12, 10, 12, 12)
+        column.setSpacing(6)
+        title = QLabel('Why use FlyPath.io too?')
+        title.setObjectName('signupTitle')
+        column.addWidget(title)
+        rows = QGridLayout()
+        rows.setHorizontalSpacing(10)
+        rows.setVerticalSpacing(4)
+        for row, (name, line) in enumerate(_WHY):
+            label = QLabel(name)
+            label.setObjectName('signupComing' if name == 'Coming' else 'signupRole')
+            rows.addWidget(label, row, 0, _AlignTopLeft)
+            value = QLabel(line)
+            value.setObjectName('signupReason')
+            value.setWordWrap(True)
+            rows.addWidget(value, row, 1)
+        rows.setColumnStretch(1, 1)
+        column.addLayout(rows)
+        actions = QHBoxLayout()
+        actions.setSpacing(10)
+        button = QPushButton('Create a free account')
+        button.setObjectName('signupButton')
+        button.setToolTip(SIGNUP_URL)
+        button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(SIGNUP_URL)))
+        actions.addWidget(button)
+        hint = QLabel('Have one? Use Connect account.')
+        hint.setObjectName('signupHint')
+        actions.addWidget(hint, 1)
+        column.addSpacing(4)
+        column.addLayout(actions)
+        self.signup_card = card
+        return card
+
+    def explain_website(self):
+        """Why there is a website as well as this plugin."""
+        rows = ''.join('<tr><td style="padding-right:10px;"><b>%s</b></td><td>%s</td></tr>'
+                       % (name, line) for name, line in _WHY)
+        QMessageBox.information(
+            self, 'Why FlyPath.io?',
+            '<table cellspacing="3">%s</table><p>Free account: '
+            '<a href="%s">flypath.io/register</a></p>' % (rows, SIGNUP_URL))
 
     def update_buttons(self):
         storage_error = None
@@ -164,6 +264,8 @@ class MissionLibrary(QWidget):
             self.status.setText(flypath_sync.SYNC_MISMATCH_MESSAGE)
         elif not connected:
             self.status.setText(storage_error or 'Connect your FlyPath account to browse missions.')
+        self.signup_card.setVisible(not connected and storage_error is None)
+        self.why_button.setVisible(connected)
         self.sync_notice.setVisible(bool(incompatible))
         self.status.setVisible(not incompatible)
         self.controls.setVisible(not incompatible)
