@@ -23,9 +23,10 @@ from qgis.core import (
 from qgis.gui import QgsMapTool, QgsRubberBand
 
 try:
-    from . import planning_adapter, preview_layers
+    from . import form_rows, planning_adapter, preview_layers
     from .hardware import registry
 except ImportError:  # standalone tests import modules as top-level packages
+    import form_rows
     import planning_adapter
     import preview_layers
     from hardware import registry
@@ -295,15 +296,20 @@ class OrbitMixin:
         self.removeCircleBtn.setObjectName('removeCircleBtn')
         self._tip(self.removeCircleBtn, 'Remove the circle and its waypoints.')
         self.removeCircleBtn.setVisible(False)
+        # Draw on its own line; Edit and Remove under it once there is a circle.
         row = QWidget()
-        layout = QHBoxLayout(row)
+        layout = QVBoxLayout(row)
         layout.setContentsMargins(0, 6, 0, 0)   # a little more room under Centre Point
         layout.setSpacing(4)
         layout.addWidget(self.drawCircleBtn)
-        layout.addWidget(self.editCircleBtn)
-        layout.addWidget(self.removeCircleBtn)
+        edit_row = QHBoxLayout()
+        edit_row.setSpacing(4)
+        edit_row.addWidget(self.editCircleBtn)
+        edit_row.addWidget(self.removeCircleBtn)
+        layout.addLayout(edit_row)
         for button in (self.drawCircleBtn, self.editCircleBtn, self.removeCircleBtn):
             button.setMinimumHeight(28)     # same height as the 2D Draw buttons
+        form_rows.fit_to_row(self.drawCircleBtn, self.editCircleBtn, self.removeCircleBtn)
         self._orbitDrawRow = row
         form.addRow(row)
         self._set_row_visible(form, row, False)
@@ -331,17 +337,25 @@ class OrbitMixin:
         column = QVBoxLayout(row)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(4)
+        # "Ring" and the ring list, then Add and Remove under it, across the box.
+        ring_line = QHBoxLayout()
+        ring_line.setSpacing(4)
+        ring_caption = QLabel('Ring')
+        ring_caption.setObjectName('inlineFormLabel')
+        ring_line.addWidget(ring_caption)
+        ring_line.addWidget(self.orbitRingCombo, 1)
+        column.addLayout(ring_line)
         buttons = QHBoxLayout()
         buttons.setSpacing(4)
-        buttons.addWidget(self.orbitRingCombo, 1)
         buttons.addWidget(self.addRingBtn)
         buttons.addWidget(self.removeRingBtn)
         for widget in (self.orbitRingCombo, self.addRingBtn, self.removeRingBtn):
             widget.setMinimumHeight(28)     # same height as the Draw buttons
+        form_rows.fit_to_row(self.addRingBtn, self.removeRingBtn)
         column.addLayout(buttons)
         column.addWidget(self.orbitRingLimitLabel)
         self._orbitRingRow = row
-        form.addRow('Ring', row)
+        form.addRow(row)
         self._set_row_visible(form, row, False)
 
     def _build_orbit_flight_rows(self, form):
@@ -620,7 +634,9 @@ class OrbitMixin:
             self.drawCircleBtn.setChecked(True)
             self.drawCircleBtn.blockSignals(blocked)
         self._start_orbit_tool(editing=False)
-        self.drawCircleBtn.setText('Click the centre, drag for the radius…')
+        self.drawCircleBtn.setText('Click the centre…')
+        self._set_info('Click the object to orbit, or press on it and drag out to set the '
+                       'radius too. Right click or Escape cancels.')
 
     def _on_edit_circle_toggled(self, checked):
         if not checked:
@@ -630,14 +646,14 @@ class OrbitMixin:
             self._reset_orbit_button(self.editCircleBtn)
             return
         self._start_orbit_tool(editing=True)
-        self.editCircleBtn.setText('✓ Finish Editing')
+        self.editCircleBtn.setText('✓ Finish')
         self._set_info(
             'Editing the orbit circle: drag inside it to move it, or drag a '
             'square handle or the outline to make it larger or smaller. Click '
-            'Finish Editing when done.' if len(self._orbit_rings) < 2 else
+            'Finish when done.' if len(self._orbit_rings) < 2 else
             'Editing ring %d: drag inside it to move all rings, or drag a '
             'square handle or the outline to make this ring larger or smaller. '
-            'Click Finish Editing when done.' % (self._orbit_ring_index + 1))
+            'Click Finish when done.' % (self._orbit_ring_index + 1))
 
     def _leave_orbit_tool(self):
         """Turn the circle tool off and restore the earlier map tool."""
@@ -664,7 +680,7 @@ class OrbitMixin:
         if centre is None or not editing:
             self._leave_orbit_tool()
         else:
-            self.editCircleBtn.setText('✓ Finish Editing')
+            self.editCircleBtn.setText('✓ Finish')
         if centre is None:
             return
         if radius is not None:
@@ -684,7 +700,7 @@ class OrbitMixin:
     def set_orbit_centre(self, longitude, latitude):
         """Set the orbit centre (WGS84) and draw its marker."""
         self._orbit_centre = (float(longitude), float(latitude))
-        self.orbitCentreLabel.setText(f'{latitude:.6f}, {longitude:.6f}')
+        self.orbitCentreLabel.setText(f'{latitude:.5f}, {longitude:.5f}')   # ~1 m
         self._refresh_orbit_ring_controls()
         self._show_orbit_centre()
 

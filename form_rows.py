@@ -9,14 +9,18 @@ remembered meanwhile, so label() still finds it.
 
 from qgis.PyQt import sip
 from qgis.PyQt.QtCore import QT_VERSION_STR
-from qgis.PyQt.QtWidgets import QFormLayout
+from qgis.PyQt.QtWidgets import QFormLayout, QSizePolicy
 
 try:
     _FIELD = QFormLayout.ItemRole.FieldRole
     _SPANNING = QFormLayout.ItemRole.SpanningRole
+    _IGNORED = QSizePolicy.Policy.Ignored
+    _FIXED = QSizePolicy.Policy.Fixed
 except AttributeError:
     _FIELD = getattr(QFormLayout, 'FieldRole')
     _SPANNING = getattr(QFormLayout, 'SpanningRole')
+    _IGNORED = getattr(QSizePolicy, 'Ignored')
+    _FIXED = getattr(QSizePolicy, 'Fixed')
 
 COLLAPSE_HIDDEN_ROWS = QT_VERSION_STR.startswith('5.')
 
@@ -34,6 +38,14 @@ def _field(form, row):
         return None
     widget = item.widget()
     return widget if widget is not None else item.layout()
+
+
+def fit_to_row(*buttons):
+    """Let buttons share their row's width instead of growing with their
+    text, so a longer state ("Drawing… right-click to finish") never widens
+    the panel."""
+    for button in buttons:
+        button.setSizePolicy(_IGNORED, _FIXED)
 
 
 def track(form):

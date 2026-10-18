@@ -84,7 +84,7 @@ def _test_orbit_rings_plan_export_and_reset():
         assert planner.removeRingBtn.isVisibleTo(planner)
         assert not planner.orbitRingLimitLabel.isVisibleTo(planner)
         # The selector is in Survey Area; Flight Parameters names the ring.
-        assert planner._area_form.labelForField(planner._orbitRingRow) is not None
+        assert planner._area_form.getWidgetPosition(planner._orbitRingRow)[0] >= 0
         assert planner._row_label(planner._flight_form, planner.altitudeSpin).text() == 'Altitude (Ring 2)'
         assert planner._row_label(planner._flight_form, planner.orbitTiltSpin).text() == 'Camera Tilt (Ring 2)'
         planner.orbitRadiusSpin.setValue(40)

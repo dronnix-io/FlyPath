@@ -852,7 +852,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         the panel's own."""
         content = self._scroll_content
         self.ensurePolished()
-        self._equalize_overlay_buttons()
         self._fit_spin_boxes()
         for widget in self.findChildren(QWidget):      # drop the unstyled sizes
             widget.updateGeometry()
@@ -906,11 +905,16 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.infoBar.setObjectName('infoBarIdle')
         self.infoBar.setWordWrap(True)
 
-        scroll_layout.addWidget(self._build_mission_group())
-        scroll_layout.addWidget(self._build_area_group())
+        # Two columns throughout: Mission Setup beside Survey Area, then
+        # Flight Parameters and Safety Actions (left) beside Adv. Mission
+        # Organizers and Takeoff Zone (right), so no section leaves half the
+        # panel empty.
+        setup_row = QHBoxLayout()
+        setup_row.setSpacing(6)
+        setup_row.addWidget(self._build_mission_group(), 1)
+        setup_row.addWidget(self._build_area_group(), 1)
+        scroll_layout.addLayout(setup_row)
 
-        # Flight Parameters (left) beside Adv. Mission Organizers + Safety
-        # Actions (right).
         params_row = QHBoxLayout()
         params_row.setSpacing(6)
 
@@ -921,20 +925,23 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         flight_col = QVBoxLayout()
         flight_col.setSpacing(8)
         flight_col.addWidget(self._build_flight_group())
+        self._safetyGroup = self._build_advanced_group()
+        flight_col.addWidget(self._safetyGroup)
         flight_col.addStretch()
+        self._flight_col = flight_col
 
-        # Right column: how the grid becomes deliverable missions, then safety.
+        # Right column: how the grid becomes deliverable missions, then where
+        # to take off from.
         right_col = QVBoxLayout()
         right_col.setSpacing(8)
         right_col.addWidget(self._build_organizer_group())
-        right_col.addWidget(self._build_advanced_group())
+        right_col.addWidget(self._build_takeoff_group())
         right_col.addStretch()
+        self._right_col = right_col
 
         params_row.addLayout(flight_col, 1)
         params_row.addLayout(right_col, 1)
         scroll_layout.addLayout(params_row)
-
-        scroll_layout.addWidget(self._build_takeoff_group())
 
         # Statistics live in a HUD card overlaid on the map canvas (outside the
         # panel), shown when a plan exists. Built here so the stat labels exist
@@ -1034,6 +1041,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
         self.cameraInfoLabel = QLabel('—')
         self.cameraInfoLabel.setObjectName('cameraInfoLabel')
+        self.cameraInfoLabel.setWordWrap(True)   # fits the half-width column
         self._tip(self.cameraInfoLabel,
             'Camera sensor summary for the selected drone. '
             'Used to calculate GSD, footprint size, and photo interval.')
@@ -1075,7 +1083,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         source_layout.addWidget(self.sourceDrawRadio)
         source_layout.addStretch()
         self._sourceRow = source_row   # kept so orbit mode can hide it
-        form.addRow('Source', source_row)
+        form.addRow(source_row)        # spans the box: the choices name the source
 
         # From-layer: the layer and its feature (FID) picker share one line.
         self.layerCombo = QComboBox()
@@ -1088,19 +1096,26 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Which feature of the layer to use as the survey area, when the '
             'layer has more than one.')
         self._featureLabel = None   # the feature picker shares the Layer row now
+        # The layer, then (for a multi-feature layer) the feature under it.
         self._layerRow = QWidget()
-        layer_layout = QHBoxLayout(self._layerRow)
-        layer_layout.setContentsMargins(0, 0, 0, 0)
+        layer_page = QVBoxLayout(self._layerRow)
+        layer_page.setContentsMargins(0, 0, 0, 0)
+        layer_page.setSpacing(4)
+        layer_layout = QHBoxLayout()
         layer_layout.setSpacing(4)
         layer_caption = QLabel('Layer')
         layer_caption.setObjectName('inlineFormLabel')
         layer_layout.addWidget(layer_caption)
-        layer_layout.addWidget(self.layerCombo, 3)
+        layer_layout.addWidget(self.layerCombo, 1)
+        layer_page.addLayout(layer_layout)
+        feature_layout = QHBoxLayout()
+        feature_layout.setSpacing(4)
         self._featureCaption = QLabel('Feature')
         self._featureCaption.setObjectName('inlineFormLabel')
         self._featureCaption.setVisible(False)   # only when a feature picker shows
-        layer_layout.addWidget(self._featureCaption)
-        layer_layout.addWidget(self.featureCombo, 2)
+        feature_layout.addWidget(self._featureCaption)
+        feature_layout.addWidget(self.featureCombo, 1)
+        layer_page.addLayout(feature_layout)
 
         self.useSelectionBtn = QPushButton('Use QGIS Selection')
         self.useSelectionBtn.setObjectName('useSelectionBtn')
@@ -1132,7 +1147,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._tip(self.editPolygonBtn,
             'Edit the drawn polygon: drag a vertex to move it, click an edge '
             'to add a vertex, or select a vertex and press Delete to remove '
-            'it. Click Finish Editing when done.')
+            'it. Click Finish when done.')
         self.editPolygonBtn.setVisible(False)
 
         self.removePolygonBtn = QPushButton('✕ Remove')
@@ -1141,18 +1156,23 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Remove the drawn polygon and reset the survey area.')
         self.removePolygonBtn.setVisible(False)
 
+        # Draw on its own line; Edit and Remove under it once there is a shape.
         self._drawRow = QWidget()
-        draw_layout = QHBoxLayout(self._drawRow)
-        draw_layout.setContentsMargins(0, 0, 0, 0)
+        draw_page = QVBoxLayout(self._drawRow)
+        draw_page.setContentsMargins(0, 0, 0, 0)
+        draw_page.setSpacing(4)
+        draw_page.addWidget(self.drawPolygonBtn)
+        draw_layout = QHBoxLayout()
         draw_layout.setSpacing(4)
-        draw_layout.addWidget(self.drawPolygonBtn)
         draw_layout.addWidget(self.editPolygonBtn)
         draw_layout.addWidget(self.removePolygonBtn)
+        draw_page.addLayout(draw_layout)
+        form_rows.fit_to_row(self.drawPolygonBtn, self.editPolygonBtn, self.removePolygonBtn)
 
         # All three sources share ONE stacked row, so the control that appears
-        # under Source is always at the exact same position and height and only
-        # its content swaps. (Separate form rows drift, because hidden QFormLayout
-        # rows do not collapse identically.)
+        # under Source is always at the same position and only its content
+        # swaps. (Separate form rows drift, because hidden QFormLayout rows do
+        # not collapse identically.) The row takes the shown page's height.
         self._sourceStack = QStackedWidget()
         self._sourceStack.addWidget(self._layerRow)      # index 0 = Layer
         self._sourceStack.addWidget(self._selectionRow)  # index 1 = Selection
@@ -1161,6 +1181,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         # freed when the Export section is short (Save to computer). Otherwise the
         # Survey Area grew taller in that mode, opening a gap under Source.
         self._sourceStack.setSizePolicy(_SP_PREFERRED, _SP_FIXED)
+        self._sourceStack.currentChanged.connect(self._fit_source_stack)
+        self._fit_source_stack()
         form.addRow(self._sourceStack)
         self._build_orbit_area_row(form)   # orbit centre, hidden until Orbit
 
@@ -1500,7 +1522,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(5)
 
-        # ── Contours: show/hide toggle on the left, extent selector on the right ──
+        # ── Contours: show/hide toggle, and where to draw them ──
         self.showContoursBtn = QPushButton('Show Contours')
         self.showContoursBtn.setObjectName('showContoursBtn')
         self.showContoursBtn.setCheckable(True)
@@ -1515,13 +1537,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Where to draw the DEM contours: across the whole survey area for '
             'terrain context, or only inside the takeoff circles. The contour '
             'interval matches the elevation tolerance below.')
-        contour_row = QHBoxLayout()
-        contour_row.setContentsMargins(0, 0, 0, 0)
-        contour_row.setSpacing(6)
-        contour_row.addWidget(self.showContoursBtn)
-        contour_row.addWidget(self.contourExtentCombo, 1)
-        outer.addLayout(contour_row)
-
         # ── Show Takeoff Zone, then its settings as labelled rows ──
         self.showTakeoffZoneBtn = QPushButton('Show Takeoff Zone')
         self.showTakeoffZoneBtn.setObjectName('showTakeoffZoneBtn')
@@ -1547,12 +1562,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._tip(self.takeoffGsdVarLabel,
             'The GSD change this tolerance allows at the current altitude. '
             'Smaller is better when comparing maps between flights.')
-        tz_row = QHBoxLayout()
-        tz_row.setContentsMargins(0, 0, 0, 0)
-        tz_row.setSpacing(6)
-        tz_row.addWidget(self.showTakeoffZoneBtn)
-        tz_row.addStretch()
-        outer.addLayout(tz_row)
+        # The two overlay toggles, one per line, fill the column.
+        outer.addWidget(self.showTakeoffZoneBtn)
+        outer.addWidget(self.showContoursBtn)
 
         # ── Same takeoff for all splits, then Launch Offset ──
         self.sameTakeoffCheck = QCheckBox('Same takeoff for all splits')
@@ -1587,13 +1599,34 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         settings_form.setContentsMargins(0, 2, 0, 0)
         settings_form.setLabelAlignment(_AlignLeft | _AlignVCenter)
         settings_form.setSpacing(6)
-        settings_form.addRow('Elevation Tolerance', self.takeoffToleranceSpin)
+        settings_form.addRow('Contours', self.contourExtentCombo)
+        settings_form.addRow('Tolerance', self.takeoffToleranceSpin)
         settings_form.addRow('GSD Variance', self.takeoffGsdVarLabel)
         settings_form.addRow('Launch Offset', self.launchOffsetSpin)
         outer.addLayout(settings_form)
         outer.addWidget(self.sameTakeoffCheck)
 
         return group
+
+    def _place_safety_group(self):
+        """Keep the columns even: Safety Actions sits under Flight Parameters
+        beside the Takeoff Zone, and moves under the Organizers when the
+        Takeoff Zone is hidden (orbits)."""
+        column = self._right_col if self._takeoffGroup.isHidden() else self._flight_col
+        if column.indexOf(self._safetyGroup) >= 0:
+            return
+        for other in (self._flight_col, self._right_col):
+            other.removeWidget(self._safetyGroup)
+        column.insertWidget(column.count() - 1, self._safetyGroup)   # above the stretch
+
+    def _fit_source_stack(self, _index=None):
+        """Size the source row to the shown page only, so the two-line Draw
+        page does not leave a gap under the Layer and Selection pages."""
+        stack = self._sourceStack
+        for index in range(stack.count()):
+            policy = _SP_PREFERRED if index == stack.currentIndex() else _SP_IGNORED
+            stack.widget(index).setSizePolicy(policy, policy)
+        stack.updateGeometry()
 
     def _fit_spin_boxes(self):
         """Size number boxes to their longest value, not Qt's estimate.
@@ -1614,18 +1647,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                         for value in texts + [spin.specialValueText()]))
             needed = text + 2 * 6 + 2 + 16 + 6   # padding, border, buttons, cursor
             spin.setMinimumWidth(min(spin.minimumSizeHint().width(), needed))
-
-    def _equalize_overlay_buttons(self):
-        """Give both overlay toggle buttons the wider one's width, so Show
-        Contours lines up with Show Takeoff Zone. Run once styled: unstyled
-        sizes are wider on Qt 5."""
-        buttons = (self.showTakeoffZoneBtn, self.showContoursBtn)
-        for button in buttons:
-            button.setMinimumWidth(0)
-            button.setMaximumWidth(16777215)
-        width = max(button.sizeHint().width() for button in buttons)
-        for button in buttons:
-            button.setFixedWidth(width)
 
     def _build_stats_hud(self):
         """Flight-stats HUD: a compact, semi-transparent card overlaid on a
@@ -2393,6 +2414,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
         # Orbit swaps the survey area for a centre point and its own controls.
         self._apply_orbit_layout(kind == 'orbit')
+        self._place_safety_group()
 
     # ── Corridor mission breaks (manual line grouping) ────────────────────
 
