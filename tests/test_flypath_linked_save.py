@@ -34,16 +34,21 @@ def test_linked_save():
         setattr(planner, name, MethodType(getattr(module.FlyPathDialog, name), planner))
     with patch.object(sync, 'load_token', return_value='token-a') as token, \
          patch.object(sync, 'load_base_url', return_value='https://example.test'), \
-         patch.object(sync, 'push_mission', return_value={'id': 7, 'revision': 1, 'name': 'Survey'}) as create, \
-         patch.object(sync, 'update_mission', return_value={'id': 7, 'revision': 2, 'name': 'Survey'}) as update, \
-         patch.object(controller.QInputDialog, 'getText', return_value=('Survey', True)), \
+         patch.object(sync, 'push_mission', return_value={'id': 7, 'revision': 1, 'name': 'Survey', 'project_id': 2}) as create, \
+         patch.object(sync, 'update_mission', return_value={'id': 7, 'revision': 2, 'name': 'Survey', 'project_id': 2}) as update, \
+         patch.object(sync, 'list_library', return_value={'missions': [], 'projects': [{'id': 2, 'name': 'Survey'}]}) as projects, \
+         patch.object(library, 'new_mission_details', return_value=('Survey', 2)) as details, \
          patch.object(controller.QMessageBox, 'question', return_value=controller._MB_NO) as question, \
          patch.object(controller.QMessageBox, 'information'), \
          patch.object(controller.QMessageBox, 'warning'), \
          patch.object(library, 'conflict_choice', return_value=None) as choice:
         assert planner._on_send_to_website()
         assert planner._website_link['id'] == 7
+        assert planner._website_link['project_id'] == 2
+        assert create.call_args.args[2]['project_id'] == 2
         assert planner._on_send_to_website()
+        assert projects.call_count == 1, 'Linked updates do not load project choices'
+        assert 'project_id' not in update.call_args.args[4], 'Updates cannot move missions'
         assert create.call_count == 1, 'Repeat save must update, not create'
         assert update.call_args.args[2:4] == (7, 1)
         assert planner._website_link['revision'] == 2
@@ -69,6 +74,20 @@ def test_linked_save():
         assert planner._on_send_to_website()
         assert create.call_count == 2
         assert planner._website_link['id'] == 8
+        assert details.call_args.kwargs['project_id'] == 2, 'A copy starts in the linked project'
+
+        previous = planner._website_link.copy()
+        details.return_value = None
+        assert not planner._on_send_to_website(save_as_new=True)
+        assert create.call_count == 2
+        assert planner._website_link == previous, 'Cancelling keeps the linked mission'
+        details.return_value = ('Standalone copy', None)
+        assert planner._on_send_to_website(save_as_new=True)
+        assert 'project_id' not in create.call_args.args[2]
+
+        projects.return_value = None
+        assert not planner._on_send_to_website(save_as_new=True)
+        assert create.call_count == 3, 'Failed project lookup must not create a mission'
 
         # Opening a mission establishes its ID/revision for the next edit.
         with patch.object(sync, 'get_mission', return_value={'id': 9, 'revision': 6, 'name': 'Opened'}):

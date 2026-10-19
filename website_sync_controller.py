@@ -85,6 +85,7 @@ class WebsiteSyncLifecycleMixin:
         self._website_link = {
             'id': mission.get('id'), 'revision': mission.get('revision'),
             'name': mission.get('name') or 'Mission',
+            'project_id': mission.get('project_id'),
             'account': scope,
         }
         self._update_web_buttons()
@@ -214,23 +215,31 @@ class WebsiteSyncLifecycleMixin:
         updating = bool(link and not save_as_new)
         name = link['name'] if link else 'QGIS ' + datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
         parent = getattr(self, '_mission_library', None) or self
-        if not updating:
-            name, ok = QInputDialog.getText(
-                parent, 'Save as new on FlyPath', 'Mission name:',
-                text=name + ' copy' if link else name)
-            if not ok or not name.strip():
-                return
-            name = name.strip()
-        try:
-            payload = self._website_payload(name)
-        except FlypathSyncError as exc:
-            QMessageBox.warning(parent, 'Cannot Save Mission', str(exc))
-            return
         try:
             base_url = flypath_sync.load_base_url()
         except FlypathSyncError as exc:
             QMessageBox.warning(parent, 'FlyPath credentials', str(exc))
             return
+        project_id = None
+        if not updating:
+            from .flypath_library import new_mission_details
+            library = self._run_web(
+                'FlyPath projects', lambda token: flypath_sync.list_library(base_url, token))
+            if library is None:
+                return
+            details = new_mission_details(
+                parent, name + ' copy' if link else name, library['projects'],
+                project_id=(link or {}).get('project_id'))
+            if details is None:
+                return
+            name, project_id = details
+        try:
+            payload = self._website_payload(name)
+        except FlypathSyncError as exc:
+            QMessageBox.warning(parent, 'Cannot Save Mission', str(exc))
+            return
+        if not updating and project_id is not None:
+            payload['project_id'] = project_id
         try:
             result = self._run_web(
                 'Save to FlyPath',

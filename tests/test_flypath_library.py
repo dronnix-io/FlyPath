@@ -32,10 +32,12 @@ def test_library():
     with patch.object(library_module.flypath_sync, 'load_token', return_value='fake') as token, \
          patch.object(library_module.flypath_sync, 'load_base_url', return_value='https://example.test'), \
          patch.object(library_module.flypath_sync, 'save_token') as save, \
-         patch.object(library_module.flypath_sync, 'list_missions', return_value=[
+         patch.object(library_module.flypath_sync, 'list_library', return_value={'missions': [
              {'id': 7, 'name': 'Same name', 'updated_at': '2026-09-09'},
              {'id': 8, 'name': 'Same name', 'updated_at': '2026-09-09'},
-         ]):
+             {'id': 9, 'name': 'Survey part - 1', 'display_name': 'Part 01',
+              'updated_at': '2026-09-09', 'project_id': 2},
+         ], 'projects': [{'id': 2, 'name': 'Survey'}, {'id': 3, 'name': 'Survey'}]}):
         library = library_module.MissionLibrary(planner, parent=dock)
         dock.addTab(library, 'My missions')
         library.missionOpened.connect(lambda: dock.setCurrentWidget(planner))
@@ -56,11 +58,34 @@ def test_library():
         # Save stays reachable so the planner can explain why Preview is needed.
         assert library.send_button.isEnabled()
         assert not library.import_button.isEnabled()
-        library.missions.setCurrentItem(library.missions.topLevelItem(1))
+        groups = {library.missions.topLevelItem(i).data(0, library_module._ProjectRole):
+                  library.missions.topLevelItem(i) for i in range(library.missions.topLevelItemCount())}
+        assert set(groups) == {None, 2, 3}
+        assert not any(group.isExpanded() for group in groups.values()), 'Groups start collapsed'
+        assert groups[3].childCount() == 0, 'Empty projects stay visible'
+        assert groups[2].toolTip(0) == 'Survey'
+        assert groups[2].child(0).data(0, library_module._UserRole) == 9
+        assert groups[2].child(0).text(0) == 'Part 01'
+        assert groups[2].child(0).toolTip(0) == 'Survey part - 1'
+        library.missions.setCurrentItem(groups[2])
+        assert not library.import_button.isEnabled(), 'A project is not a mission'
+        library.import_selected()
+        assert not imported
+        standalone = groups[None]
+        standalone.setExpanded(True)
+        mission = next(standalone.child(i) for i in range(standalone.childCount())
+                       if standalone.child(i).data(0, library_module._UserRole) == 8)
+        library.missions.setCurrentItem(mission)
         assert library.import_button.isEnabled()
         library.import_selected()
         assert imported == [8], 'Duplicate labels must retain their own mission ID'
         assert dock.currentWidget() is planner, 'Opening a mission returns to Planner'
+        library.refresh()
+        assert library.missions.currentItem().data(0, library_module._UserRole) == 8
+        assert library.missions.currentItem().parent().isExpanded(), 'Refresh keeps opened groups'
+        groups = {library.missions.topLevelItem(i).data(0, library_module._ProjectRole):
+                  library.missions.topLevelItem(i) for i in range(library.missions.topLevelItemCount())}
+        assert not groups[2].isExpanded(), 'Refresh keeps closed projects'
         planner._preview_layer_ids = ['preview']
         planner._missions = [[1]]
         library.update_buttons()
@@ -78,6 +103,41 @@ def test_library():
         library.close()
     dock.close()
     app.processEvents()
+
+
+def test_new_mission_destination():
+    try:
+        library = importlib.import_module(package + '.flypath_library')
+        from qgis.PyQt.QtCore import QTimer
+        from qgis.PyQt.QtWidgets import QApplication, QDialog, QLineEdit, QComboBox, QDialogButtonBox
+    except ImportError as exc:
+        raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
+    app = QApplication.instance() or QApplication([])
+    projects = [{'id': 2, 'name': 'Survey'}, {'id': 3, 'name': 'Survey'}]
+    observed = []
+
+    def choose_project():
+        dialog = app.activeModalWidget()
+        name = dialog.findChild(QLineEdit)
+        project = dialog.findChild(QComboBox)
+        save = dialog.findChild(QDialogButtonBox).button(library._Save)
+        observed.append(project.currentData())
+        name.setText('  ')
+        observed.append(save.isEnabled())
+        name.setText('  New mission  ')
+        project.setCurrentIndex(2)
+        save.click()
+
+    QTimer.singleShot(0, choose_project)
+    assert library.new_mission_details(None, 'Survey copy', projects, project_id=2) == ('New mission', 3)
+    assert observed == [2, False], 'Save requires a name; duplicate project names retain their IDs'
+    QTimer.singleShot(0, lambda: app.activeModalWidget().reject())
+    assert library.new_mission_details(None, 'Survey', projects) is None
+    QTimer.singleShot(0, lambda: app.activeModalWidget().accept())
+    assert library.new_mission_details(None, 'Legacy', []) == ('Legacy', None)
+    for widget in app.topLevelWidgets():
+        if isinstance(widget, QDialog):
+            widget.close()
 
 
 def test_incompatible_sync_notice():
@@ -175,6 +235,7 @@ def test_incompatible_sync_notice_wraps_without_clipping():
 
 if __name__ == '__main__':
     test_library()
+    test_new_mission_destination()
     test_incompatible_sync_notice()
     test_incompatible_sync_notice_wraps_without_clipping()
     print('Mission library smoke check passed')

@@ -88,6 +88,26 @@ class TransportValidation(unittest.TestCase):
             self.call_body(json.dumps({'ok': False, 'error': TOKEN}).encode())
         self.assertNotIn(TOKEN, str(result.exception))
 
+    def test_project_library_validation_and_legacy_response(self):
+        projects = [{'id': 2, 'name': 'Survey'}, {'id': 3, 'name': 'Survey'}]
+        missions = [{'id': 1, 'project_id': 2, 'name': 'Survey part - 1', 'display_name': 'Part 01'},
+                    {'id': 2, 'project_id': None}]
+        with patch.object(sync, '_call', return_value={'missions': missions, 'projects': projects}):
+            self.assertEqual(sync.list_library(BASE, TOKEN), {'missions': missions, 'projects': projects})
+        with patch.object(sync, '_call', return_value={'missions': []}):
+            self.assertEqual(sync.list_library(BASE, TOKEN), {'missions': [], 'projects': []})
+        for payload in ({'projects': None}, {'projects': [None]},
+                        {'projects': [{'id': True, 'name': 'Survey'}]},
+                        {'projects': [{'id': 0, 'name': 'Survey'}]},
+                        {'projects': [{'id': 1, 'name': []}]},
+                        {'projects': projects + projects},
+                        {'missions': [{'id': 1, 'display_name': {}}]},
+                        {'projects': projects, 'missions': [{'id': 1, 'project_id': True}]},
+                        {'projects': projects, 'missions': [{'id': 1, 'project_id': 9}]}):
+            with self.subTest(payload=payload), patch.object(sync, '_call', return_value={'missions': [], **payload}):
+                with self.assertRaises(sync.FlypathSyncError):
+                    sync.list_library(BASE, TOKEN)
+
     def test_maximum_mission_and_invalid_fields(self):
         mission = {'polygon': [[51.12345678901234, -114.12345678901234]] * 2000,
                    'waypoints': [[51.12345678901234, -114.12345678901234]] * 2000}
@@ -107,6 +127,11 @@ class TransportValidation(unittest.TestCase):
                 with self.assertRaises(sync.FlypathSyncError):
                     sync.validate_mission({**mission, field: value})
         sync.validate_mission({'settings': {'split_count': 1e300, 'speed': -100}})
+        for project_id in (True, 0, -1, '2', {}):
+            with self.subTest(project_id=project_id), self.assertRaises(sync.FlypathSyncError):
+                sync.validate_mission({'project_id': project_id})
+        sync.validate_mission({'project_id': None})
+        sync.validate_mission({'project_id': 2})
 
     def test_real_redirects_never_reach_target(self):
         received = []

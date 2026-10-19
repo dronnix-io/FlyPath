@@ -120,16 +120,35 @@ def update_mission(base_url, token, mission_id, revision, payload):
 def list_missions(base_url, token):
     """The account's missions as [{'id', 'name', 'updated_at'}, ...], newest
     first (the API's own order)."""
-    missions = _call(base_url, token, '').get('missions')
+    return list_library(base_url, token)['missions']
+
+
+def list_library(base_url, token):
+    """Missions and owned projects; older websites return a standalone library."""
+    payload = _call(base_url, token, '')
+    missions = payload.get('missions')
+    projects = payload.get('projects', [])
+    if not isinstance(projects, list):
+        raise FlypathSyncError('FlyPath sent an invalid project list.')
+    project_ids = set()
+    for project in projects:
+        if (not isinstance(project, dict) or type(project.get('id')) is not int
+                or project['id'] < 1 or project['id'] in project_ids
+                or not isinstance(project.get('name'), str)):
+            raise FlypathSyncError('FlyPath sent invalid project metadata.')
+        project_ids.add(project['id'])
     if not isinstance(missions, list):
         raise FlypathSyncError('FlyPath sent an invalid mission list.')
     for mission in missions:
         if not isinstance(mission, dict) or type(mission.get('id')) is not int or mission['id'] < 1:
             raise FlypathSyncError('FlyPath listed a mission without a usable id.')
-        for key in ('name', 'updated_at'):
+        for key in ('name', 'display_name', 'updated_at'):
             if mission.get(key) is not None and not isinstance(mission[key], str):
                 raise FlypathSyncError('FlyPath sent invalid mission metadata.')
-    return missions
+        project_id = mission.get('project_id')
+        if project_id is not None and (type(project_id) is not int or project_id not in project_ids):
+            raise FlypathSyncError('FlyPath listed a mission with an invalid project.')
+    return {'missions': missions, 'projects': projects}
 
 
 def get_mission(base_url, token, mission_id):
@@ -172,6 +191,9 @@ def validate_mission(mission):
         for key in ('id', 'revision'):
             if key in mission and (type(mission[key]) is not int or mission[key] < 1):
                 raise ValueError()
+        project_id = mission.get('project_id')
+        if project_id is not None and (type(project_id) is not int or project_id < 1):
+            raise ValueError()
         for key in ('name', 'drone_model'):
             if mission.get(key) is not None and not isinstance(mission[key], str):
                 raise ValueError()

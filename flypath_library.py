@@ -4,7 +4,8 @@ from qgis.PyQt.QtCore import Qt, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
     QFrame, QGridLayout, QWidget, QHBoxLayout, QLabel, QPushButton, QTabWidget, QTreeWidget,
-    QTreeWidgetItem, QVBoxLayout, QMessageBox,
+    QTreeWidgetItem, QVBoxLayout, QMessageBox, QDialog, QDialogButtonBox,
+    QLineEdit, QComboBox, QFormLayout,
 )
 
 from . import flypath_sync
@@ -18,6 +19,8 @@ try:
     _ActionRole = QMessageBox.ButtonRole.ActionRole
     _Cancel = QMessageBox.StandardButton.Cancel
     _Descending = Qt.SortOrder.DescendingOrder
+    _Save = QDialogButtonBox.StandardButton.Save
+    _DialogCancel = QDialogButtonBox.StandardButton.Cancel
 except AttributeError:
     _UserRole = getattr(Qt, 'UserRole')
     _PlainText = getattr(Qt, 'PlainText')
@@ -27,6 +30,10 @@ except AttributeError:
     _ActionRole = getattr(QMessageBox, 'ActionRole')
     _Cancel = getattr(QMessageBox, 'Cancel')
     _Descending = getattr(Qt, 'DescendingOrder')
+    _Save = getattr(QDialogButtonBox, 'Save')
+    _DialogCancel = getattr(QDialogButtonBox, 'Cancel')
+
+_ProjectRole = _UserRole + 1
 
 
 SIGNUP_URL = flypath_sync.DEFAULT_BASE_URL + '/register/'
@@ -84,6 +91,30 @@ def conflict_choice(parent):
         return 'reload'
     if dialog.clickedButton() is copy_button:
         return 'copy'
+    return None
+
+
+def new_mission_details(parent, name, projects, project_id=None):
+    dialog = QDialog(parent)
+    dialog.setWindowTitle('Save as new on FlyPath')
+    layout = QFormLayout(dialog)
+    name_input = QLineEdit(name)
+    layout.addRow('Mission name:', name_input)
+    destination = QComboBox()
+    destination.addItem('Standalone mission', None)
+    for project in projects:
+        destination.addItem(project['name'], project['id'])
+    destination.setCurrentIndex(max(0, destination.findData(project_id)))
+    layout.addRow('Project:', destination)
+    buttons = QDialogButtonBox(_Save | _DialogCancel)
+    buttons.button(_Save).setEnabled(bool(name.strip()))
+    name_input.textChanged.connect(lambda text: buttons.button(_Save).setEnabled(bool(text.strip())))
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addRow(buttons)
+    name_input.selectAll()
+    if dialog.exec():
+        return name_input.text().strip(), destination.currentData()
     return None
 
 
@@ -151,7 +182,7 @@ class MissionLibrary(QWidget):
         self.missions = QTreeWidget()
         self.missions.setStyleSheet(_LIST_STYLE)
         self.missions.setHeaderLabels(['Mission', 'Updated'])
-        self.missions.setRootIsDecorated(False)
+        self.missions.setRootIsDecorated(True)
         self.missions.setColumnWidth(0, 210)
         self.missions.setSortingEnabled(True)
         self.missions.sortByColumn(1, _Descending)
@@ -244,7 +275,9 @@ class MissionLibrary(QWidget):
             'Forget access on this device and unlink the mission. This does not '
             'revoke the token on the website. Rotate old tokens to invalidate backups.')
         self.refresh_button.setEnabled(connected and not incompatible)
-        self.import_button.setEnabled(connected and not incompatible and self.missions.currentItem() is not None)
+        selected = self.missions.currentItem()
+        self.import_button.setEnabled(connected and not incompatible and selected is not None
+                                      and selected.data(0, _UserRole) is not None)
         # Saving stays clickable without a preview: the planner answers a
         # click with the reason, which a disabled button cannot do (Qt
         # shows no tooltip on a disabled widget).
@@ -306,6 +339,10 @@ class MissionLibrary(QWidget):
         item = self.missions.currentItem()
         link = self.planner._current_website_link()
         keep = item.data(0, _UserRole) if item is not None else (link or {}).get('id')
+        keep_project = item.data(0, _ProjectRole) if item is not None else None
+        expanded = {group.data(0, _ProjectRole)
+                    for i in range(self.missions.topLevelItemCount())
+                    if (group := self.missions.topLevelItem(i)).isExpanded()}
         self.missions.clear()
         try:
             connected = bool(flypath_sync.load_token())
@@ -317,28 +354,47 @@ class MissionLibrary(QWidget):
             self.update_buttons()
             return
         self.status.setText('Loading missions…')
-        missions = self.planner._run_web(
+        library = self.planner._run_web(
             'FlyPath mission library',
-            lambda token: flypath_sync.list_missions(flypath_sync.load_base_url(), token))
-        if missions is not None:
-            for mission in missions:
+            lambda token: flypath_sync.list_library(flypath_sync.load_base_url(), token))
+        if library is not None:
+            groups = {}
+            for project in library['projects']:
+                group = QTreeWidgetItem([project['name'], ''])
+                group.setData(0, _ProjectRole, project['id'])
+                group.setToolTip(0, project['name'])
+                self.missions.addTopLevelItem(group)
+                groups[project['id']] = group
+                if keep is None and project['id'] == keep_project:
+                    self.missions.setCurrentItem(group)
+            for mission in library['missions']:
+                project_id = mission.get('project_id')
+                if project_id not in groups:
+                    group = QTreeWidgetItem(['Standalone missions', ''])
+                    self.missions.addTopLevelItem(group)
+                    groups[project_id] = group
                 item = QTreeWidgetItem([
-                    mission.get('name') or 'Untitled mission',
+                    mission.get('display_name') or mission.get('name') or 'Untitled mission',
                     self.planner._web_date(mission.get('updated_at')),
                 ])
                 item.setData(0, _UserRole, mission.get('id'))
-                self.missions.addTopLevelItem(item)
+                item.setData(0, _ProjectRole, project_id)
+                item.setToolTip(0, mission.get('name') or item.text(0))
+                groups[project_id].addChild(item)
+                groups[project_id].setText(1, max(groups[project_id].text(1), item.text(1)))
                 if mission.get('id') == keep:
                     self.missions.setCurrentItem(item)
-            self.status.setText('%s missions · flypath.io' % len(missions)
-                                if missions else 'No missions yet. Save a previewed plan to start.')
+            for project_id, group in groups.items():
+                group.setExpanded(project_id in expanded)
+            self.status.setText('%s projects · %s missions · flypath.io'
+                                % (len(library['projects']), len(library['missions'])))
         else:
             self.status.setText('Could not load missions. Try Refresh.')
         self.update_buttons()
 
     def import_selected(self):
         item = self.missions.currentItem()
-        if item is not None:
+        if item is not None and item.data(0, _UserRole) is not None:
             if self.planner._on_load_from_website(item.data(0, _UserRole)):
                 self.missionOpened.emit()
 
