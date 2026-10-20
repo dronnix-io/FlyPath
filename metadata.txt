@@ -3,8 +3,9 @@ name=FlyPath
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D, corridor and orbit (3D model) drone missions directly from QGIS
-version=3.3.0
-changelog=3.3.0 - My missions groups website missions by project, with standalone missions in
+version=3.3.1
+changelog=3.3.1 - The sign-up link in the Why FlyPath.io? message is now easy to read on dark themes.
+    3.3.0 - My missions groups website missions by project, with standalone missions in
     their own group. Split missions show the website's short names, with full names on hover. Save
     as new lets you choose a project or keep the mission standalone.
     3.2.0 - A redesigned, narrower panel: about half the previous width, with sections in
