@@ -30,6 +30,7 @@ def main():
         'test_planning_dialog.py',
         'test_website_import_validation.py',
         'test_flypath_linked_save.py',
+        'test_flypath_library.py',
         'test_map_overlays.py',
         'test_preview_layers.py',
         'test_website_settings.py',
