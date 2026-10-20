@@ -18,6 +18,7 @@ try:
     _AlignTopLeft = Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
     _ActionRole = QMessageBox.ButtonRole.ActionRole
     _Cancel = QMessageBox.StandardButton.Cancel
+    _Information = QMessageBox.Icon.Information
     _Descending = Qt.SortOrder.DescendingOrder
     _Save = QDialogButtonBox.StandardButton.Save
     _DialogCancel = QDialogButtonBox.StandardButton.Cancel
@@ -29,6 +30,7 @@ except AttributeError:
     _AlignTopLeft = getattr(Qt, 'AlignTop') | getattr(Qt, 'AlignLeft')
     _ActionRole = getattr(QMessageBox, 'ActionRole')
     _Cancel = getattr(QMessageBox, 'Cancel')
+    _Information = getattr(QMessageBox, 'Information')
     _Descending = getattr(Qt, 'DescendingOrder')
     _Save = getattr(QDialogButtonBox, 'Save')
     _DialogCancel = getattr(QDialogButtonBox, 'Cancel')
@@ -249,10 +251,17 @@ class MissionLibrary(QWidget):
         """Why there is a website as well as this plugin."""
         rows = ''.join('<tr><td style="padding-right:10px;"><b>%s</b></td><td>%s</td></tr>'
                        % (name, line) for name, line in _WHY)
-        QMessageBox.information(
-            self, 'Why FlyPath.io?',
-            '<table cellspacing="3">%s</table><p>Free account: '
-            '<a href="%s">flypath.io/register</a></p>' % (rows, SIGNUP_URL))
+        box = QMessageBox(self)
+        box.setIcon(_Information)
+        box.setWindowTitle('Why FlyPath.io?')
+        # Qt's default dark blue link is hard to read on a dark theme: pick a
+        # blue that suits the box's own background.
+        box.ensurePolished()
+        dark = box.palette().window().color().lightness() < 128
+        box.setText('<table cellspacing="3">%s</table><p>Free account: '
+                    '<a href="%s" style="color:%s;">flypath.io/register</a></p>'
+                    % (rows, SIGNUP_URL, '#7FB3E8' if dark else '#1F5FA8'))
+        box.exec()
 
     def update_buttons(self):
         storage_error = None
