@@ -10,6 +10,8 @@ Define your survey area directly on the map, configure flight parameters, previe
 
 Developed and maintained by [Dronnix](https://www.dronnix.com), a drone mapping and geospatial AI company.
 
+Follow FlyPath updates on X: [@SalarDrones](https://x.com/SalarDrones)
+
 ---
 
 ## Screenshots
