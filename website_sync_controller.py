@@ -285,6 +285,10 @@ class WebsiteSyncLifecycleMixin:
         kind = self._mission_kind()
         corridor = kind == 'corridor'
         orbit = kind == 'orbit'
+        if kind == 'oblique':
+            raise FlypathSyncError(
+                'flypath.io cannot store Oblique Mapping missions yet. Export the '
+                'mission as KMZ files or send it to the DJI RC instead.')
         drone = registry.get(self.droneModelCombo.currentText())
         if not drone.website_code:
             raise FlypathSyncError(

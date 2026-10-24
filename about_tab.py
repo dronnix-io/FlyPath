@@ -35,6 +35,8 @@ AVAILABLE = (
     'optional cross-hatch.',
     '<b>Corridor Mapping</b>: parallel passes along a centre line, for roads, '
     'pipelines and rivers.',
+    '<b>Oblique Mapping</b>: a survey area photographed from four sides with a '
+    'tilted camera, for 3D models.',
     '<b>Orbit (3D Model)</b>: up to 3 rings around an object, each with its own '
     'radius, altitude and camera tilt.',
     'Semi- or full-automatic capture, and a curved or straight flight path.',
@@ -48,7 +50,6 @@ AVAILABLE = (
 
 COMING = (
     '<b>Panoramic missions</b>.',
-    '<b>Oblique mapping</b>: grids flown with a tilted camera.',
     '<b>Cloud 2D maps and 3D models</b> on FlyPath.io, for the missions you have flown.',
     '<b>Enterprise drone support</b>.',
     '<b>Large survey area splitting</b>.',
