@@ -7,6 +7,8 @@ import subprocess  # nosec B404
 import sys
 import tempfile
 
+from pyproj import Geod
+
 from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QGroupBox, QScrollArea, QFrame,
@@ -132,6 +134,10 @@ from .website_sync_controller import WebsiteSyncLifecycleMixin
 from .orbit_controller import ORBIT_LABEL, OrbitMixin
 
 OBLIQUE_LABEL = 'Oblique Mapping'
+_GEOD = Geod(ellps='WGS84')
+# Semi-automatic oblique terrain follow sets a height at least this often
+# along each flight line.
+OBLIQUE_TERRAIN_SPACING_M = 25.0
 _COMPASS = ('N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW')
 _OBLIQUE_PASS_NAMES = {'nadir': 'Nadir', 'grid': 'Grid', 'cross_grid': 'Cross grid'}
 
@@ -1029,6 +1035,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._preview_ground     = []
         self._split_choice_required = False
         self._terrain_failed     = False
+        self._oblique_heights    = None   # per-flight terrain heights (oblique)
         self._loading_mission    = False
         self._split_overridden   = False  # user typed a split count; stop auto-tracking
         self._setting_split      = False  # guard: programmatic splitSpin.setValue()
@@ -2720,11 +2727,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'are listed.')
 
         # Orbit swaps the survey area for a centre point and its own controls.
+        # 2D terrain follow re-plans outside the engine, which cannot reverse
+        # it; oblique terrain heights are set on the engine route, so it can.
+        if mapping_2d and self.terrainFollowCheck.isChecked():
+            self.reverseRouteCheck.setChecked(False)
+        self.reverseRouteCheck.setEnabled(oblique or not self.terrainFollowCheck.isChecked())
         self._apply_orbit_layout(kind == 'orbit')
-        # Oblique passes hold a fixed height; terrain follow stays 2D/corridor.
-        if oblique:
-            self.terrainFollowCheck.setChecked(False)
-            self.terrainFollowCheck.setVisible(False)
         self._place_safety_group()
 
     # ── Corridor mission breaks (manual line grouping) ────────────────────
@@ -2759,7 +2767,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         # The terrain tolerance only densifies in semi-automatic (full already has
         # a waypoint per photo); show it when terrain follow is on in semi mode.
         self._set_row_visible(self._route_form, self.terrainToleranceSpin,
-                              self.terrainFollowCheck.isChecked() and not full)
+                              self.terrainFollowCheck.isChecked() and not full
+                              and self._mission_kind() != 'oblique')
         # The DEM feeds both terrain follow and the takeoff zone, so it stays
         # available even when terrain follow is off.
         self._set_row_visible(self._area_form, self.demCombo, True)
@@ -2771,10 +2780,11 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
     # ── Terrain follow ────────────────────────────────────────────────────
 
     def _on_terrain_toggled(self):
-        if self.terrainFollowCheck.isChecked():
+        oblique = self._mission_kind() == 'oblique'
+        if self.terrainFollowCheck.isChecked() and not oblique:
             self.reverseRouteCheck.setChecked(False)
         self.reverseRouteCheck.setEnabled(
-            not self.terrainFollowCheck.isChecked())
+            oblique or not self.terrainFollowCheck.isChecked())
         # Retry a fresh network the next time it is turned on, and re-apply.
         self._terrain.clear()
         self._terrain_warned = False
@@ -2809,6 +2819,66 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                     'is blocked until terrain data is available. Check your '
                     'connection and toggle Terrain Follow again to retry.')
             return waypoints, None
+
+    def _oblique_terrain_heights(self, result):
+        """With terrain follow on, each oblique flight's waypoint heights above
+        its takeoff point, or None when off or not oblique.
+
+        A tilted camera looks at ground ahead of the drone, offset by the pass
+        offset along the way it faces: the held heading of a Full pass, or the
+        way the drone flies on a Fast pass. Each waypoint keeps the altitude
+        above the higher of that ground and the ground below the drone, so the
+        photo distance follows the terrain without the drone getting low over
+        rising ground. A nadir pass looks straight down. Takeoff is at each
+        flight's first waypoint, or the mission's first with Same takeoff for
+        all splits, as in 2D Mapping. On an elevation failure the heights are
+        dropped, export is blocked, and the pilot is warned once."""
+        if (result.get('operation') != 'plan_oblique'
+                or not self.terrainFollowCheck.isChecked()):
+            self._terrain_failed = False
+            return None
+        rows = result['route']['waypoints']
+        passes = result['oblique']['passes']
+        offset = result['oblique']['offset_m']
+        points = [(row['position']['longitude_deg'], row['position']['latitude_deg']) for row in rows]
+        try:
+            below = sample_elevations(points, self._terrain.sample)
+            ground = []
+            for index, row in enumerate(rows):
+                survey_pass = passes[row['pass_index']]
+                bearing = survey_pass['heading_deg']
+                if survey_pass['kind'] == 'nadir':
+                    ground.append(below[index])
+                    continue
+                if bearing is None:
+                    # Fast passes face the way they fly: towards the next
+                    # waypoint of the pass, or on from the previous one.
+                    following = index + 1 if (index + 1 < len(rows)
+                                              and rows[index + 1]['pass_index'] == row['pass_index']) else None
+                    start, end = ((points[index], points[following]) if following is not None
+                                  else (points[index - 1], points[index]))
+                    bearing = _GEOD.inv(start[0], start[1], end[0], end[1])[0]
+                lon, lat, _back = _GEOD.fwd(points[index][0], points[index][1], bearing, offset)
+                ground.append(max(below[index], self._terrain.sample(lon, lat)))
+            self._terrain_failed = False
+        except _TerrainError as exc:
+            self._terrain_failed = True
+            if not self._terrain_warned:
+                self._terrain_warned = True
+                QMessageBox.warning(
+                    self, 'Terrain data unavailable',
+                    f'{exc}\n\nThe flat route can still be previewed, but export '
+                    'is blocked until terrain data is available. Check your '
+                    'connection and toggle Terrain Follow again to retry.')
+            return None
+        altitude = self.altitudeSpin.value()
+        shared = below[0] if self.sameTakeoffCheck.isChecked() else None
+        heights = []
+        for flight in result['flights']:
+            start, end = flight['route_start_waypoint_index'], flight['route_end_waypoint_index']
+            base = shared if shared is not None else below[start]
+            heights.append(heights_above_takeoff(ground[start:end + 1], altitude, base=base))
+        return heights
 
     def _set_destination_rc_enabled(self, enabled):
         """Enable/disable the 'Send to DJI RC' destination item (kept visible,
@@ -3360,6 +3430,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                 gimbal_pitch_deg=self.obliquePitchSpin.value(),
                 include_nadir=self.obliqueNadirCheck.isChecked(),
                 pattern='fast' if self.obliqueFastRadio.isChecked() else 'full',
+                densify_m=(OBLIQUE_TERRAIN_SPACING_M
+                           if self.terrainFollowCheck.isChecked() and self._mission_type() != 'full'
+                           else None),
                 **self._grid_controls(drone))
         return planning_adapter.build_request(**self._grid_controls(drone))
 
@@ -3434,12 +3507,15 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             request = self._planning_request_from_ui()
             result = planning_adapter.plan(request)
             self._apply_planning_result(request, result)
+            self._oblique_heights = (self._oblique_terrain_heights(result)
+                                     if self._mission_kind() == 'oblique' else None)
             if (self._mission_kind() == 'orbit'
                     and not result['validation']['export_allowed']):
                 self._set_info(result['validation']['errors'][0]['message'])
             return result
         except (ValueError, planning_adapter.PlanningError) as exc:
             self._planning.plan_failed()
+            self._oblique_heights = None
             self._waypoints = []
             self._missions = []
             self._shot_spacing_m = 0.0
@@ -4262,6 +4338,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         if self._mission_kind() in ('orbit', 'oblique') and flight is not None:
             headings, heights, pitches = (
                 flight['headings'], flight['heights'], flight['gimbal_pitches'])
+            terrain = getattr(self, '_oblique_heights', None)
+            if self._mission_kind() == 'oblique' and terrain:
+                heights = terrain[flight['flight']['index']]
         elif orbit and self._planning.result:
             rows = self._planning.result['route']['waypoints']
             headings = [row['heading_deg'] for row in rows]

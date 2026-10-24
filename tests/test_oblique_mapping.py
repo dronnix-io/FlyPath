@@ -64,14 +64,13 @@ def _test_oblique_mapping():
         planner.droneModelCombo.setCurrentText('DJI Mini 4 Pro')
         planner.missionTypeCombo.setCurrentText('Oblique Mapping')
         assert planner._mission_kind() == 'oblique'
-        # The 2D grid controls plus the camera angle and nadir pass; no
-        # terrain follow, cross-hatch or reverse route.
+        # The 2D grid controls plus the pattern, camera angle and nadir pass;
+        # reverse route and terrain follow apply, cross-hatch does not.
         for widget in (planner._obliquePatternRow, planner.obliquePitchSpin,
                        planner.obliqueNadirCheck, planner._dirRow, planner.marginSpin,
-                       planner.reverseRouteCheck):
+                       planner.reverseRouteCheck, planner.terrainFollowCheck):
             assert widget.isVisibleTo(planner), widget
-        for widget in (planner.terrainFollowCheck, planner.crossHatchCheck,
-                       planner.bufferSpin):
+        for widget in (planner.crossHatchCheck, planner.bufferSpin):
             assert not widget.isVisibleTo(planner), widget
         assert planner.obliquePitchSpin.value() == -45
         assert planner.obliqueFastRadio.isChecked()
@@ -194,3 +193,110 @@ def _test_oblique_mapping():
         planner.close()
         canvas.close()
         app.processEvents()
+
+
+class _Slope:
+    """Ground that rises 20 m for every 0.001 degrees of latitude northwards."""
+
+    def sample(self, lon, lat):
+        return 1000.0 + (lat - 51.05) * 20000.0
+
+    def clear(self):
+        pass
+
+
+def test_oblique_terrain_follow_uses_the_higher_ground():
+    try:
+        importlib.import_module('qgis.PyQt.QtCore')
+    except ImportError as exc:
+        raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
+    with _KeepUserSettings():
+        _test_oblique_terrain_follow()
+
+
+def _test_oblique_terrain_follow():
+    try:
+        from pyproj import Geod
+        from qgis.core import QgsApplication, QgsCoordinateReferenceSystem, QgsGeometry
+        from qgis.gui import QgsMapCanvas
+        package = Path(__file__).resolve().parents[1].name
+        dialog = importlib.import_module(package + '.flypath_dialog')
+    except ImportError as exc:
+        raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
+    geod = Geod(ellps='WGS84')
+    slope = _Slope()
+    app = QgsApplication.instance() or QgsApplication([], False)
+    app.initQgis()
+    canvas = QgsMapCanvas()
+    planner = dialog.FlyPathDialog(SimpleNamespace(mapCanvas=lambda: canvas))
+    try:
+        planner.show()
+        app.processEvents()
+        planner.droneModelCombo.setCurrentText('DJI Mini 4 Pro')
+        planner.missionTypeCombo.setCurrentText('Oblique Mapping')
+        planner.captureFullRadio.setChecked(True)
+        planner.obliqueFullRadio.setChecked(True)
+        planner.altitudeSpin.setValue(60)
+        planner.sameTakeoffCheck.setChecked(False)
+        planner._terrain = slope
+        planner._set_survey_polygon(QgsGeometry.fromWkt(AREA_WKT),
+                                    QgsCoordinateReferenceSystem('EPSG:4326'))
+        planner.reverseRouteCheck.setChecked(True)
+        planner.terrainFollowCheck.setChecked(True)
+        # Terrain follow is offered for oblique and keeps Reverse route.
+        assert planner.terrainFollowCheck.isVisibleTo(planner)
+        assert planner.reverseRouteCheck.isChecked() and planner.reverseRouteCheck.isEnabled()
+        assert not planner.terrainToleranceSpin.isVisibleTo(planner)
+        planner._on_preview()
+        result = planner._planning.result
+        assert 'densify_m' not in planner._planning.request        # full auto
+        rows = result['route']['waypoints']
+        passes = result['oblique']['passes']
+        offset = result['oblique']['offset_m']
+        heights = planner._oblique_heights
+        assert len(heights) == len(result['flights'])
+        for flight, flight_heights in zip(result['flights'], heights):
+            start, end = flight['route_start_waypoint_index'], flight['route_end_waypoint_index']
+            base = slope.sample(rows[start]['position']['longitude_deg'], rows[start]['position']['latitude_deg'])
+            for row, height in zip(rows[start:end + 1], flight_heights):
+                lon, lat = row['position']['longitude_deg'], row['position']['latitude_deg']
+                survey_pass = passes[row['pass_index']]
+                ground = slope.sample(lon, lat)
+                if survey_pass['kind'] != 'nadir':
+                    target = geod.fwd(lon, lat, survey_pass['heading_deg'], offset)
+                    ground = max(ground, slope.sample(target[0], target[1]))
+                assert height == round(60 + ground - base, 1)
+        # The north-facing pass looks up the slope, so it flies higher than the
+        # ground below it alone would ask for.
+        north = next(index for index, p in enumerate(passes)
+                     if p['heading_deg'] is not None and abs(p['heading_deg']) < 45)
+        flight = next(index for index, f in enumerate(result['flights'])
+                      if rows[f['route_start_waypoint_index']]['pass_index'] == north)
+        first = rows[result['flights'][flight]['route_start_waypoint_index']]['position']
+        assert heights[flight][0] > 60 + 20000.0 * offset / 111_200 - 1
+
+        # The exported flight carries those heights.
+        settings = planner._export_settings(planning_consumed(planner, flight))
+        assert settings.heights == tuple(heights[flight])
+        assert first
+
+        # Semi-automatic adds a waypoint every 25 m so heights follow the ground.
+        planner.captureSemiRadio.setChecked(True)
+        planner._on_preview()
+        assert planner._planning.request['densify_m'] == dialog.OBLIQUE_TERRAIN_SPACING_M
+        assert len(planner._oblique_heights) == len(planner._planning.result['flights'])
+
+        # Off again, no terrain heights.
+        planner.terrainFollowCheck.setChecked(False)
+        assert planner._oblique_heights is None
+        assert 'densify_m' not in planner._planning.request
+    finally:
+        planner.close()
+        canvas.close()
+        app.processEvents()
+
+
+def planning_consumed(planner, index):
+    package = Path(__file__).resolve().parents[1].name
+    adapter = importlib.import_module(package + '.planning_adapter')
+    return adapter.consume_result(planner._planning.request, planner._planning.result)[index]
