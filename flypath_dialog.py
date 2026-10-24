@@ -373,7 +373,7 @@ QLabel { background-color: transparent; }
 /* Field labels ("Altitude", "Drone", ...) in a clear sky blue, bold (the
    same weight on Qt 5 and Qt 6), so they read sharply and apart from the
    white values beside them. */
-QLabel#formLabel, QLabel#inlineFormLabel { color: #9CC4F2; font-weight: bold; }
+QLabel#formLabel, QLabel#inlineFormLabel { color: #9CC4F2; font-weight: normal; }
 QGroupBox {
     background-color: #202430;
     border: 1px solid #454A57;
