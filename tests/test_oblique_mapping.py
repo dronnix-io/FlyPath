@@ -66,14 +66,16 @@ def _test_oblique_mapping():
         assert planner._mission_kind() == 'oblique'
         # The 2D grid controls plus the camera angle and nadir pass; no
         # terrain follow, cross-hatch or reverse route.
-        for widget in (planner.obliquePitchSpin, planner.obliqueNadirCheck,
-                       planner._dirRow, planner.marginSpin):
+        for widget in (planner._obliquePatternRow, planner.obliquePitchSpin,
+                       planner.obliqueNadirCheck, planner._dirRow, planner.marginSpin):
             assert widget.isVisibleTo(planner), widget
         for widget in (planner.terrainFollowCheck, planner.crossHatchCheck,
                        planner.reverseRouteCheck, planner.bufferSpin):
             assert not widget.isVisibleTo(planner), widget
         assert planner.obliquePitchSpin.value() == -45
+        assert planner.obliqueFastRadio.isChecked()
 
+        planner.obliqueFullRadio.setChecked(True)
         planner.captureFullRadio.setChecked(True)
         planner.altitudeSpin.setValue(60)
         planner.obliquePitchSpin.setValue(-55)
@@ -83,6 +85,7 @@ def _test_oblique_mapping():
         request, result = planner._planning.request, planner._planning.result
         assert request['operation'] == 'plan_oblique'
         assert request['gimbal_pitch_deg'] == -55 and request['include_nadir'] is True
+        assert request['pattern'] == 'full'
         assert result['validation']['export_allowed'], result['validation']
         passes = result['oblique']['passes']
         assert [p['kind'] for p in passes] == ['nadir', 'forward', 'right', 'back', 'left']
@@ -136,10 +139,37 @@ def _test_oblique_mapping():
         else:
             raise AssertionError('An oblique mission was sent to flypath.io')
 
+        # Fast flies the nadir pass and two crossing grids facing along their
+        # lines, exported without a held heading.
+        planner.obliqueFastRadio.setChecked(True)
+        result = planner._planning.result
+        passes = result['oblique']['passes']
+        assert [p['kind'] for p in passes] == ['nadir', 'grid', 'cross_grid']
+        labels = [planner.splitPartCombo.itemText(i) for i in range(planner.splitPartCombo.count())]
+        assert any(label.endswith('(Grid)') for label in labels)
+        assert any(label.endswith('(Cross grid)') for label in labels)
+        folder = tempfile.mkdtemp()
+        planner.localFolderEdit.setText(folder)
+        path = str(Path(folder) / 'fast.kmz')
+        with patch.object(dialog.QFileDialog, 'getSaveFileName', return_value=(path, '')),                 patch.object(dialog.QMessageBox, 'information', return_value=dialog._MB_NO),                 patch.object(dialog.QMessageBox, 'warning') as warning,                 patch.object(dialog.QMessageBox, 'critical') as critical:
+            planner._on_export()
+        assert not warning.called and not critical.called
+        files = sorted(Path(folder).glob('*.kmz'))
+        assert len(files) == len(result['flights'])
+        rows = result['route']['waypoints']
+        for kmz, flight in zip(files, result['flights']):
+            with zipfile.ZipFile(kmz) as archive:
+                wpml = archive.read('wpmz/waylines.wpml').decode('utf-8')
+            survey_pass = passes[rows[flight['route_start_waypoint_index']]['pass_index']]
+            assert set(_values(wpml, 'waypointHeadingMode')) == {'followWayline'}
+            pitches = {float(value) for value in _values(wpml, 'waypointGimbalPitchAngle')}
+            assert pitches == {float(survey_pass['gimbal_pitch_deg'])}
+        assert {p['gimbal_pitch_deg'] for p in passes[1:]} == {-55}
+
         # Changing the nadir pass or the camera angle re-plans at once.
         planner.obliqueNadirCheck.setChecked(False)
         assert [p['kind'] for p in planner._planning.result['oblique']['passes']] == [
-            'forward', 'right', 'back', 'left']
+            'grid', 'cross_grid']
         planner.obliquePitchSpin.setValue(-40)
         assert planner._planning.result['oblique']['gimbal_pitch_deg'] == -40
 

@@ -133,6 +133,7 @@ from .orbit_controller import ORBIT_LABEL, OrbitMixin
 
 OBLIQUE_LABEL = 'Oblique Mapping'
 _COMPASS = ('N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW')
+_OBLIQUE_PASS_NAMES = {'nadir': 'Nadir', 'grid': 'Grid', 'cross_grid': 'Cross grid'}
 
 
 def _format_duration(seconds):
@@ -505,6 +506,10 @@ QGroupBox#missionGroup QPushButton[segment]:checked {
 QGroupBox#areaGroup QPushButton[segment]:checked {
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #95E2B0, stop:1 #7FD69C);
     color: #0F1A2A;
+}
+QGroupBox#flightGroup QPushButton[segment]:checked {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #F5C47A, stop:1 #F0B45A);
+    color: #1A1405;
 }
 QPushButton#exportBtn {
     background-color: #F0A500; color: #1A1A1A; font-size: 12px;
@@ -1546,8 +1551,30 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Typically 0–50 m depending on altitude and terrain.')
         form.addRow('Margin', self.marginSpin)
 
-        # Oblique Mapping only: the camera angle of the four oblique passes, and
-        # an optional nadir pass flown first, like 2D Mapping.
+        # Oblique Mapping only: the pass pattern, the camera angle of the
+        # oblique passes, and an optional nadir pass flown first, like 2D Mapping.
+        self.obliqueFastRadio = _SegmentButton('Fast')
+        self.obliqueFullRadio = _SegmentButton('Full')
+        self.obliqueFastRadio.setChecked(True)
+        self._obliquePatternGroup = QButtonGroup(self)
+        self._obliquePatternGroup.addButton(self.obliqueFastRadio)
+        self._obliquePatternGroup.addButton(self.obliqueFullRadio)
+        self._tip(self.obliqueFastRadio,
+            'Fast: two crossing grids with the tilted camera facing along each '
+            'line, so neighbouring lines photograph opposite sides. About half '
+            'the flight time of Full, and the drone always flies forwards.')
+        self._tip(self.obliqueFullRadio,
+            'Full: four passes, each with the camera facing one side (like DJI '
+            "Pilot 2's oblique routes). More photos from every side for the best "
+            '3D models; the drone holds its heading, so it flies some lines '
+            'sideways or backwards.')
+        self._obliquePatternRow = QWidget()
+        pattern_layout = QHBoxLayout(self._obliquePatternRow)
+        pattern_layout.setContentsMargins(0, 0, 0, 0)
+        pattern_layout.addWidget(_segmented(self.obliqueFastRadio, self.obliqueFullRadio))
+        pattern_layout.addStretch()
+        form.addRow('Pattern', self._obliquePatternRow)
+
         self.obliquePitchSpin = QSpinBox()
         self.obliquePitchSpin.setRange(-85, -20)
         self.obliquePitchSpin.setValue(-45)
@@ -1565,7 +1592,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'oblique passes. It adds a sharp top view and roughly a fifth more '
             'flight time.')
         form.addRow('Nadir Pass', self.obliqueNadirCheck)
-        for widget in (self.obliquePitchSpin, self.obliqueNadirCheck):
+        for widget in (self._obliquePatternRow, self.obliquePitchSpin, self.obliqueNadirCheck):
             self._set_row_visible(form, widget, False)
 
         # Corridor Mapping only: half-width covered each side of the centre line.
@@ -2486,6 +2513,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.bufferSpin.valueChanged.connect(self._on_param_changed)
         self.obliquePitchSpin.valueChanged.connect(self._on_param_changed)
         self.obliqueNadirCheck.toggled.connect(self._on_param_changed)
+        self.obliqueFastRadio.toggled.connect(self._on_param_changed)
         self.setBreaksBtn.toggled.connect(self._on_set_breaks_toggled)
         self.crossHatchCheck.toggled.connect(self._on_param_changed)
         self.reverseRouteCheck.toggled.connect(self._on_param_changed)
@@ -2654,6 +2682,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._set_row_visible(self._flight_form, self._dirRow, grid)
         self._set_row_visible(self._flight_form, self.marginSpin, grid)
         self._set_row_visible(self._flight_form, self.bufferSpin, corridor)
+        self._set_row_visible(self._flight_form, self._obliquePatternRow, oblique)
         self._set_row_visible(self._flight_form, self.obliquePitchSpin, oblique)
         self._set_row_visible(self._flight_form, self.obliqueNadirCheck, oblique)
 
@@ -3331,6 +3360,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             return planning_adapter.build_oblique_request(
                 gimbal_pitch_deg=self.obliquePitchSpin.value(),
                 include_nadir=self.obliqueNadirCheck.isChecked(),
+                pattern='fast' if self.obliqueFastRadio.isChecked() else 'full',
                 **self._grid_controls(drone))
         return planning_adapter.build_request(**self._grid_controls(drone))
 
@@ -3467,8 +3497,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._update_export_button()
 
     def _oblique_flight_passes(self, count):
-        """For an oblique plan, each flight's pass: 'Nadir' or the compass way
-        its camera faces, e.g. 'Facing NE'. None for other missions."""
+        """For an oblique plan, each flight's pass: 'Nadir', 'Grid' or 'Cross
+        grid', or the compass way its camera faces, e.g. 'Facing NE'. None for
+        other missions."""
         result = self._planning.result
         if not result or result.get('operation') != 'plan_oblique':
             return None
@@ -3478,7 +3509,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         for flight in result['flights']:
             survey_pass = passes[rows[flight['route_start_waypoint_index']]['pass_index']]
             heading = survey_pass['heading_deg']
-            names.append('Nadir' if heading is None else 'Facing %s' % _COMPASS[
+            names.append(_OBLIQUE_PASS_NAMES.get(survey_pass['kind']) or 'Facing %s' % _COMPASS[
                 round((heading % 360) / 45) % 8])
         return names if len(names) == count else None
 

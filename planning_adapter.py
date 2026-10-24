@@ -120,13 +120,14 @@ def build_orbit_request(*, centre, drone_profile_id, clockwise, speed_m_s, captu
     }
 
 
-def build_oblique_request(*, gimbal_pitch_deg, include_nadir, **controls):
+def build_oblique_request(*, gimbal_pitch_deg, include_nadir, pattern='fast', **controls):
     """Translate the oblique controls into one engine request.
 
     The survey, overlap, direction, capture, path and split controls are the 2D
-    ones; the camera pitch and the optional nadir pass are oblique's own. The
-    engine flies four oblique passes, one facing each side, plus the nadir pass
-    when included. Cross-hatch, reverse route and per-flight locations do not
+    ones; the pattern, camera pitch and optional nadir pass are oblique's own.
+    'full' flies four oblique passes, one facing each side; 'fast' flies two
+    crossing grids facing along their lines. The nadir pass comes first when
+    included. Cross-hatch, reverse route and per-flight locations do not
     apply."""
     request = build_request(**controls)
     for key in ('cross_hatch', 'reverse_route'):
@@ -135,7 +136,8 @@ def build_oblique_request(*, gimbal_pitch_deg, include_nadir, **controls):
     if isinstance(locations, dict) and 'per_flight' in locations:
         request.pop('locations')
     request.update(operation='plan_oblique', mapping_style='oblique',
-                   gimbal_pitch_deg=gimbal_pitch_deg, include_nadir=bool(include_nadir))
+                   gimbal_pitch_deg=gimbal_pitch_deg, include_nadir=bool(include_nadir),
+                   pattern=pattern)
     return request
 
 
