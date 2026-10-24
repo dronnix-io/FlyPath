@@ -195,6 +195,16 @@ def _test_oblique_mapping():
         app.processEvents()
 
 
+class _Flat:
+    """Level ground at 1,000 m."""
+
+    def sample(self, lon, lat):
+        return 1000.0
+
+    def clear(self):
+        pass
+
+
 class _Slope:
     """Ground that rises 20 m for every 0.001 degrees of latitude northwards."""
 
@@ -249,16 +259,17 @@ def _test_oblique_terrain_follow():
         assert not planner.terrainToleranceSpin.isVisibleTo(planner)
         planner._on_preview()
         result = planner._planning.result
-        assert 'densify_m' not in planner._planning.request        # full auto
         rows = result['route']['waypoints']
         passes = result['oblique']['passes']
         offset = result['oblique']['offset_m']
-        heights = planner._oblique_heights
-        assert len(heights) == len(result['flights'])
-        for flight, flight_heights in zip(result['flights'], heights):
+        terrain = planner._oblique_terrain
+        assert len(terrain) == len(result['flights'])
+        for flight, plan in zip(result['flights'], terrain):
             start, end = flight['route_start_waypoint_index'], flight['route_end_waypoint_index']
+            # Full automatic keeps the photo waypoints and sets their heights.
+            assert len(plan['waypoints']) == len(plan['heights']) == end - start + 1
             base = slope.sample(rows[start]['position']['longitude_deg'], rows[start]['position']['latitude_deg'])
-            for row, height in zip(rows[start:end + 1], flight_heights):
+            for row, height in zip(rows[start:end + 1], plan['heights']):
                 lon, lat = row['position']['longitude_deg'], row['position']['latitude_deg']
                 survey_pass = passes[row['pass_index']]
                 ground = slope.sample(lon, lat)
@@ -272,24 +283,40 @@ def _test_oblique_terrain_follow():
                      if p['heading_deg'] is not None and abs(p['heading_deg']) < 45)
         flight = next(index for index, f in enumerate(result['flights'])
                       if rows[f['route_start_waypoint_index']]['pass_index'] == north)
-        first = rows[result['flights'][flight]['route_start_waypoint_index']]['position']
-        assert heights[flight][0] > 60 + 20000.0 * offset / 111_200 - 1
-
+        assert terrain[flight]['heights'][0] > 60 + 20000.0 * offset / 111_200 - 1
         # The exported flight carries those heights.
         settings = planner._export_settings(planning_consumed(planner, flight))
-        assert settings.heights == tuple(heights[flight])
-        assert first
+        assert settings.heights == tuple(terrain[flight]['heights'])
 
-        # Semi-automatic adds a waypoint every 25 m so heights follow the ground.
+        # Semi-automatic works like 2D Mapping: waypoints are added along a leg
+        # only where the ground changes by more than the terrain tolerance.
         planner.captureSemiRadio.setChecked(True)
+        assert planner.terrainToleranceSpin.isVisibleTo(planner)
         planner._on_preview()
-        assert planner._planning.request['densify_m'] == dialog.OBLIQUE_TERRAIN_SPACING_M
-        assert len(planner._oblique_heights) == len(planner._planning.result['flights'])
-
-        # Off again, no terrain heights.
-        planner.terrainFollowCheck.setChecked(False)
-        assert planner._oblique_heights is None
         assert 'densify_m' not in planner._planning.request
+        result = planner._planning.result
+        terrain = planner._oblique_terrain
+        engine_points = sum(f['waypoint_count'] for f in result['flights'])
+        added = sum(len(plan['waypoints']) for plan in terrain)
+        assert added > engine_points
+        assert all(len(plan['waypoints']) <= planner.maxWaypointsSpin.value() for plan in terrain)
+        # A coarser tolerance adds fewer waypoints; flat ground adds none.
+        planner.terrainToleranceSpin.setValue(20)
+        coarse = sum(len(plan['waypoints']) for plan in planner._oblique_terrain)
+        assert engine_points < coarse < added
+        planner._terrain = _Flat()
+        planner._on_preview()
+        assert sum(len(plan['waypoints']) for plan in planner._oblique_terrain) == sum(
+            f['waypoint_count'] for f in planner._planning.result['flights'])
+        # Each exported flight matches its terrain waypoints, heading and tilt.
+        consumed = planning_consumed(planner, len(result['flights']) - 1)
+        settings = planner._export_settings(consumed)
+        count = len(planner._oblique_terrain[-1]['waypoints'])
+        assert len(settings.heights) == count and len(settings.gimbal_pitches) == count
+
+        # Off again, no terrain waypoints.
+        planner.terrainFollowCheck.setChecked(False)
+        assert planner._oblique_terrain is None
     finally:
         planner.close()
         canvas.close()

@@ -66,7 +66,7 @@ def sample_elevations(waypoints, sample):
 
 def densify_by_terrain(waypoints, sample, tolerance_m,
                        spacing_m=None, max_points=_DEFAULT_MAX_WAYPOINTS,
-                       all_legs=False):
+                       all_legs=False, leg_sample=None):
     """Semi-automatic terrain follow: insert extra waypoints along the flight
     lines wherever the ground elevation has drifted more than `tolerance_m` from
     the last kept waypoint (each kept waypoint becomes the new reference). The
@@ -78,6 +78,9 @@ def densify_by_terrain(waypoints, sample, tolerance_m,
     ground elevation in metres.
     Set `all_legs` for corridor routes, whose curved passes can contain interior
     vertices and therefore do not follow the alternating two-point-line shape.
+    `leg_sample(lon, lat, leg_index)`, when given, replaces `sample` for routes
+    whose ground of interest depends on the leg, such as an oblique camera that
+    looks ahead along the way the drone flies.
 
     Returns (waypoints, elevations) as parallel lists. If densifying would exceed
     `max_points`, the tolerance is doubled repeatedly until the route fits (same
@@ -95,24 +98,27 @@ def densify_by_terrain(waypoints, sample, tolerance_m,
         spacing_m = min(30.0, max(8.0, float(tolerance_m) * 5.0))
     spacing = max(spacing_m, strip_total / max(1, _DENSIFY_MAX_SAMPLES - len(pts)))
 
-    candidates = []                                  # (lon, lat, is_original)
+    candidates = []                                  # (lon, lat, is_original, leg)
     for i, length in enumerate(leg_len):
-        candidates.append((pts[i][0], pts[i][1], True))
+        candidates.append((pts[i][0], pts[i][1], True, i))
         if (all_legs or i % 2 == 0) and length > spacing:
             extra = int(length // spacing)
             for j in range(1, extra + 1):
                 f = j / (extra + 1)
                 candidates.append((pts[i][0] + f * (pts[i + 1][0] - pts[i][0]),
                                    pts[i][1] + f * (pts[i + 1][1] - pts[i][1]),
-                                   False))
-    candidates.append((pts[-1][0], pts[-1][1], True))
-    elevations = [sample(lon, lat) for lon, lat, _ in candidates]
+                                   False, i))
+    candidates.append((pts[-1][0], pts[-1][1], True, len(leg_len) - 1))
+    if leg_sample is None:
+        elevations = [sample(lon, lat) for lon, lat, _, _ in candidates]
+    else:
+        elevations = [leg_sample(lon, lat, leg) for lon, lat, _, leg in candidates]
 
     tolerance = max(0.5, float(tolerance_m))
     for _ in range(6):
         out_pts, out_elevs = [], []
         reference = None
-        for (lon, lat, is_orig), elev in zip(candidates, elevations):
+        for (lon, lat, is_orig, _leg), elev in zip(candidates, elevations):
             if is_orig:
                 out_pts.append((lon, lat))
                 out_elevs.append(elev)
