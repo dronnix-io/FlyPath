@@ -127,11 +127,10 @@ def build_oblique_request(*, gimbal_pitch_deg, include_nadir, pattern='fast', **
     ones; the pattern, camera pitch and optional nadir pass are oblique's own.
     'full' flies four oblique passes, one facing each side; 'fast' flies two
     crossing grids facing along their lines. The nadir pass comes first when
-    included. Cross-hatch, reverse route and per-flight locations do not
-    apply."""
+    included. Reverse route flies each pass from its other end. Cross-hatch
+    and per-flight locations do not apply."""
     request = build_request(**controls)
-    for key in ('cross_hatch', 'reverse_route'):
-        request.pop(key)
+    request.pop('cross_hatch')
     locations = request.get('locations')
     if isinstance(locations, dict) and 'per_flight' in locations:
         request.pop('locations')

@@ -1685,7 +1685,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         route_title = QLabel('ROUTE OPTIONS')
         route_title.setObjectName('subsectionLabel')
         section.addWidget(route_title)
-        self._routeTitle = route_title   # hidden when no route option applies
         form = QFormLayout()
         self._route_form = form       # kept so capability logic can hide rows
         form.setLabelAlignment(_AlignLeft | _AlignVCenter)
@@ -1701,7 +1700,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.reverseRouteCheck = QCheckBox('Reverse route')
         self._tip(self.reverseRouteCheck,
             'Start the mission from the opposite end. Available for 2D '
-            'missions without terrain follow.')
+            'missions without terrain follow, and for Oblique Mapping, where '
+            'each pass starts from its other end.')
         self.terrainFollowCheck = QCheckBox('Terrain follow')
         self._tip(self.terrainFollowCheck,
             'Vary each waypoint height to hold a constant height above ground, '
@@ -2692,7 +2692,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         # The route options share a row, so hide only the 2D-only checkboxes for
         # corridors (terrain follow works with corridors and stays).
         self.crossHatchCheck.setVisible(mapping_2d)
-        self.reverseRouteCheck.setVisible(mapping_2d)
+        self.reverseRouteCheck.setVisible(grid)
         if not mapping_2d:
             self.crossHatchCheck.setChecked(False)
         if corridor:
@@ -2725,7 +2725,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         if oblique:
             self.terrainFollowCheck.setChecked(False)
             self.terrainFollowCheck.setVisible(False)
-        self._routeTitle.setVisible(not oblique)
         self._place_safety_group()
 
     # ── Corridor mission breaks (manual line grouping) ────────────────────

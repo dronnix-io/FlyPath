@@ -67,10 +67,11 @@ def _test_oblique_mapping():
         # The 2D grid controls plus the camera angle and nadir pass; no
         # terrain follow, cross-hatch or reverse route.
         for widget in (planner._obliquePatternRow, planner.obliquePitchSpin,
-                       planner.obliqueNadirCheck, planner._dirRow, planner.marginSpin):
+                       planner.obliqueNadirCheck, planner._dirRow, planner.marginSpin,
+                       planner.reverseRouteCheck):
             assert widget.isVisibleTo(planner), widget
         for widget in (planner.terrainFollowCheck, planner.crossHatchCheck,
-                       planner.reverseRouteCheck, planner.bufferSpin):
+                       planner.bufferSpin):
             assert not widget.isVisibleTo(planner), widget
         assert planner.obliquePitchSpin.value() == -45
         assert planner.obliqueFastRadio.isChecked()
@@ -165,6 +166,17 @@ def _test_oblique_mapping():
             pitches = {float(value) for value in _values(wpml, 'waypointGimbalPitchAngle')}
             assert pitches == {float(survey_pass['gimbal_pitch_deg'])}
         assert {p['gimbal_pitch_deg'] for p in passes[1:]} == {-55}
+
+        # Reverse route flies each pass from its other end.
+        forward_rows = planner._planning.result['route']['waypoints']
+        planner.reverseRouteCheck.setChecked(True)
+        assert planner._planning.request['reverse_route'] is True
+        reverse = planner._planning.result
+        assert reverse['oblique']['reverse_route'] is True
+        for ahead, back in zip(result['oblique']['passes'], reverse['oblique']['passes']):
+            assert (reverse['route']['waypoints'][back['start_waypoint_index']]['position']
+                    == forward_rows[ahead['end_waypoint_index']]['position'])
+        planner.reverseRouteCheck.setChecked(False)
 
         # Changing the nadir pass or the camera angle re-plans at once.
         planner.obliqueNadirCheck.setChecked(False)
