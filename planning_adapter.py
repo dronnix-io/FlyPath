@@ -6,15 +6,17 @@ import re
 from .flypath_engine.planning import (
     CONTRACT_VERSION, DIRECTION_CONVENTION, PlanningError as _PlanningError, plan_2d,
 )
+from .flypath_engine.oblique import plan_oblique
 from .flypath_engine.orbit import plan_orbit
 from .flypath_engine.profiles import PROFILE_VERSION
 
 
 PlanningError = _PlanningError
 # These releases have identical planning behavior; revisit on engine upgrades.
-SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0', '1.3.0')
+SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0')
 ORBIT_MIN_ENGINE_VERSION = (1, 2, 0)   # the first engine release with plan_orbit
 ORBIT_RINGS_MIN_ENGINE_VERSION = (1, 3, 0)
+OBLIQUE_MIN_ENGINE_VERSION = (1, 4, 0)   # the first engine release with plan_oblique
 
 
 def _orbit_capable(version, minimum=ORBIT_MIN_ENGINE_VERSION):
@@ -118,10 +120,32 @@ def build_orbit_request(*, centre, drone_profile_id, clockwise, speed_m_s, captu
     }
 
 
+def build_oblique_request(*, gimbal_pitch_deg, include_nadir, pattern='fast', **controls):
+    """Translate the oblique controls into one engine request.
+
+    The survey, overlap, direction, capture, path and split controls are the 2D
+    ones; the pattern, camera pitch and optional nadir pass are oblique's own.
+    'full' flies four oblique passes, one facing each side; 'fast' flies two
+    crossing grids facing along their lines. The nadir pass comes first when
+    included. Reverse route flies each pass from its other end. Cross-hatch
+    and per-flight locations do not apply."""
+    request = build_request(**controls)
+    request.pop('cross_hatch')
+    locations = request.get('locations')
+    if isinstance(locations, dict) and 'per_flight' in locations:
+        request.pop('locations')
+    request.update(operation='plan_oblique', mapping_style='oblique',
+                   gimbal_pitch_deg=gimbal_pitch_deg, include_nadir=bool(include_nadir),
+                   pattern=pattern)
+    return request
+
+
 def plan(request):
     """Run the bundled engine; consumers validate the returned result once."""
     if request.get('operation') == 'plan_orbit':
         return plan_orbit(request)
+    if request.get('operation') == 'plan_oblique':
+        return plan_oblique(request)
     return plan_2d(request)
 
 
@@ -139,6 +163,10 @@ def consume_result(request, result, *, require_supported=True,
             result.get('operation') != 'plan_orbit'
             or not _orbit_capable(result.get('engine_version'))):
         raise ValueError('This saved orbit engine version is not supported.')
+    oblique = request.get('operation') == 'plan_oblique'
+    if oblique and (result.get('operation') != 'plan_oblique'
+                    or not _orbit_capable(result.get('engine_version'), OBLIQUE_MIN_ENGINE_VERSION)):
+        raise ValueError('This saved oblique engine version is not supported.')
     if any(result.get(key) != request.get(key)
            for key in ('profile_version', 'drone_profile_id')):
         raise ValueError('The saved planning result does not match its request.')
@@ -191,12 +219,14 @@ def consume_result(request, result, *, require_supported=True,
                 for a, b in zip(pair, saved)):
             raise ValueError('The saved route does not match the planning result.')
     # Orbit routes carry a heading per waypoint (facing the centre); 2D does not.
+    # Oblique passes hold one heading each, and its nadir pass has none.
     raw_headings = [row.get('heading_deg') for row in rows]
     headings = None
     if any(value is not None for value in raw_headings):
-        if any(not _finite(value) or not -180 <= value <= 180 for value in raw_headings):
+        if any((value is not None or not oblique)
+               and (not _finite(value) or not -180 <= value <= 180) for value in raw_headings):
             raise ValueError('The saved route headings are invalid.')
-        headings = [float(value) for value in raw_headings]
+        headings = [None if value is None else float(value) for value in raw_headings]
     # Multi-ring orbits also give each waypoint its own altitude.
     raw_altitudes = [row.get('altitude_m') for row in rows]
     altitudes = None
@@ -208,7 +238,8 @@ def consume_result(request, result, *, require_supported=True,
     if not isinstance(flights, list) or not flights:
         raise ValueError('The saved planning result has no flights.')
     # Adjacent flights share their seam waypoint, except orbit flights that
-    # split between rings: the next one starts at its ring's first waypoint.
+    # split between rings and oblique flights between passes: the next one
+    # starts at its ring's or pass's first waypoint.
     orbit = request.get('operation') == 'plan_orbit'
     consumed = []
     previous_end = None
@@ -219,8 +250,9 @@ def consume_result(request, result, *, require_supported=True,
         end = flight.get('route_end_waypoint_index')
         if (type(start) is not int or type(end) is not int or not 0 <= start <= end < len(points)
                 or (previous_end is not None and start != previous_end
-                    and not (orbit and start == previous_end + 1
-                             and 'ring_start' in (rows[start].get('roles') or ())))):
+                    and not (start == previous_end + 1
+                             and ((orbit and 'ring_start' in (rows[start].get('roles') or ()))
+                                  or (oblique and 'pass_start' in (rows[start].get('roles') or ())))))):
             raise ValueError('The saved flight boundaries are invalid.')
         actions = flight.get('actions')
         if not isinstance(actions, list) or any(
@@ -237,14 +269,17 @@ def consume_result(request, result, *, require_supported=True,
                          or not -180 <= action['pitch_deg'] <= 180))
                 for action in actions):
             raise ValueError('The saved flight actions are invalid.')
+        flight_headings = headings[start:end + 1] if headings else None
+        if flight_headings and all(value is None for value in flight_headings):
+            flight_headings = None          # an oblique nadir pass faces along its lines
         consumed.append({
             'waypoints': points[start:end + 1],
             'actions': [{**action, 'waypoint_index': action['waypoint_index'] - start}
                         for action in actions],
-            'headings': headings[start:end + 1] if headings else None,
+            'headings': flight_headings,
             'heights': altitudes[start:end + 1] if altitudes else None,
             'gimbal_pitches': (_pitch_per_waypoint(actions, start, end)
-                               if altitudes else None),
+                               if altitudes or oblique else None),
             'flight': flight,
         })
         previous_end = end
@@ -272,6 +307,8 @@ def validate_mission_provenance(mission):
     settings = mission.get('settings') or {}
     if not isinstance(request, dict):
         raise ValueError('The saved planning request is missing.')
+    if settings.get('mapping_style') == 'oblique':
+        raise ValueError('Oblique missions cannot be loaded from flypath.io yet.')
     if settings.get('mapping_style') == 'orbit':
         if not _orbit_capable(result.get('engine_version')):
             raise ValueError('This saved orbit engine version is not supported.')

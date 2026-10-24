@@ -37,6 +37,7 @@ def main():
         'test_website_map_extent.py',
         'test_orbit_website_sync.py',
         'test_orbit_rings.py',
+        'test_oblique_mapping.py',
     ]
     # Keep the application alive across modules; the vault suite owns its own.
     app = None if args.vault else QgsApplication([], False)
