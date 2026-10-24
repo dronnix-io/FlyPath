@@ -3513,6 +3513,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self._apply_planning_result(request, result)
             self._oblique_terrain = (self._oblique_terrain_flights(result)
                                      if self._mission_kind() == 'oblique' else None)
+            if self._oblique_terrain:
+                # Terrain follow may add waypoints along the legs: preview and
+                # count the waypoints that will be flown.
+                self._missions = [plan['waypoints'] for plan in self._oblique_terrain]
+                self.waypointsLabel.setText(
+                    f"{sum(len(plan['waypoints']) for plan in self._oblique_terrain):,}")
             if (self._mission_kind() == 'orbit'
                     and not result['validation']['export_allowed']):
                 self._set_info(result['validation']['errors'][0]['message'])
@@ -3895,7 +3901,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                 return
             waypoints, shot_spacing_m = result
             if self._uses_shared_planning() and self._planning.result:
-                missions_h = [(part, None, None) for part in self._missions]
+                heights = self._oblique_preview_heights()
+                missions_h = [(part, heights[index] if heights else None, None)
+                              for index, part in enumerate(self._missions)]
             else:
                 missions_h = self._missions_with_heights(
                     waypoints, self._gen_elevations)
@@ -3936,10 +3944,17 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self._shot_spacing_m = max(
                 self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5)
             self._gen_elevations = self._live_elevations
-        heights = None if shared else self._live_heights
+        heights = self._oblique_preview_heights() if shared else self._live_heights
         ground = None if shared else self._live_ground
         self._redraw_preview_layers(missions, heights, ground)
         self._show_corridor_band()   # keep the overlay in sync with the buffer
+
+    def _oblique_preview_heights(self):
+        """Each oblique flight's terrain heights for the preview, or None."""
+        terrain = self._oblique_terrain if self._mission_kind() == 'oblique' else None
+        if not terrain or len(terrain) != len(self._missions):
+            return None
+        return [plan['heights'] for plan in terrain]
 
     def _redraw_preview_layers(self, missions, heights=None, ground=None):
         """Refresh the existing preview layers in place from new missions."""

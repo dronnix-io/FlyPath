@@ -300,6 +300,12 @@ def _test_oblique_terrain_follow():
         added = sum(len(plan['waypoints']) for plan in terrain)
         assert added > engine_points
         assert all(len(plan['waypoints']) <= planner.maxWaypointsSpin.value() for plan in terrain)
+        # The map preview and the waypoint count show the added waypoints.
+        from qgis.core import QgsProject
+        assert planner._missions == [plan['waypoints'] for plan in terrain]
+        assert planner.waypointsLabel.text() == f'{added:,}'
+        layers = [QgsProject.instance().mapLayer(layer_id) for layer_id in planner._preview_layer_ids]
+        assert max(layer.featureCount() for layer in layers if layer is not None) == added
         # A coarser tolerance adds fewer waypoints; flat ground adds none.
         planner.terrainToleranceSpin.setValue(20)
         coarse = sum(len(plan['waypoints']) for plan in planner._oblique_terrain)
