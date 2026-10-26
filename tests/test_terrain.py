@@ -7,6 +7,7 @@ Pure Python, no QGIS or network. Run with pytest, or directly:
 
 import os
 import sys
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -14,6 +15,12 @@ from terrain import (  # noqa: E402
     tile_coords, elevation_from_rgb, sample_elevations,
     densify_by_terrain, heights_above_takeoff,
 )
+
+
+def test_terrain_densification_rejects_a_route_still_over_budget():
+    with pytest.raises(ValueError, match='waypoint limit'):
+        densify_by_terrain([(0, 0), (0.01, 0)], lambda lon, lat: 10000 * lon,
+                           tolerance_m=1, max_points=2, all_legs=True)
 
 
 def test_elevation_decode():

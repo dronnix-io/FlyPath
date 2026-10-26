@@ -6,6 +6,7 @@ import sys
 import tempfile
 import zipfile
 from unittest.mock import patch
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -61,6 +62,67 @@ def test_locations_survive_the_adapter_request():
     planned_request = request(locations=locations)
     assert planned_request['locations'] == locations
     assert planning_adapter.plan(planned_request)['statistics']['estimates_complete']
+
+
+@pytest.mark.parametrize('pattern,nadir', [('fast', True), ('fast', False), ('full', True), ('full', False)])
+@pytest.mark.parametrize('engine_version', ['1.4.0', '1.4.1'])
+def test_oblique_sync_provenance_keeps_passes_and_rejects_changed_settings(pattern, nadir, engine_version):
+    from FlyPath.flypath_sync import validate_mission, FlypathSyncError
+
+    planned = request(capture_mode='semi')
+    planned.pop('cross_hatch')
+    planned.update(operation='plan_oblique', mapping_style='oblique', pattern=pattern,
+                   gimbal_pitch_deg=-45, include_nadir=nadir)
+    result = planning_adapter.plan(planned, engine_version=engine_version)
+    mission = {
+        'drone_model': 'mini3pro',
+        'polygon': [[p['latitude_deg'], p['longitude_deg']] for p in AREA['exterior']],
+        'waypoints': [[w['position']['latitude_deg'], w['position']['longitude_deg']]
+                      for w in result['route']['waypoints']],
+        'settings': {
+            'mapping_style': 'oblique', 'capture_mode': 'semi', 'altitude': 80,
+            'speed': 8, 'side_overlap': 70, 'margin': 0, 'flight_path': 'curved',
+            'finish_action': 'noAction', 'terrain_follow': False, 'cross_hatch': False,
+            'reverse_route': False, 'split_enabled': True, 'split_count': 1,
+            'split_max_wp': 70, 'auto_direction': False, 'direction': 70,
+            'oblique_pattern': pattern, 'oblique_pitch': -45, 'oblique_nadir': nadir,
+        },
+        'planning_request': planned, 'planning_result': result,
+    }
+    validate_mission(mission)
+    saved = deepcopy(mission)
+    supported, flights = planning_adapter.validate_mission_provenance(mission)
+    assert supported and mission == saved
+    assert planning_adapter.needs_geometry_update(result) == (pattern == 'fast' and engine_version == '1.4.0')
+    rows = result['route']['waypoints']
+    for flight in flights:
+        start = flight['flight']['route_start_waypoint_index']
+        end = flight['flight']['route_end_waypoint_index']
+        survey_pass = result['oblique']['passes'][rows[start]['pass_index']]
+        assert rows[start]['pass_index'] == rows[end]['pass_index']
+        assert set(flight['gimbal_pitches']) == {survey_pass['gimbal_pitch_deg']}
+        assert flight['headings'] is None if survey_pass['heading_deg'] is None else (
+            set(flight['headings']) == {survey_pass['heading_deg']})
+    for field, value in [('oblique_pitch', -50), ('oblique_nadir', not nadir),
+                         ('oblique_pattern', 'full' if pattern == 'fast' else 'fast')]:
+        changed = deepcopy(mission)
+        changed['settings'][field] = value
+        with pytest.raises(ValueError):
+            planning_adapter.validate_mission_provenance(changed)
+    changed = deepcopy(mission)
+    changed['planning_result']['route']['waypoints'][0]['heading_deg'] = 90
+    with pytest.raises(ValueError):
+        planning_adapter.validate_mission_provenance(changed)
+    for field, value in [('terrain_follow', True), ('cross_hatch', True),
+                         ('oblique_nadir', 1), ('oblique_pitch', -90)]:
+        changed = deepcopy(mission)
+        changed['settings'][field] = value
+        with pytest.raises(FlypathSyncError):
+            validate_mission(changed)
+    changed = deepcopy(mission)
+    changed.pop('planning_result')
+    with pytest.raises(FlypathSyncError):
+        validate_mission(changed)
 
 
 def test_reverse_route_reverses_engine_waypoints():

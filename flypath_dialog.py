@@ -7,6 +7,8 @@ import subprocess  # nosec B404
 import sys
 import tempfile
 
+from pyproj import Geod
+
 from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QGroupBox, QScrollArea, QFrame,
@@ -130,6 +132,11 @@ from .planning_lifecycle import PlanningLifecycle
 from .survey_controller import SurveyLifecycleMixin
 from .website_sync_controller import WebsiteSyncLifecycleMixin
 from .orbit_controller import ORBIT_LABEL, OrbitMixin
+
+OBLIQUE_LABEL = 'Oblique Mapping'
+_GEOD = Geod(ellps='WGS84')
+_COMPASS = ('N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW')
+_OBLIQUE_PASS_NAMES = {'nadir': 'Nadir', 'grid': 'Grid', 'cross_grid': 'Cross grid'}
 
 
 def _format_duration(seconds):
@@ -369,7 +376,7 @@ QLabel { background-color: transparent; }
 /* Field labels ("Altitude", "Drone", ...) in a clear sky blue, bold (the
    same weight on Qt 5 and Qt 6), so they read sharply and apart from the
    white values beside them. */
-QLabel#formLabel, QLabel#inlineFormLabel { color: #9CC4F2; font-weight: bold; }
+QLabel#formLabel, QLabel#inlineFormLabel { color: #9CC4F2; font-weight: normal; }
 QGroupBox {
     background-color: #202430;
     border: 1px solid #454A57;
@@ -502,6 +509,10 @@ QGroupBox#missionGroup QPushButton[segment]:checked {
 QGroupBox#areaGroup QPushButton[segment]:checked {
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #95E2B0, stop:1 #7FD69C);
     color: #0F1A2A;
+}
+QGroupBox#flightGroup QPushButton[segment]:checked {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #F5C47A, stop:1 #F0B45A);
+    color: #1A1405;
 }
 QPushButton#exportBtn {
     background-color: #F0A500; color: #1A1A1A; font-size: 12px;
@@ -1021,6 +1032,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._preview_ground     = []
         self._split_choice_required = False
         self._terrain_failed     = False
+        self._oblique_terrain    = None   # per-flight terrain waypoints and heights (oblique)
         self._loading_mission    = False
         self._split_overridden   = False  # user typed a split count; stop auto-tracking
         self._setting_split      = False  # guard: programmatic splitSpin.setValue()
@@ -1185,13 +1197,16 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
         self.missionTypeCombo = QComboBox()
         self.missionTypeCombo.addItem('2D Mapping')
+        self.missionTypeCombo.addItem(OBLIQUE_LABEL)
         self.missionTypeCombo.addItem('Corridor Mapping')
         self.missionTypeCombo.addItem(ORBIT_LABEL)
         self._tip(self.missionTypeCombo,
             'The kind of mission to plan. 2D Mapping flies a grid over a survey '
-            'polygon. Corridor Mapping follows a centre line (roads, pipelines, '
-            'rivers) and covers a buffer each side. Orbit (3D Model) circles a '
-            'centre point, facing it with a tilted camera, for 3D models.')
+            'polygon. Oblique Mapping flies that grid with a tilted camera, once '
+            'facing each side, for 3D models of an area. Corridor Mapping follows '
+            'a centre line (roads, pipelines, rivers) and covers a buffer each '
+            'side. Orbit (3D Model) circles a centre point, facing it with a '
+            'tilted camera, for 3D models.')
         form.addRow('Mission Type', self.missionTypeCombo)
 
         # Capture mode for mapping missions: how the camera is triggered.
@@ -1540,6 +1555,50 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Typically 0–50 m depending on altitude and terrain.')
         form.addRow('Margin', self.marginSpin)
 
+        # Oblique Mapping only: the pass pattern, the camera angle of the
+        # oblique passes, and an optional nadir pass flown first, like 2D Mapping.
+        self.obliqueFastRadio = _SegmentButton('Fast')
+        self.obliqueFullRadio = _SegmentButton('Full')
+        self.obliqueFastRadio.setChecked(True)
+        self._obliquePatternGroup = QButtonGroup(self)
+        self._obliquePatternGroup.addButton(self.obliqueFastRadio)
+        self._obliquePatternGroup.addButton(self.obliqueFullRadio)
+        self._tip(self.obliqueFastRadio,
+            'Fast: two crossing grids with the tilted camera facing along each '
+            'line, so neighbouring lines photograph opposite sides. About half '
+            'the flight time of Full, and the drone always flies forwards.')
+        self._tip(self.obliqueFullRadio,
+            'Full: four passes, each with the camera facing one side (like DJI '
+            "Pilot 2's oblique routes). More photos from every side for the best "
+            '3D models; the drone holds its heading, so it flies some lines '
+            'sideways or backwards.')
+        self._obliquePatternRow = QWidget()
+        pattern_layout = QHBoxLayout(self._obliquePatternRow)
+        pattern_layout.setContentsMargins(0, 0, 0, 0)
+        pattern_layout.addWidget(_segmented(self.obliqueFastRadio, self.obliqueFullRadio))
+        pattern_layout.addStretch()
+        form.addRow('Pattern', self._obliquePatternRow)
+
+        self.obliquePitchSpin = QSpinBox()
+        self.obliquePitchSpin.setRange(-85, -20)
+        self.obliquePitchSpin.setValue(-45)
+        self.obliquePitchSpin.setSingleStep(5)
+        self.obliquePitchSpin.setSuffix(' °')
+        self._tip(self.obliquePitchSpin,
+            'Camera angle of the oblique passes. -90° would look straight down; '
+            'angles from -45° to -60° suit 3D models. Each oblique pass is moved '
+            'out from the area so the photo centres still land inside it.')
+        form.addRow('Camera Angle', self.obliquePitchSpin)
+        self.obliqueNadirCheck = QCheckBox('Fly a nadir pass')
+        self.obliqueNadirCheck.setChecked(True)
+        self._tip(self.obliqueNadirCheck,
+            'Fly the area once with the camera straight down before the four '
+            'oblique passes. It adds a sharp top view and roughly a fifth more '
+            'flight time.')
+        form.addRow('Nadir Pass', self.obliqueNadirCheck)
+        for widget in (self._obliquePatternRow, self.obliquePitchSpin, self.obliqueNadirCheck):
+            self._set_row_visible(form, widget, False)
+
         # Corridor Mapping only: half-width covered each side of the centre line.
         # Hidden in 2D Mapping (shown in place of Direction/Margin for corridors).
         self.bufferSpin = QDoubleSpinBox()
@@ -1645,7 +1704,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.reverseRouteCheck = QCheckBox('Reverse route')
         self._tip(self.reverseRouteCheck,
             'Start the mission from the opposite end. Available for 2D '
-            'missions without terrain follow.')
+            'missions without terrain follow, and for Oblique Mapping, where '
+            'each pass starts from its other end.')
         self.terrainFollowCheck = QCheckBox('Terrain follow')
         self._tip(self.terrainFollowCheck,
             'Vary each waypoint height to hold a constant height above ground, '
@@ -2455,6 +2515,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.speedSpin.valueChanged.connect(self._on_param_changed)
         self.directionSpin.valueChanged.connect(self._on_direction_changed)
         self.bufferSpin.valueChanged.connect(self._on_param_changed)
+        self.obliquePitchSpin.valueChanged.connect(self._on_param_changed)
+        self.obliqueNadirCheck.toggled.connect(self._on_param_changed)
+        self.obliqueFastRadio.toggled.connect(self._on_param_changed)
         self.setBreaksBtn.toggled.connect(self._on_set_breaks_toggled)
         self.crossHatchCheck.toggled.connect(self._on_param_changed)
         self.reverseRouteCheck.toggled.connect(self._on_param_changed)
@@ -2497,7 +2560,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self._update_gsd()
             self._update_interval()
             return
-        if self.autoDirectionBtn.isChecked() and self._mission_kind() == '2d':
+        if self.autoDirectionBtn.isChecked() and self._mission_kind() in ('2d', 'oblique'):
             self._on_auto_direction()
         self._update_gsd()
         self._update_interval()
@@ -2575,12 +2638,14 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         return self.pathCurvedRadio.isChecked()
 
     def _mission_kind(self):
-        """'corridor', 'orbit', or '2d' (the default 2D grid)."""
+        """'corridor', 'orbit', 'oblique', or '2d' (the default 2D grid)."""
         text = self.missionTypeCombo.currentText()
         if text == 'Corridor Mapping':
             return 'corridor'
         if text == ORBIT_LABEL:
             return 'orbit'
+        if text == OBLIQUE_LABEL:
+            return 'oblique'
         return '2d'
 
     def _on_mission_type_changed(self):
@@ -2614,11 +2679,16 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         kind = self._mission_kind()
         corridor = kind == 'corridor'
         mapping_2d = kind == '2d'
+        oblique = kind == 'oblique'
+        grid = mapping_2d or oblique
 
-        # Flight Parameters: Direction/Margin (2D) vs Buffer (corridor)
-        self._set_row_visible(self._flight_form, self._dirRow, mapping_2d)
-        self._set_row_visible(self._flight_form, self.marginSpin, mapping_2d)
+        # Flight Parameters: Direction/Margin (2D, oblique) vs Buffer (corridor)
+        self._set_row_visible(self._flight_form, self._dirRow, grid)
+        self._set_row_visible(self._flight_form, self.marginSpin, grid)
         self._set_row_visible(self._flight_form, self.bufferSpin, corridor)
+        self._set_row_visible(self._flight_form, self._obliquePatternRow, oblique)
+        self._set_row_visible(self._flight_form, self.obliquePitchSpin, oblique)
+        self._set_row_visible(self._flight_form, self.obliqueNadirCheck, oblique)
 
         # Adv. Mission Organizers: cross-hatch is meaningless for a corridor; the
         # Mission Breaks tool only applies to corridors. Split Missions is a
@@ -2626,7 +2696,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         # The route options share a row, so hide only the 2D-only checkboxes for
         # corridors (terrain follow works with corridors and stays).
         self.crossHatchCheck.setVisible(mapping_2d)
-        self.reverseRouteCheck.setVisible(mapping_2d)
+        self.reverseRouteCheck.setVisible(grid)
         if not mapping_2d:
             self.crossHatchCheck.setChecked(False)
         if corridor:
@@ -2654,6 +2724,11 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'are listed.')
 
         # Orbit swaps the survey area for a centre point and its own controls.
+        # 2D terrain follow re-plans outside the engine, which cannot reverse
+        # it; oblique terrain heights are set on the engine route, so it can.
+        if mapping_2d and self.terrainFollowCheck.isChecked():
+            self.reverseRouteCheck.setChecked(False)
+        self.reverseRouteCheck.setEnabled(oblique or not self.terrainFollowCheck.isChecked())
         self._apply_orbit_layout(kind == 'orbit')
         self._place_safety_group()
 
@@ -2701,10 +2776,11 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
     # ── Terrain follow ────────────────────────────────────────────────────
 
     def _on_terrain_toggled(self):
-        if self.terrainFollowCheck.isChecked():
+        oblique = self._mission_kind() == 'oblique'
+        if self.terrainFollowCheck.isChecked() and not oblique:
             self.reverseRouteCheck.setChecked(False)
         self.reverseRouteCheck.setEnabled(
-            not self.terrainFollowCheck.isChecked())
+            oblique or not self.terrainFollowCheck.isChecked())
         # Retry a fresh network the next time it is turned on, and re-apply.
         self._terrain.clear()
         self._terrain_warned = False
@@ -2729,7 +2805,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                     all_legs=self._mission_kind() == 'corridor')
             self._terrain_failed = False
             return result
-        except _TerrainError as exc:
+        except (_TerrainError, ValueError) as exc:
             self._terrain_failed = True
             if not self._terrain_warned:
                 self._terrain_warned = True
@@ -2739,6 +2815,77 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                     'is blocked until terrain data is available. Check your '
                     'connection and toggle Terrain Follow again to retry.')
             return waypoints, None
+
+    def _oblique_terrain_flights(self, result):
+        """With terrain follow on, each oblique flight's waypoints and their
+        heights above its takeoff point, or None when off or not oblique.
+
+        A tilted camera looks at ground ahead of the drone, offset by the pass
+        offset along the way it faces: the held heading of a Full pass, or the
+        way the drone flies on a Fast pass. Each waypoint keeps the altitude
+        above the higher of that ground and the ground below the drone, so the
+        photo distance follows the terrain without the drone getting low over
+        rising ground. A nadir pass looks straight down.
+
+        Full-automatic sets a height at every photo waypoint. Semi-automatic
+        works like 2D Mapping: it adds a waypoint along a leg only where that
+        ground has changed by more than the terrain tolerance, and relaxes the
+        tolerance if a flight would pass Max Waypoints. Takeoff is at each
+        flight's first waypoint, or the mission's first with Same takeoff for
+        all splits. On an elevation failure export is blocked and the pilot is
+        warned once."""
+        if (result.get('operation') != 'plan_oblique'
+                or not self.terrainFollowCheck.isChecked()):
+            self._terrain_failed = False
+            return None
+        rows = result['route']['waypoints']
+        passes = result['oblique']['passes']
+        offset = result['oblique']['offset_m']
+        below = self._terrain.sample
+        full = self._mission_type() == 'full'
+        altitude = self.altitudeSpin.value()
+        flights = []
+        try:
+            shared = below(rows[0]['position']['longitude_deg'], rows[0]['position']['latitude_deg'])
+            for flight in result['flights']:
+                start, end = flight['route_start_waypoint_index'], flight['route_end_waypoint_index']
+                points = [(row['position']['longitude_deg'], row['position']['latitude_deg'])
+                          for row in rows[start:end + 1]]
+                survey_pass = passes[rows[start]['pass_index']]
+                # Fast passes face the way they fly, so each leg looks along itself.
+                legs = [survey_pass['heading_deg'] if survey_pass['heading_deg'] is not None
+                        else _GEOD.inv(a[0], a[1], b[0], b[1])[0]
+                        for a, b in zip(points, points[1:])] or [survey_pass['heading_deg'] or 0.0]
+
+                def ground(lon, lat, leg, survey_pass=survey_pass, legs=legs):
+                    if survey_pass['kind'] == 'nadir':
+                        return below(lon, lat)
+                    ahead = _GEOD.fwd(lon, lat, legs[min(leg, len(legs) - 1)], offset)
+                    return max(below(lon, lat), below(ahead[0], ahead[1]))
+
+                if full:
+                    elevations = [ground(lon, lat, index) for index, (lon, lat) in enumerate(points)]
+                else:
+                    points, elevations = densify_by_terrain(
+                        points, below, self.terrainToleranceSpin.value(),
+                        max_points=self.maxWaypointsSpin.value(), all_legs=True,
+                        leg_sample=ground)
+                base = (shared if self.sameTakeoffCheck.isChecked()
+                        else below(points[0][0], points[0][1]))
+                flights.append({'waypoints': points,
+                                'heights': heights_above_takeoff(elevations, altitude, base=base)})
+            self._terrain_failed = False
+        except (_TerrainError, ValueError) as exc:
+            self._terrain_failed = True
+            if not self._terrain_warned:
+                self._terrain_warned = True
+                QMessageBox.warning(
+                    self, 'Terrain Export Blocked',
+                    f'{exc}\n\nThe flat route can still be previewed, but export '
+                    'is blocked until terrain following can be prepared. '
+                    'Resolve the issue and preview again to retry.')
+            return None
+        return flights
 
     def _set_destination_rc_enabled(self, enabled):
         """Enable/disable the 'Send to DJI RC' destination item (kept visible,
@@ -3277,7 +3424,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
     def _uses_shared_planning(self):
         kind = self._mission_kind()
-        return kind == 'orbit' or (kind == '2d' and not self.terrainFollowCheck.isChecked())
+        return kind in ('orbit', 'oblique') or (kind == '2d' and not self.terrainFollowCheck.isChecked())
 
     def _planning_request_from_ui(self):
         if self._mission_kind() == 'orbit':
@@ -3285,7 +3432,17 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         drone = registry.get(self.droneModelCombo.currentText())
         if not drone.website_code:
             raise ValueError('%s has no shared engine profile.' % drone.name)
-        return planning_adapter.build_request(
+        if self._mission_kind() == 'oblique':
+            return planning_adapter.build_oblique_request(
+                gimbal_pitch_deg=self.obliquePitchSpin.value(),
+                include_nadir=self.obliqueNadirCheck.isChecked(),
+                pattern='fast' if self.obliqueFastRadio.isChecked() else 'full',
+                **self._grid_controls(drone))
+        return planning_adapter.build_request(**self._grid_controls(drone))
+
+    def _grid_controls(self, drone):
+        """The survey grid controls shared by 2D and oblique requests."""
+        return dict(
             survey_area=survey_geometry.planning_area(
                 self._survey_polygon, self._survey_polygon_crs),
             drone_profile_id=drone.website_code,
@@ -3354,12 +3511,21 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             request = self._planning_request_from_ui()
             result = planning_adapter.plan(request)
             self._apply_planning_result(request, result)
+            self._oblique_terrain = (self._oblique_terrain_flights(result)
+                                     if self._mission_kind() == 'oblique' else None)
+            if self._oblique_terrain:
+                # Terrain follow may add waypoints along the legs: preview and
+                # count the waypoints that will be flown.
+                self._missions = [plan['waypoints'] for plan in self._oblique_terrain]
+                self.waypointsLabel.setText(
+                    f"{sum(len(plan['waypoints']) for plan in self._oblique_terrain):,}")
             if (self._mission_kind() == 'orbit'
                     and not result['validation']['export_allowed']):
                 self._set_info(result['validation']['errors'][0]['message'])
             return result
         except (ValueError, planning_adapter.PlanningError) as exc:
             self._planning.plan_failed()
+            self._oblique_terrain = None
             self._waypoints = []
             self._missions = []
             self._shot_spacing_m = 0.0
@@ -3404,14 +3570,33 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.splitPartCombo.blockSignals(True)
         self.splitPartCombo.clear()
         if n > 1:
+            passes = self._oblique_flight_passes(n)
             for i in range(n):
-                self.splitPartCombo.addItem(f'Part {i + 1} of {n}', i)
+                suffix = f' ({passes[i]})' if passes else ''
+                self.splitPartCombo.addItem(f'Part {i + 1} of {n}{suffix}', i)
             idx = self.splitPartCombo.findData(prev)
             self.splitPartCombo.setCurrentIndex(idx if idx >= 0 else 0)
         self.splitPartCombo.blockSignals(False)
         self.splitPartRow.setVisible(n > 1)
         self._fit_dest_stack()
         self._update_export_button()
+
+    def _oblique_flight_passes(self, count):
+        """For an oblique plan, each flight's pass: 'Nadir', 'Grid' or 'Cross
+        grid', or the compass way its camera faces, e.g. 'Facing NE'. None for
+        other missions."""
+        result = self._planning.result
+        if not result or result.get('operation') != 'plan_oblique':
+            return None
+        rows = result['route']['waypoints']
+        passes = result['oblique']['passes']
+        names = []
+        for flight in result['flights']:
+            survey_pass = passes[rows[flight['route_start_waypoint_index']]['pass_index']]
+            heading = survey_pass['heading_deg']
+            names.append(_OBLIQUE_PASS_NAMES.get(survey_pass['kind']) or 'Facing %s' % _COMPASS[
+                round((heading % 360) / 45) % 8])
+        return names if len(names) == count else None
 
     def _update_stats(self):
         self._live_waypoints = None
@@ -3716,7 +3901,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                 return
             waypoints, shot_spacing_m = result
             if self._uses_shared_planning() and self._planning.result:
-                missions_h = [(part, None, None) for part in self._missions]
+                heights = self._oblique_preview_heights()
+                missions_h = [(part, heights[index] if heights else None, None)
+                              for index, part in enumerate(self._missions)]
             else:
                 missions_h = self._missions_with_heights(
                     waypoints, self._gen_elevations)
@@ -3757,10 +3944,17 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self._shot_spacing_m = max(
                 self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5)
             self._gen_elevations = self._live_elevations
-        heights = None if shared else self._live_heights
+        heights = self._oblique_preview_heights() if shared else self._live_heights
         ground = None if shared else self._live_ground
         self._redraw_preview_layers(missions, heights, ground)
         self._show_corridor_band()   # keep the overlay in sync with the buffer
+
+    def _oblique_preview_heights(self):
+        """Each oblique flight's terrain heights for the preview, or None."""
+        terrain = self._oblique_terrain if self._mission_kind() == 'oblique' else None
+        if not terrain or len(terrain) != len(self._missions):
+            return None
+        return [plan['heights'] for plan in terrain]
 
     def _redraw_preview_layers(self, missions, heights=None, ground=None):
         """Refresh the existing preview layers in place from new missions."""
@@ -4155,13 +4349,23 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
     def _export_settings(self, flight=None):
         """Snapshot export inputs from widgets before any destination work.
 
-        For an orbit, `flight` is one consumed engine flight: its headings,
-        heights and camera tilts go with it. Without it, the whole route's."""
+        For an orbit or oblique mission, `flight` is one consumed engine flight:
+        its headings, heights and camera tilts go with it. Without it, the whole
+        route's."""
         orbit = self._mission_kind() == 'orbit'
         headings = heights = pitches = None
-        if orbit and flight is not None:
+        if self._mission_kind() in ('orbit', 'oblique') and flight is not None:
             headings, heights, pitches = (
                 flight['headings'], flight['heights'], flight['gimbal_pitches'])
+            terrain = getattr(self, '_oblique_terrain', None)
+            if self._mission_kind() == 'oblique' and terrain:
+                # Terrain follow may add waypoints along a leg; the pass heading
+                # and camera tilt hold for the whole flight.
+                plan = terrain[flight['flight']['index']]
+                count = len(plan['waypoints'])
+                heights = plan['heights']
+                headings = [headings[0]] * count if headings else None
+                pitches = [pitches[0]] * count if pitches else None
         elif orbit and self._planning.result:
             rows = self._planning.result['route']['waypoints']
             headings = [row['heading_deg'] for row in rows]
@@ -4323,10 +4527,13 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             consumed = planning_adapter.consume_result(
                 self._planning.request, self._planning.result,
                 legacy_waypoints=[[lat, lon] for lon, lat in self._waypoints])
-            missions_h = [(flight['waypoints'], None, None) for flight in consumed]
+            terrain = self._oblique_terrain if self._mission_kind() == 'oblique' else None
+            missions_h = [(terrain[index]['waypoints'] if terrain else flight['waypoints'], None, None)
+                          for index, flight in enumerate(consumed)]
             flight_actions = [flight['actions'] for flight in consumed]
-            if self._mission_kind() == 'orbit':
-                # Each orbit flight has its own headings, heights and tilts.
+            if self._mission_kind() in ('orbit', 'oblique'):
+                # Each orbit or oblique flight has its own headings, heights
+                # and tilts.
                 flight_settings = [self._export_settings(flight) for flight in consumed]
         else:
             missions_h = self._missions_with_heights(waypoints, self._gen_elevations)

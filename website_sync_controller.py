@@ -285,7 +285,13 @@ class WebsiteSyncLifecycleMixin:
         kind = self._mission_kind()
         corridor = kind == 'corridor'
         orbit = kind == 'orbit'
+        if kind == 'oblique' and self.terrainFollowCheck.isChecked():
+            raise FlypathSyncError(
+                'flypath.io does not support Oblique Mapping terrain follow yet. '
+                'Turn off Terrain Follow and regenerate, or export locally.')
         drone = registry.get(self.droneModelCombo.currentText())
+        if kind == 'oblique' and drone.category != 'consumer':
+            raise FlypathSyncError('Oblique website missions require a DJI Fly consumer drone.')
         if not drone.website_code:
             raise FlypathSyncError(
                 '%s is not one of the drones flypath.io offers, so this mission '
@@ -402,6 +408,11 @@ class WebsiteSyncLifecycleMixin:
             settings['direction'] = round(self.directionSpin.value() % 180.0, 1)
             settings['margin'] = round(self.marginSpin.value(), 1)
             settings['cross_hatch'] = bool(self.crossHatchCheck.isChecked())
+        if kind == 'oblique':
+            settings.update(oblique_pattern='fast' if self.obliqueFastRadio.isChecked() else 'full',
+                            oblique_pitch=self.obliquePitchSpin.value(),
+                            oblique_nadir=self.obliqueNadirCheck.isChecked(),
+                            cross_hatch=False)
         if self._mission_type() == 'full' and not orbit:
             # Semi-automatic front overlap is derived from speed and interval,
             # not a setting the pilot chose, so it is not sent as one.
@@ -462,6 +473,10 @@ class WebsiteSyncLifecycleMixin:
             supported, flights = provenance
             self._apply_planning_result(request, result, flights=flights)
             self._planning.preserve_imported_route(supported=supported)
+            if planning_adapter.needs_geometry_update(result):
+                self._planning.require_regeneration()
+                self._set_info('This saved Fast oblique route needs the geometry correction. '
+                               'Choose Regenerate on Map before saving or exporting.')
         elif legacy:
             route = [(float(lon), float(lat)) for lat, lon in legacy]
             self._waypoints = route
@@ -583,7 +598,7 @@ class WebsiteSyncLifecycleMixin:
             '_current_kind',
         )
         state_names += tuple(name for name in self.__dict__
-                             if name.startswith(('_survey_', '_preview_', '_live_', '_orbit_')))
+                             if name.startswith(('_survey_', '_preview_', '_live_', '_orbit_', '_oblique_')))
         state = {name: getattr(self, name) for name in set(state_names)
                  if hasattr(self, name)}
         planning = self._planning.__dict__.copy()
@@ -603,6 +618,7 @@ class WebsiteSyncLifecycleMixin:
             'frontOverlapStack', 'destCombo', 'destStack',
             'orbitRadiusSpin', 'orbitTiltSpin', 'drawCircleBtn', 'editCircleBtn',
             'removeCircleBtn', 'orbitRingCombo', 'addRingBtn', 'removeRingBtn',
+            'obliqueFastRadio', 'obliqueFullRadio', 'obliquePitchSpin', 'obliqueNadirCheck',
         )
         widgets = {}
         appearance = {}
@@ -725,10 +741,10 @@ class WebsiteSyncLifecycleMixin:
         except ValueError as exc:
             raise FlypathSyncError('The saved route could not be verified: %s' % exc) from None
         style = settings.get('mapping_style', '2d')
-        if style not in ('2d', 'corridor', 'orbit'):
+        if style not in ('2d', 'corridor', 'orbit', 'oblique'):
             raise FlypathSyncError(
                 'This mission is a "%s" survey, which this plugin cannot plan. '
-                'Only 2D, corridor and orbit missions can be loaded.' % style)
+                'Only 2D, corridor, orbit and oblique missions can be loaded.' % style)
         corridor = style == 'corridor'
         orbit = style == 'orbit'
         if settings.get('reverse_route') and (
@@ -744,8 +760,8 @@ class WebsiteSyncLifecycleMixin:
             raise FlypathSyncError(
                 'This mission is planned for a drone this plugin does not '
                 'offer, so its settings would not carry over.')
-        if orbit and registry.get(drone_name).category != 'consumer':
-            raise FlypathSyncError('Orbit missions need a DJI Fly drone.')
+        if style in ('orbit', 'oblique') and registry.get(drone_name).category != 'consumer':
+            raise FlypathSyncError('Orbit and oblique missions need a DJI Fly drone.')
 
         capture = settings.get('capture_mode', 'semi')
         if capture not in ('semi', 'full'):
@@ -799,7 +815,13 @@ class WebsiteSyncLifecycleMixin:
         # not optimise the imported heading against the previous survey area.
         self.autoDirectionBtn.setChecked(False)
         self.missionTypeCombo.setCurrentText(
-            'Orbit (3D Model)' if orbit else 'Corridor Mapping' if corridor else '2D Mapping')
+            'Orbit (3D Model)' if orbit else 'Corridor Mapping' if corridor
+            else 'Oblique Mapping' if style == 'oblique' else '2D Mapping')
+        self._oblique_terrain = None
+        if style == 'oblique':
+            (self.obliqueFastRadio if settings['oblique_pattern'] == 'fast'
+             else self.obliqueFullRadio).setChecked(True)
+            self.obliqueNadirCheck.setChecked(settings['oblique_nadir'])
         if orbit:
             self._reset_orbit_rings()
         self.droneModelCombo.setCurrentText(drone_name)
@@ -830,6 +852,8 @@ class WebsiteSyncLifecycleMixin:
         if orbit:
             fields.extend((('orbit radius', self.orbitRadiusSpin, settings.get('orbit_radius')),
                            ('orbit tilt', self.orbitTiltSpin, settings.get('orbit_tilt'))))
+        if style == 'oblique':
+            fields.append(('camera angle', self.obliquePitchSpin, settings['oblique_pitch']))
         if isinstance(settings.get('corridor_width'), (int, float)):
             # The website's corridor_width is the full mapped width; the
             # plugin's Buffer is the half-width each side.
