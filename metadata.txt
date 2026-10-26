@@ -2,9 +2,16 @@
 name=FlyPath
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
-description=Generate DJI WPML KMZ mission files for 2D, corridor and orbit (3D model) drone missions directly from QGIS
-version=3.3.1
-changelog=3.3.1 - The sign-up link in the Why FlyPath.io? message is now easy to read on dark themes.
+description=Generate DJI WPML KMZ mission files for 2D, oblique, corridor and orbit (3D model) drone missions directly from QGIS
+version=4.0.0
+changelog=4.0.0 - New Oblique Mapping mission type for 3D models of an area: the camera tilts
+    to an angle you set and the area is photographed from four sides, after an optional nadir
+    pass. Fast flies two crossing grids facing along their lines (about half the flight time);
+    Full flies four passes, one facing each side, like DJI Pilot 2. Supports terrain follow and
+    reverse route; each pass exports as its own flights, named in the RC part picker. Oblique
+    missions without terrain follow can be saved to and opened from flypath.io. Field labels
+    are now regular weight. Planning engine 1.4.1.
+    3.3.1 - The sign-up link in the Why FlyPath.io? message is now easy to read on dark themes.
     3.3.0 - My missions groups website missions by project, with standalone missions in
     their own group. Split missions show the website's short names, with full names on hover. Save
     as new lets you choose a project or keep the mission standalone.
@@ -224,9 +231,10 @@ about=FlyPath is a QGIS plugin for planning autonomous drone mapping missions an
     them as native DJI WPML KMZ files, loadable directly in the DJI Fly app.
     Supported drones: DJI Mini 3 Pro, Mini 4 Pro, Mini 5 Pro (community-verified),
     plus Air 3, Air 3S, Mavic 3 Classic, Mavic 4 Pro and Lito X1 (field-test reports wanted).
-    Plan a 2D grid over a survey polygon, or a corridor along a centre line for
-    linear features such as roads, pipelines and rivers, or an orbit that circles
-    an object with the camera tilted towards it for 3D models. Draw your survey area on
+    Plan a 2D grid over a survey polygon, an oblique mission that photographs the
+    area from four sides with a tilted camera for 3D models, a corridor along a
+    centre line for linear features such as roads, pipelines and rivers, or an
+    orbit that circles an object with the camera tilted towards it for 3D models. Draw your survey area on
     the map, set flight altitude and overlap, preview the flight path, and export
     a ready-to-fly mission file. Choose semi-automatic capture (you set interval
     capture before takeoff) or full-automatic capture (a waypoint per photo with
@@ -239,7 +247,7 @@ about=FlyPath is a QGIS plugin for planning autonomous drone mapping missions an
 tracker=https://github.com/dronnix-io/FlyPath/issues
 repository=https://github.com/dronnix-io/FlyPath
 
-tags=drone, UAV, mapping, orthomosaic, DJI, mission planning, WPML, KMZ
+tags=drone, UAV, mapping, orthomosaic, oblique, 3D, photogrammetry, DJI, mission planning, WPML, KMZ
 
 homepage=https://github.com/dronnix-io/FlyPath
 category=Plugins
