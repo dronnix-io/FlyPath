@@ -346,7 +346,7 @@ def _test_oblique_terrain_follow():
         count = len(planner._oblique_terrain[-1]['waypoints'])
         assert len(settings.heights) == count and len(settings.gimbal_pitches) == count
 
-        from FlyPath.flypath_sync import FlypathSyncError
+        FlypathSyncError = importlib.import_module(package + '.flypath_sync').FlypathSyncError
         with unittest.TestCase().assertRaisesRegex(FlypathSyncError, 'terrain follow'):
             planner._website_payload('Terrain oblique')
         with patch.object(dialog, 'densify_by_terrain', side_effect=ValueError('waypoint limit')), \
