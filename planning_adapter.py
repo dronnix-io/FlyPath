@@ -305,10 +305,11 @@ def validate_mission_provenance(mission):
         return None
     request = mission.get('planning_request')
     settings = mission.get('settings') or {}
+    oblique = settings.get('mapping_style') == 'oblique'
     if not isinstance(request, dict):
         raise ValueError('The saved planning request is missing.')
-    if settings.get('mapping_style') == 'oblique':
-        raise ValueError('Oblique missions cannot be loaded from flypath.io yet.')
+    if oblique and not _orbit_capable(result.get('engine_version'), OBLIQUE_MIN_ENGINE_VERSION):
+        raise ValueError('This saved oblique engine version is not supported.')
     if settings.get('mapping_style') == 'orbit':
         if not _orbit_capable(result.get('engine_version')):
             raise ValueError('This saved orbit engine version is not supported.')
@@ -374,6 +375,14 @@ def validate_mission_provenance(mission):
             'reverse_route': bool(settings.get('reverse_route')),
             'terrain_follow': bool(settings.get('terrain_follow')),
         }
+        if oblique:
+            if settings.get('terrain_follow') or settings.get('cross_hatch'):
+                raise ValueError('Oblique website missions do not support terrain or cross-hatch.')
+            expected.pop('cross_hatch')
+            expected.update(operation='plan_oblique',
+                            pattern=settings.get('oblique_pattern'),
+                            gimbal_pitch_deg=settings.get('oblique_pitch'),
+                            include_nadir=settings.get('oblique_nadir'))
         if any(request.get(key) != value for key, value in expected.items()):
             raise ValueError('The saved planning request does not match the mission settings.')
         capture = request.get('capture')

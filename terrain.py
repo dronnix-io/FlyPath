@@ -84,7 +84,8 @@ def densify_by_terrain(waypoints, sample, tolerance_m,
 
     Returns (waypoints, elevations) as parallel lists. If densifying would exceed
     `max_points`, the tolerance is doubled repeatedly until the route fits (same
-    adaptive strategy as the online planner)."""
+    adaptive strategy as the online planner). Raises ValueError if the bounded
+    retries still cannot satisfy the waypoint limit."""
     pts = list(waypoints)
     if len(pts) < 2:
         return pts, [sample(lon, lat) for lon, lat in pts]
@@ -130,6 +131,9 @@ def densify_by_terrain(waypoints, sample, tolerance_m,
         if len(out_pts) <= max_points:
             break
         tolerance *= 2                               # relax until the budget fits
+    if len(out_pts) > max_points:
+        raise ValueError('Terrain following exceeds the waypoint limit. Increase the '
+                         'limit or terrain tolerance, or split the flight further.')
     return out_pts, out_elevs
 
 

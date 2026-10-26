@@ -216,7 +216,8 @@ def validate_mission(mission):
         settings = mission.get('settings', {})
         if not isinstance(settings, dict):
             raise ValueError()
-        enums = {'mapping_style': ('2d', 'corridor', 'orbit'), 'capture_mode': ('semi', 'full'),
+        enums = {'mapping_style': ('2d', 'corridor', 'orbit', 'oblique'), 'capture_mode': ('semi', 'full'),
+                 'oblique_pattern': ('fast', 'full'),
                  'flight_path': ('straight', 'curved'),
                  'finish_action': tuple(WEBSITE_FINISH_ACTIONS.values()),
                  'rc_lost_action': tuple(WEBSITE_RC_LOST_ACTIONS.values())}
@@ -226,17 +227,25 @@ def validate_mission(mission):
                 if key not in ('finish_action', 'rc_lost_action') or settings[key] is not None:
                     raise ValueError()
         for key in ('cross_hatch', 'terrain_follow', 'split_enabled',
-                    'auto_direction', 'reverse_route'):
+                    'auto_direction', 'reverse_route', 'oblique_nadir'):
             if key in settings and type(settings[key]) is not bool:
                 raise ValueError()
         for key in ('altitude', 'speed', 'side_overlap', 'front_overlap', 'margin',
                     'direction', 'terrain_tolerance', 'split_max_wp',
-                    'corridor_width', 'split_count', 'orbit_radius', 'orbit_tilt'):
+                    'corridor_width', 'split_count', 'orbit_radius', 'orbit_tilt', 'oblique_pitch'):
             if settings.get(key) is not None and (type(settings[key]) not in (int, float)
                                     or not math.isfinite(settings[key])):
                 raise ValueError()
         if 'orbit_rings' in settings and settings.get('mapping_style') != 'orbit':
             raise ValueError()
+        if settings.get('mapping_style') == 'oblique':
+            if (settings.get('oblique_pattern') not in ('fast', 'full')
+                    or type(settings.get('oblique_nadir')) is not bool
+                    or not -85 <= settings.get('oblique_pitch', 0) <= -20
+                    or settings.get('terrain_follow') or settings.get('cross_hatch')
+                    or (mission.get('waypoints') and not (
+                        mission.get('planning_request') and mission.get('planning_result')))):
+                raise ValueError()
         if settings.get('mapping_style') == 'orbit':
             rings = settings.get('orbit_rings')
             if rings is not None:

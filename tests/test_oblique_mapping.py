@@ -1,6 +1,7 @@
 """Oblique Mapping through the installed QGIS planner (no network)."""
 
 import importlib
+from copy import deepcopy
 import os
 from pathlib import Path
 import sys
@@ -51,7 +52,6 @@ def _test_oblique_mapping():
         from qgis.gui import QgsMapCanvas
         package = Path(__file__).resolve().parents[1].name
         dialog = importlib.import_module(package + '.flypath_dialog')
-        sync_controller = importlib.import_module(package + '.website_sync_controller')
     except ImportError as exc:
         raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
     app = QgsApplication.instance() or QgsApplication([], False)
@@ -131,17 +131,25 @@ def _test_oblique_mapping():
                 assert modes == {'smoothTransition'} and pitches == {-55.0}
                 assert headings == {round(survey_pass['heading_deg'], 1)}
 
-        # flypath.io cannot store oblique missions yet.
-        try:
-            planner._website_payload('Oblique')
-        except sync_controller.FlypathSyncError as exc:
-            assert 'Oblique Mapping' in str(exc)
-        else:
-            raise AssertionError('An oblique mission was sent to flypath.io')
+        mission = planner._website_payload('Oblique')
+        assert mission['settings']['oblique_pattern'] == 'full'
+        assert mission['settings']['oblique_pitch'] == -55
+        assert mission['settings']['oblique_nadir'] is True
+        saved = deepcopy(mission['planning_result'])
+        with patch.object(planner, '_plan_shared', side_effect=AssertionError('regenerated')):
+            adjusted, note = planner._apply_website_mission(mission)
+        assert not adjusted and not note
+        assert planner._mission_kind() == 'oblique'
+        assert planner.obliqueFullRadio.isChecked()
+        assert planner.obliquePitchSpin.value() == -55
+        assert planner._planning.result == saved
+        assert planner._website_payload('Oblique again')['planning_result'] == saved
 
         # Fast flies the nadir pass and two crossing grids facing along their
         # lines, exported without a held heading.
         planner.obliqueFastRadio.setChecked(True)
+        assert planner._planning.save_requires_regeneration()
+        planner._on_preview()
         result = planner._planning.result
         passes = result['oblique']['passes']
         assert [p['kind'] for p in passes] == ['nadir', 'grid', 'cross_grid']
@@ -319,6 +327,16 @@ def _test_oblique_terrain_follow():
         settings = planner._export_settings(consumed)
         count = len(planner._oblique_terrain[-1]['waypoints'])
         assert len(settings.heights) == count and len(settings.gimbal_pitches) == count
+
+        from FlyPath.flypath_sync import FlypathSyncError
+        with unittest.TestCase().assertRaisesRegex(FlypathSyncError, 'terrain follow'):
+            planner._website_payload('Terrain oblique')
+        with patch.object(dialog, 'densify_by_terrain', side_effect=ValueError('waypoint limit')), \
+                patch.object(dialog.QMessageBox, 'warning') as warning:
+            planner._on_preview()
+            assert planner._terrain_failed and planner._oblique_terrain is None
+            planner._on_export()
+        assert warning.called
 
         # Off again, no terrain waypoints.
         planner.terrainFollowCheck.setChecked(False)

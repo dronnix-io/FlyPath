@@ -2805,7 +2805,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                     all_legs=self._mission_kind() == 'corridor')
             self._terrain_failed = False
             return result
-        except _TerrainError as exc:
+        except (_TerrainError, ValueError) as exc:
             self._terrain_failed = True
             if not self._terrain_warned:
                 self._terrain_warned = True
@@ -2875,15 +2875,15 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                 flights.append({'waypoints': points,
                                 'heights': heights_above_takeoff(elevations, altitude, base=base)})
             self._terrain_failed = False
-        except _TerrainError as exc:
+        except (_TerrainError, ValueError) as exc:
             self._terrain_failed = True
             if not self._terrain_warned:
                 self._terrain_warned = True
                 QMessageBox.warning(
-                    self, 'Terrain data unavailable',
+                    self, 'Terrain Export Blocked',
                     f'{exc}\n\nThe flat route can still be previewed, but export '
-                    'is blocked until terrain data is available. Check your '
-                    'connection and toggle Terrain Follow again to retry.')
+                    'is blocked until terrain following can be prepared. '
+                    'Resolve the issue and preview again to retry.')
             return None
         return flights
 

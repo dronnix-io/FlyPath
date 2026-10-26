@@ -5,12 +5,26 @@ from pathlib import Path
 import sys
 import tempfile
 from unittest.mock import patch
+import pytest
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.vendor_engine import _check_package, _replace_package
 from tools.build_plugin import _include, main as build_plugin
+
+
+def test_vendor_rejects_wrong_commit_before_replacing_package():
+    from tools import vendor_engine
+    config = {'repository': 'unused', 'tag': 'v1.4.0', 'commit': 'expected'}
+    with patch.object(vendor_engine, '_config', return_value=config), \
+            patch.object(sys, 'argv', ['vendor_engine.py']), \
+            patch.object(vendor_engine.subprocess, 'run') as run, \
+            patch.object(vendor_engine, '_replace_package') as replace:
+        run.return_value.stdout = 'unexpected\n'
+        with pytest.raises(ValueError, match='unexpected commit'):
+            vendor_engine.main()
+        replace.assert_not_called()
 
 
 def test_replace_and_verify_package():
