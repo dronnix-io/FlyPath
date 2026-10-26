@@ -473,6 +473,10 @@ class WebsiteSyncLifecycleMixin:
             supported, flights = provenance
             self._apply_planning_result(request, result, flights=flights)
             self._planning.preserve_imported_route(supported=supported)
+            if planning_adapter.needs_geometry_update(result):
+                self._planning.require_regeneration()
+                self._set_info('This saved Fast oblique route needs the geometry correction. '
+                               'Choose Regenerate on Map before saving or exporting.')
         elif legacy:
             route = [(float(lon), float(lat)) for lat, lon in legacy]
             self._waypoints = route

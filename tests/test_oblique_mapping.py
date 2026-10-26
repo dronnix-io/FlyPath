@@ -192,6 +192,24 @@ def _test_oblique_mapping():
         planner.obliquePitchSpin.setValue(-40)
         assert planner._planning.result['oblique']['gimbal_pitch_deg'] == -40
 
+        legacy = planner._website_payload('Saved Fast oblique')
+        legacy['planning_result'] = dialog.planning_adapter.plan(
+            legacy['planning_request'], engine_version='1.4.0')
+        legacy['waypoints'] = [[row['position']['latitude_deg'], row['position']['longitude_deg']]
+                               for row in legacy['planning_result']['route']['waypoints']]
+        with patch.object(planner, '_plan_shared', side_effect=AssertionError('regenerated')):
+            planner._apply_website_mission(legacy)
+        assert planner._planning.result == legacy['planning_result']
+        assert planner._planning.export_issue() == 'regeneration_required'
+        assert planner.previewBtn.text() == 'Regenerate on Map'
+        with patch.object(planner, '_export_local') as export, patch.object(dialog.QMessageBox, 'warning'):
+            planner._on_export()
+        export.assert_not_called()
+        planner._on_preview()
+        assert planner._planning.result['engine_version'] == '1.4.1'
+        assert not planner._planning.save_requires_regeneration()
+        assert planner._website_payload('Updated Fast oblique')['planning_result']['engine_version'] == '1.4.1'
+
         # Back in 2D Mapping the oblique rows hide and terrain follow returns.
         planner.missionTypeCombo.setCurrentText('2D Mapping')
         assert not planner.obliquePitchSpin.isVisibleTo(planner)

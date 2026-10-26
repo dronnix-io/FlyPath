@@ -65,14 +65,15 @@ def test_locations_survive_the_adapter_request():
 
 
 @pytest.mark.parametrize('pattern,nadir', [('fast', True), ('fast', False), ('full', True), ('full', False)])
-def test_oblique_sync_provenance_keeps_passes_and_rejects_changed_settings(pattern, nadir):
+@pytest.mark.parametrize('engine_version', ['1.4.0', '1.4.1'])
+def test_oblique_sync_provenance_keeps_passes_and_rejects_changed_settings(pattern, nadir, engine_version):
     from FlyPath.flypath_sync import validate_mission, FlypathSyncError
 
     planned = request(capture_mode='semi')
     planned.pop('cross_hatch')
     planned.update(operation='plan_oblique', mapping_style='oblique', pattern=pattern,
                    gimbal_pitch_deg=-45, include_nadir=nadir)
-    result = planning_adapter.plan(planned)
+    result = planning_adapter.plan(planned, engine_version=engine_version)
     mission = {
         'drone_model': 'mini3pro',
         'polygon': [[p['latitude_deg'], p['longitude_deg']] for p in AREA['exterior']],
@@ -92,6 +93,7 @@ def test_oblique_sync_provenance_keeps_passes_and_rejects_changed_settings(patte
     saved = deepcopy(mission)
     supported, flights = planning_adapter.validate_mission_provenance(mission)
     assert supported and mission == saved
+    assert planning_adapter.needs_geometry_update(result) == (pattern == 'fast' and engine_version == '1.4.0')
     rows = result['route']['waypoints']
     for flight in flights:
         start = flight['flight']['route_start_waypoint_index']

@@ -12,8 +12,8 @@ from .flypath_engine.profiles import PROFILE_VERSION
 
 
 PlanningError = _PlanningError
-# These releases have identical planning behavior; revisit on engine upgrades.
-SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0')
+# Saved Fast oblique results use their original engine geometry during validation.
+SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0', '1.4.1')
 ORBIT_MIN_ENGINE_VERSION = (1, 2, 0)   # the first engine release with plan_orbit
 ORBIT_RINGS_MIN_ENGINE_VERSION = (1, 3, 0)
 OBLIQUE_MIN_ENGINE_VERSION = (1, 4, 0)   # the first engine release with plan_oblique
@@ -140,13 +140,19 @@ def build_oblique_request(*, gimbal_pitch_deg, include_nadir, pattern='fast', **
     return request
 
 
-def plan(request):
+def plan(request, *, engine_version=None):
     """Run the bundled engine; consumers validate the returned result once."""
     if request.get('operation') == 'plan_orbit':
         return plan_orbit(request)
     if request.get('operation') == 'plan_oblique':
-        return plan_oblique(request)
+        return plan_oblique(request, engine_version=engine_version)
     return plan_2d(request)
+
+
+def needs_geometry_update(result):
+    return (result.get('operation') == 'plan_oblique'
+            and result.get('engine_version') == '1.4.0'
+            and result.get('oblique', {}).get('pattern') == 'fast')
 
 
 def consume_result(request, result, *, require_supported=True,
@@ -419,7 +425,8 @@ def validate_mission_provenance(mission):
     supported = (request.get('contract_version') == CONTRACT_VERSION
                  and result.get('contract_version') == CONTRACT_VERSION
                  and result.get('engine_version') in SUPPORTED_ENGINE_VERSIONS)
-    if supported and {**plan(request), 'engine_version': result['engine_version']} != result:
+    replay_version = result['engine_version'] if oblique else None
+    if supported and {**plan(request, engine_version=replay_version), 'engine_version': result['engine_version']} != result:
         kind = 'orbit' if settings.get('mapping_style') == 'orbit' else 'planning'
         raise ValueError('The saved %s result does not match its request.' % kind)
     return supported, flights
