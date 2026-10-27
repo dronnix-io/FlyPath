@@ -22,6 +22,8 @@ from qgis.core import (
 )
 from qgis.gui import QgsMapTool, QgsRubberBand
 
+from .map_tools import FLYPATH_TOOL_NAME, is_flypath_tool, previous_tool
+
 try:
     from . import form_rows, planning_adapter, preview_layers
     from .hardware import registry
@@ -83,6 +85,7 @@ class OrbitMapTool(QgsMapTool):
     def __init__(self, canvas, circle, radius_range, ring_points, on_drag, on_done,
                  editing=False):
         super().__init__(canvas)
+        self.setObjectName(FLYPATH_TOOL_NAME)
         self.editing = editing
         self._circle = circle           # returns ((lon, lat) or None, radius)
         self._radius_range = radius_range
@@ -590,7 +593,7 @@ class OrbitMixin:
         """Switch the map to the circle tool, in draw or edit mode."""
         canvas = self.iface.mapCanvas()
         if self._orbit_tool is None:
-            self._orbit_prev_tool = canvas.mapTool()
+            self._orbit_prev_tool = previous_tool(canvas)
         other = self.drawCircleBtn if editing else self.editCircleBtn
         self._reset_orbit_button(other)
         self._orbit_tool = OrbitMapTool(
@@ -652,8 +655,8 @@ class OrbitMixin:
         if tool is not None:
             if self._orbit_prev_tool is not None:
                 canvas.setMapTool(self._orbit_prev_tool)
-            elif canvas.mapTool() is tool:
-                canvas.unsetMapTool(tool)
+            elif is_flypath_tool(canvas.mapTool()):
+                canvas.unsetMapTool(canvas.mapTool())
             if tool.editing:
                 self._set_info(_INFO_IDLE)
         self._orbit_prev_tool = None

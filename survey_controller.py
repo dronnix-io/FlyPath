@@ -18,7 +18,9 @@ from qgis.core import (
     QgsWkbTypes,
 )
 
-from .map_tools import LineDrawTool, PolygonDrawTool, VertexPickTool
+from .map_tools import (
+    LineDrawTool, PolygonDrawTool, VertexPickTool, is_flypath_tool, previous_tool,
+)
 from . import preview_layers
 _INFO_IDLE = 'ⓘ  Hover over any field to see what it does.'
 
@@ -58,7 +60,7 @@ class SurveyLifecycleMixin:
                 self.setBreaksBtn.setChecked(False)
                 return
             canvas = self.iface.mapCanvas()
-            self._prev_map_tool = canvas.mapTool()
+            self._prev_map_tool = previous_tool(canvas)
             self._break_tool = VertexPickTool(canvas)
             self._break_tool.set_targets(self._break_targets())   # snap to vertices
             self._break_tool.point_picked.connect(self._on_break_point_picked)
@@ -80,7 +82,7 @@ class SurveyLifecycleMixin:
         if self._prev_map_tool is not None:
             canvas.setMapTool(self._prev_map_tool)
             self._prev_map_tool = None
-        elif isinstance(current, VertexPickTool):
+        elif is_flypath_tool(current):
             canvas.unsetMapTool(current)
         self._break_tool = None
         self.setBreaksBtn.setText('Set Mission Breaks')
@@ -581,7 +583,7 @@ class SurveyLifecycleMixin:
             self.featureCombo.blockSignals(False)
 
             canvas = self.iface.mapCanvas()
-            self._prev_map_tool = canvas.mapTool()
+            self._prev_map_tool = previous_tool(canvas)
             self._draw_tool = PolygonDrawTool(canvas)
             self._draw_tool.polygon_completed.connect(self._on_polygon_drawn)
             self._draw_tool.drawing_cancelled.connect(self._on_drawing_cancelled)
@@ -599,7 +601,7 @@ class SurveyLifecycleMixin:
         if self._prev_map_tool is not None:
             canvas.setMapTool(self._prev_map_tool)
             self._prev_map_tool = None
-        elif isinstance(current, (PolygonDrawTool, LineDrawTool)):
+        elif is_flypath_tool(current):
             # No earlier tool to fall back to (the canvas had none when Draw
             # started); clear ours so the cursor returns to the default arrow.
             canvas.unsetMapTool(current)
@@ -679,7 +681,7 @@ class SurveyLifecycleMixin:
             self.featureCombo.blockSignals(False)
 
             canvas = self.iface.mapCanvas()
-            self._prev_map_tool = canvas.mapTool()
+            self._prev_map_tool = previous_tool(canvas)
             self._draw_tool = LineDrawTool(canvas)
             self._draw_tool.line_completed.connect(self._on_line_drawn)
             self._draw_tool.drawing_cancelled.connect(self._on_drawing_cancelled)
@@ -894,7 +896,7 @@ class SurveyLifecycleMixin:
         # existing geometryChanged/editingStopped hooks keep FlyPath in sync.
         self.iface.setActiveLayer(layer)
         layer.startEditing()
-        self._prev_tool_before_edit = self.iface.mapCanvas().mapTool()
+        self._prev_tool_before_edit = previous_tool(self.iface.mapCanvas())
         try:
             self.iface.actionVertexTool().trigger()
         except AttributeError:

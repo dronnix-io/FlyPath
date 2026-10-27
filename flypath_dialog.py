@@ -116,6 +116,7 @@ from .corridor_planner import generate_corridor_route
 from .corridor_geometry import compute_pass_offsets
 from .takeoff_zone import gsd_variance_pct
 from .contours import contour_segments, nice_levels
+from .map_tools import drop_flypath_tool
 from .terrain import (
     TERRARIUM_URL, ZOOM, TILE_SIZE, tile_coords, elevation_from_rgb,
     sample_elevations, densify_by_terrain, heights_above_takeoff,
@@ -1176,6 +1177,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         # Statistics live in a HUD card overlaid on the map canvas (outside the
         # panel), shown when a plan exists. Built here so the stat labels exist
         # for _update_stats. The info/hint card sits just under it.
+        # Drawing only starts from a Draw button: turn off a FlyPath tool an
+        # earlier copy of the plugin left on the map.
+        drop_flypath_tool(self.iface.mapCanvas())
         self._hud = self._build_stats_hud()
         self._info_hud = self._build_info_hud()
         scroll_layout.addStretch()

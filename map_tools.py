@@ -33,6 +33,42 @@ except AttributeError:
     _IconCircle      = getattr(QgsVertexMarker, 'ICON_CIRCLE')
 
 
+# FlyPath names its map tools so it can find one left on the canvas by an
+# earlier copy of the plugin (closed, or reloaded while a tool was active),
+# whose classes are not the ones loaded now. Older versions did not name their
+# tools, so their class names are recognised as well.
+FLYPATH_TOOL_NAME = 'flypath_map_tool'
+_FLYPATH_TOOL_CLASSES = {'PolygonDrawTool', 'LineDrawTool', 'VertexPickTool', 'OrbitMapTool'}
+
+
+def is_flypath_tool(tool):
+    """True for a FlyPath map tool, from this or any earlier load of the plugin."""
+    if tool is None:
+        return False
+    try:
+        if tool.objectName() == FLYPATH_TOOL_NAME:
+            return True
+    except RuntimeError:                 # the tool's C++ object is already gone
+        return False
+    cls = type(tool)
+    return (cls.__name__ in _FLYPATH_TOOL_CLASSES
+            and cls.__module__.rsplit('.', 1)[-1] in ('map_tools', 'orbit_controller'))
+
+
+def previous_tool(canvas):
+    """The canvas tool to restore after a FlyPath tool, never a FlyPath tool
+    itself: restoring one would switch drawing straight back on."""
+    tool = canvas.mapTool()
+    return None if is_flypath_tool(tool) else tool
+
+
+def drop_flypath_tool(canvas):
+    """Turn off a FlyPath tool left active on the canvas."""
+    tool = canvas.mapTool()
+    if is_flypath_tool(tool):
+        canvas.unsetMapTool(tool)
+
+
 class _DrawTool(QgsMapTool):
     """Shared polygon/line digitising behaviour."""
 
@@ -42,6 +78,7 @@ class _DrawTool(QgsMapTool):
 
     def __init__(self, canvas):
         super().__init__(canvas)
+        self.setObjectName(FLYPATH_TOOL_NAME)
         self._points = []
         self._markers = []
         self._cursor = None
@@ -185,6 +222,7 @@ class VertexPickTool(QgsMapTool):
 
     def __init__(self, canvas):
         super().__init__(canvas)
+        self.setObjectName(FLYPATH_TOOL_NAME)
         self._targets = []             # candidate QgsPointXY in map coordinates
         self._marker = None
 

@@ -72,6 +72,35 @@ def test_draw_tool_stops_with_the_draw_button_and_the_panel():
             planner.close()
             app.processEvents()
             assert not drawing(), kind + ': a closed panel must not keep drawing'
+    # A drawing tool left on the map by an earlier copy of the plugin (closed,
+    # or reloaded while drawing) is not the class loaded now and carries no
+    # name. The panel must turn it off, and drawing must never bring it back.
+    import types
+    old_copy = types.ModuleType('OldFlyPath.map_tools')
+    exec('from qgis.gui import QgsMapTool\n'
+         'class PolygonDrawTool(QgsMapTool):\n'
+         '    clicks = 0\n'
+         '    def canvasPressEvent(self, event):\n'
+         '        PolygonDrawTool.clicks += 1\n', old_copy.__dict__)
+    with patch.object(dialog, 'QSettings', lambda *args: QSettings(ini, ini_format)):
+        leftover = old_copy.PolygonDrawTool(canvas)
+        canvas.setMapTool(leftover)
+        assert map_tools.is_flypath_tool(leftover)
+        planner = dialog.FlyPathDialog(SimpleNamespace(mapCanvas=lambda: canvas))
+        try:
+            planner.show()
+            assert canvas.mapTool() is not leftover, 'a leftover FlyPath tool must not keep drawing'
+            canvas.setMapTool(leftover)              # it comes back before Draw is pressed
+            planner.drawPolygonBtn.click()
+            planner.drawPolygonBtn.click()           # Draw off again
+            app.processEvents()
+            assert canvas.mapTool() is not leftover, 'Draw must not restore a leftover tool'
+            assert not map_tools.is_flypath_tool(canvas.mapTool())
+        finally:
+            planner.close()
+            app.processEvents()
+    assert not map_tools.is_flypath_tool(canvas.mapTool())
+
     # Release the test's own map tool before its canvas, so Qt never deletes
     # the tool after the canvas it points to.
     canvas.unsetMapTool(pan)
