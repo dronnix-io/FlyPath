@@ -1,5 +1,6 @@
 """Website mission library embedded in the FlyPath dock."""
 
+from qgis.core import QgsApplication
 from qgis.PyQt.QtCore import Qt, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
@@ -398,6 +399,7 @@ class MissionLibrary(QWidget):
                     self.planner._web_date(mission.get('updated_at')),
                 ])
                 item.setData(0, _UserRole, mission.get('id'))
+                item.setIcon(0, QgsApplication.getThemeIcon('/mIconLineLayer.svg'))
                 item.setData(0, _ProjectRole, project_id)
                 item.setToolTip(0, mission.get('name') or item.text(0))
                 unsupported = ('mapping_style' in mission and

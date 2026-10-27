@@ -72,6 +72,7 @@ def test_library():
         assert groups[2].toolTip(0) == 'Survey'
         assert groups[2].child(0).data(0, library_module._UserRole) == 9
         assert groups[2].child(0).text(0) == 'Part 01'
+        assert not groups[2].child(0).icon(0).isNull()
         assert groups[2].child(0).toolTip(0) == 'Survey part - 1'
         library.missions.setCurrentItem(groups[2])
         assert not library.import_button.isEnabled(), 'A project is not a mission'
@@ -80,6 +81,7 @@ def test_library():
         standalone = {library.missions.topLevelItem(i).data(0, library_module._UserRole):
                       library.missions.topLevelItem(i) for i in range(library.missions.topLevelItemCount())}
         unsupported = standalone[10]
+        assert all(not standalone[mid].icon(0).isNull() for mid in (7, 8, 10))
         assert 'Unsupported in this plugin' in unsupported.text(0)
         library.missions.setCurrentItem(unsupported)
         assert library.import_button.text() == 'Open on website'
