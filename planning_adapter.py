@@ -426,10 +426,38 @@ def validate_mission_provenance(mission):
                  and result.get('contract_version') == CONTRACT_VERSION
                  and result.get('engine_version') in SUPPORTED_ENGINE_VERSIONS)
     replay_version = result['engine_version'] if oblique else None
-    if supported and {**plan(request, engine_version=replay_version), 'engine_version': result['engine_version']} != result:
+    if supported and not results_match(
+            {**plan(request, engine_version=replay_version), 'engine_version': result['engine_version']}, result):
         kind = 'orbit' if settings.get('mapping_style') == 'orbit' else 'planning'
         raise ValueError('The saved %s result does not match its request.' % kind)
     return supported, flights
+
+
+# Results planned on another operating system (the website runs Linux) can
+# differ from a local plan in the last digits of their coordinates, distances
+# and times, because the maths libraries round differently. Far below a
+# millimetre, such differences are the same plan.
+RESULT_REL_TOLERANCE = 1e-9
+RESULT_ABS_TOLERANCE = 1e-9
+
+
+def results_match(first, second):
+    """True when two planning results are the same plan: the same structure,
+    text and flags, with numbers equal within the rounding tolerance."""
+    if isinstance(first, dict) and isinstance(second, dict):
+        return first.keys() == second.keys() and all(
+            results_match(first[key], second[key]) for key in first)
+    if isinstance(first, list) and isinstance(second, list):
+        return len(first) == len(second) and all(
+            results_match(a, b) for a, b in zip(first, second))
+    numbers = (int, float)
+    if (isinstance(first, numbers) and isinstance(second, numbers)
+            and not isinstance(first, bool) and not isinstance(second, bool)):
+        if not (isinstance(first, float) and isinstance(second, float)):
+            return first == second            # counts and indices match exactly
+        return math.isclose(first, second, rel_tol=RESULT_REL_TOLERANCE,
+                            abs_tol=RESULT_ABS_TOLERANCE)
+    return type(first) is type(second) and first == second
 
 
 def _pitch_per_waypoint(actions, start, end):

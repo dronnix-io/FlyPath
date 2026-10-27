@@ -346,6 +346,48 @@ def test_forged_orbit_headings_are_rejected():
         raise AssertionError('out of range headings must be rejected')
 
 
+def _nudged(value, relative):
+    """Every float moved by a relative amount, like a plan made on another OS."""
+    if isinstance(value, dict):
+        return {key: _nudged(item, relative) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_nudged(item, relative) for item in value]
+    if isinstance(value, float):
+        return value - value * relative       # toward zero, so ranges still hold
+    return value
+
+
+def test_results_from_another_os_still_verify_but_real_changes_do_not():
+    planned = orbit_request()
+    result = planning_adapter.plan(planned)
+    assert planning_adapter.results_match(result, _nudged(result, 1e-12))
+    assert not planning_adapter.results_match(result, _nudged(result, 1e-6))
+    mission = {
+        'drone_model': 'mini4pro', 'polygon': [[51.0, -114.0]],
+        'planning_request': planned, 'planning_result': _nudged(result, 1e-12),
+        'settings': {
+            'mapping_style': 'orbit', 'orbit_radius': 30, 'orbit_tilt': -35,
+            'altitude': 25, 'speed': 3, 'reverse_route': False,
+            'finish_action': 'goHome', 'capture_mode': 'full',
+            'side_overlap': 90, 'split_max_wp': 200,
+        },
+    }
+    supported, flights = planning_adapter.validate_mission_provenance(mission)
+    assert supported and flights[0]['headings']
+    moved = deepcopy(mission)
+    moved['planning_result']['route']['waypoints'][0]['position']['latitude_deg'] += 1e-6
+    try:
+        planning_adapter.validate_mission_provenance(moved)
+    except ValueError as exc:
+        assert 'does not match' in str(exc)
+    else:
+        raise AssertionError('a moved waypoint must not verify')
+    # Text, counts and flags still have to match exactly.
+    assert not planning_adapter.results_match(result, {**result, 'mapping_style': 'orbit2'})
+    assert not planning_adapter.results_match({'count': 3}, {'count': 3.0000000001})
+    assert not planning_adapter.results_match({'flag': True}, {'flag': 1})
+
+
 def test_orbit_provenance_verifies_result_and_settings():
     planned = orbit_request()
     result = planning_adapter.plan(planned)
