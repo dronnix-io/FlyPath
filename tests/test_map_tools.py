@@ -1,5 +1,6 @@
 """Drawing completion must not introduce zero-length survey edges."""
 
+import importlib
 import os
 from pathlib import Path
 import sys
@@ -14,9 +15,10 @@ def test_finishing_polygon_and_line_preserves_distinct_vertices():
     try:
         from qgis.core import QgsApplication, QgsPointXY
         from qgis.gui import QgsMapCanvas
-        from FlyPath import map_tools
     except ImportError as exc:
         raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
+    map_tools = importlib.import_module(
+        Path(__file__).resolve().parents[1].name + '.map_tools')
     app = QgsApplication.instance() or QgsApplication([], False)
     app.initQgis()
     canvas = QgsMapCanvas()
