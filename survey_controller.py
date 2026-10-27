@@ -480,6 +480,9 @@ class SurveyLifecycleMixin:
         self._clear_breaks()                       # break indices belonged to the old line
         self._survey_line     = geom
         self._survey_line_crs = crs
+        # Show the mapped band around the line straight away, as flypath.io
+        # does, not only once the route is previewed.
+        self._show_corridor_band()
         if layer_id and fid is not None:
             layer = QgsProject.instance().mapLayer(layer_id)
             if layer:
@@ -844,6 +847,7 @@ class SurveyLifecycleMixin:
         self._survey_polygon_crs = None
         self._survey_line        = None
         self._survey_line_crs    = None
+        self._clear_corridor_band()
         self._clear_breaks()
         self._waypoints          = []
         self._shot_spacing_m     = 0.0

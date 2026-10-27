@@ -2518,6 +2518,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.marginSpin.valueChanged.connect(self._on_param_changed)
         self.speedSpin.valueChanged.connect(self._on_param_changed)
         self.directionSpin.valueChanged.connect(self._on_direction_changed)
+        self.bufferSpin.valueChanged.connect(lambda _value: self._show_corridor_band())   # band follows the buffer
         self.bufferSpin.valueChanged.connect(self._on_param_changed)
         self.obliquePitchSpin.valueChanged.connect(self._on_param_changed)
         self.obliqueNadirCheck.toggled.connect(self._on_param_changed)
@@ -3967,10 +3968,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.iface.mapCanvas().refresh()
 
     def _on_clear_preview(self, reset_area=True):
-        # Always remove the flight-path preview layers and the corridor overlay
+        # Always remove the flight-path preview layers. The corridor band
+        # belongs to the centre line, so it stays until the area is reset.
         preview_layers.remove(self._preview_layer_ids)
         self._preview_layer_ids = []
-        self._clear_corridor_band()
+        if reset_area:
+            self._clear_corridor_band()
         self._waypoints = []
         self._missions = []
         self._preview_heights = []
@@ -4847,6 +4850,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         if getattr(self, 'setBreaksBtn', None) and self.setBreaksBtn.isChecked():
             self.setBreaksBtn.setChecked(False)   # turns the break tool off
         self._remove_survey_area_layer()
+        self._clear_corridor_band()
         self._leave_orbit_tool()
         self._remove_orbit_centre_layer()
         self._on_clear_preview(reset_area=False)
