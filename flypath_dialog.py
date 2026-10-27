@@ -1042,7 +1042,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._render_cache       = {}     # uuid -> rendered waypoint preview path
         self._takeoff_layer_id   = None   # map layer id of the takeoff-zone overlay
         self._contour_layer_id   = None   # map layer id of the DEM contour overlay
-        self._source_mode        = 'layer'  # survey-area source: layer|selection|draw
+        self._source_mode        = 'draw'   # survey-area source: layer|selection|draw
 
         self._build_ui()
         self._tag_form_labels()
@@ -1292,7 +1292,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.sourceLayerRadio     = _SegmentButton('Layer')
         self.sourceSelectionRadio = _SegmentButton('Selection')
         self.sourceDrawRadio      = _SegmentButton('Draw')
-        self.sourceLayerRadio.setChecked(True)
+        self.sourceDrawRadio.setChecked(True)    # drawing is the default source
         self._sourceGroup = QButtonGroup(self)
         self._sourceGroup.addButton(self.sourceLayerRadio)
         self._sourceGroup.addButton(self.sourceSelectionRadio)

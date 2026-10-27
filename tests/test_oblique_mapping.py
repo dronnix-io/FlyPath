@@ -61,6 +61,11 @@ def _test_oblique_mapping():
     try:
         planner.show()
         app.processEvents()
+        # Every mission type starts with Draw as the survey area source.
+        for kind in ('2D Mapping', 'Corridor Mapping', 'Oblique Mapping'):
+            planner.missionTypeCombo.setCurrentText(kind)
+            assert planner.sourceDrawRadio.isChecked(), kind
+            assert planner._source_mode == 'draw' and planner._sourceStack.currentIndex() == 2, kind
         planner.droneModelCombo.setCurrentText('DJI Mini 4 Pro')
         planner.missionTypeCombo.setCurrentText('Oblique Mapping')
         assert planner._mission_kind() == 'oblique'

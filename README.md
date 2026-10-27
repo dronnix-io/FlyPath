@@ -190,7 +190,7 @@ Tick **Enable splitting** under Mission Splitting. FlyPath divides the mission i
 
 ### Step 1: Define the survey area
 
-Under **Survey Area**, choose the **Source**:
+Under **Survey Area**, choose the **Source** (**Draw** is selected when FlyPath opens):
 
 - **Draw:** click **Draw Polygon on Map**, left-click to add points, right-click to finish. Backspace removes the last point and Escape cancels. **Edit** and **Remove** change or clear it.
 - **Layer:** pick a polygon layer and feature already in your QGIS project.
