@@ -35,6 +35,7 @@ def test_library():
          patch.object(library_module.flypath_sync, 'list_library', return_value={'missions': [
              {'id': 7, 'name': 'Same name', 'updated_at': '2026-09-09'},
              {'id': 8, 'name': 'Same name', 'updated_at': '2026-09-09'},
+             {'id': 10, 'name': 'Future survey', 'mapping_style': 'future-survey'},
              {'id': 9, 'name': 'Survey part - 1', 'display_name': 'Part 01',
               'updated_at': '2026-09-09', 'project_id': 2},
          ], 'projects': [{'id': 2, 'name': 'Survey'}, {'id': 3, 'name': 'Survey'}]}):
@@ -61,6 +62,11 @@ def test_library():
         groups = {library.missions.topLevelItem(i).data(0, library_module._ProjectRole):
                   library.missions.topLevelItem(i) for i in range(library.missions.topLevelItemCount())}
         assert set(groups) == {None, 2, 3}
+        assert library.missions.topLevelItemCount() == 5
+        assert library.selection_hint.text() == 'Select a mission to open it'
+        assert groups[2].text(0) == 'Survey (1 mission)'
+        assert groups[3].text(0) == 'Survey (0 missions)'
+        assert not groups[3].icon(0).isNull()
         assert not any(group.isExpanded() for group in groups.values()), 'Groups start collapsed'
         assert groups[3].childCount() == 0, 'Empty projects stay visible'
         assert groups[2].toolTip(0) == 'Survey'
@@ -71,10 +77,19 @@ def test_library():
         assert not library.import_button.isEnabled(), 'A project is not a mission'
         library.import_selected()
         assert not imported
-        standalone = groups[None]
-        standalone.setExpanded(True)
-        mission = next(standalone.child(i) for i in range(standalone.childCount())
-                       if standalone.child(i).data(0, library_module._UserRole) == 8)
+        standalone = {library.missions.topLevelItem(i).data(0, library_module._UserRole):
+                      library.missions.topLevelItem(i) for i in range(library.missions.topLevelItemCount())}
+        unsupported = standalone[10]
+        assert 'Unsupported in this plugin' in unsupported.text(0)
+        library.missions.setCurrentItem(unsupported)
+        assert library.import_button.text() == 'Open on website'
+        with patch.object(library_module.QDesktopServices, 'openUrl') as open_url:
+            library.import_button.click()
+            assert open_url.call_args.args[0].toString() == 'https://example.test/planner/?mission=10'
+        assert not imported
+        groups[2].setExpanded(True)
+        library.missions.sortByColumn(0, library_module._Descending)
+        mission = standalone[8]
         library.missions.setCurrentItem(mission)
         assert library.import_button.isEnabled()
         library.import_selected()
@@ -82,10 +97,29 @@ def test_library():
         assert dock.currentWidget() is planner, 'Opening a mission returns to Planner'
         library.refresh()
         assert library.missions.currentItem().data(0, library_module._UserRole) == 8
-        assert library.missions.currentItem().parent().isExpanded(), 'Refresh keeps opened groups'
+        assert library.missions.currentItem().parent() is None
+        assert library.missions.sortColumn() == 0
+        assert library.missions.header().sortIndicatorOrder() == library_module._Descending
         groups = {library.missions.topLevelItem(i).data(0, library_module._ProjectRole):
                   library.missions.topLevelItem(i) for i in range(library.missions.topLevelItemCount())}
-        assert not groups[2].isExpanded(), 'Refresh keeps closed projects'
+        assert groups[2].isExpanded(), 'Refresh keeps opened projects'
+        assert not groups[3].isExpanded(), 'Refresh keeps closed projects'
+        library.missions.setCurrentItem(groups[2].child(0))
+        library.refresh()
+        assert library.missions.currentItem().data(0, library_module._UserRole) == 9
+        assert library.missions.currentItem().parent().isExpanded()
+        with patch.object(planner, '_run_web', return_value=None):
+            library.refresh()
+        assert library.missions.currentItem().data(0, library_module._UserRole) == 9
+        groups = {library.missions.topLevelItem(i).data(0, library_module._ProjectRole):
+                  library.missions.topLevelItem(i) for i in range(library.missions.topLevelItemCount())}
+        library.missions.setCurrentItem(groups[3])
+        library.refresh()
+        assert library.missions.currentItem().data(0, library_module._ProjectRole) == 3
+        library.missions.clearSelection()
+        library.refresh()
+        assert library.selection_hint.text() == 'Select a mission to open it'
+        assert not library.import_button.isEnabled()
         planner._preview_layer_ids = ['preview']
         planner._missions = [[1]]
         library.update_buttons()

@@ -136,6 +136,21 @@ def test_list_returns_the_missions_and_uses_get():
     assert fake.request.full_url == f'{BASE}/api/missions/'
 
 
+def test_library_keeps_unknown_types_without_detail_requests():
+    missions = [{'id': 1, 'mapping_style': 'future-survey'},
+                {'id': 2, 'mapping_style': '2d'}, {'id': 3}]
+    result, fake = _run({'ok': True, 'missions': missions}, lambda: flypath_sync.list_library(BASE, TOKEN))
+    assert result['missions'] == missions
+    assert len(fake.requests) == 1
+
+
+def test_unsupported_detail_is_rejected_explicitly():
+    result, _ = _run({'ok': True, 'mission': {'id': 1, 'settings': {'mapping_style': 'future-survey'}}},
+                     lambda: get_mission(BASE, TOKEN, 1))
+    assert isinstance(result, FlypathSyncError)
+    assert 'Unsupported in this plugin' in str(result)
+
+
 def test_incompatible_website_disables_sync_before_writing():
     error, fake = _run({'ok': True, 'missions': [], '_sync_version': '2'},
                        lambda: push_mission(BASE, TOKEN, {'name': 'Unsaved'}))
