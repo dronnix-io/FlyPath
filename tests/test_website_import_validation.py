@@ -37,7 +37,8 @@ def test_import_preserves_planner():
         planner._apply_website_mission(mission)
         planner._website_link = {'id': 17, 'revision': 2}
         before = snapshot()
-        invalid = [dict(mission, settings={'altitude': 90, 'split_count': float('nan')}),
+        invalid = [dict(mission, settings={'mapping_style': 'future-survey'}),
+                   dict(mission, settings={'altitude': 90, 'split_count': float('nan')}),
                    dict(mission, settings={'side_overlap': '70'}),
                    dict(mission, settings={'flight_path': 'unknown'}),
                    dict(mission, polygon=[[51, 13], [51.001, 13.001], [51, 13.001], [51.001, 13]]),

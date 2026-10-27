@@ -48,6 +48,7 @@ MAX_JSON_DEPTH = 32
 TIMEOUT_S = 20
 SYNC_API_VERSION = 1
 SYNC_VERSION_HEADER = 'X-FlyPath-Sync-Version'
+SUPPORTED_MAPPING_STYLES = ('2d', 'corridor', 'orbit', 'oblique')
 SYNC_MISMATCH_MESSAGE = ('Website sync is incompatible with this FlyPath plugin. '
                          'Update the plugin to reconnect.')
 
@@ -216,7 +217,9 @@ def validate_mission(mission):
         settings = mission.get('settings', {})
         if not isinstance(settings, dict):
             raise ValueError()
-        enums = {'mapping_style': ('2d', 'corridor', 'orbit', 'oblique'), 'capture_mode': ('semi', 'full'),
+        if settings.get('mapping_style', '2d') not in SUPPORTED_MAPPING_STYLES:
+            raise FlypathSyncError('Unsupported in this plugin. Open on website to edit this mission.')
+        enums = {'capture_mode': ('semi', 'full'),
                  'oblique_pattern': ('fast', 'full'),
                  'flight_path': ('straight', 'curved'),
                  'finish_action': tuple(WEBSITE_FINISH_ACTIONS.values()),
