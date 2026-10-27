@@ -3981,8 +3981,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         if reset_area:
             self.previewBtn.setText('Preview on Map')
             self._website_link = None
-            # Full reset — also stop any active draw and remove the boundary
-            self._leave_draw_tool()
+            # Full reset — also stop any active draw (and release the Draw
+            # button) and remove the boundary
+            self._cancel_draw_tool()
             if getattr(self, 'setBreaksBtn', None) and self.setBreaksBtn.isChecked():
                 self.setBreaksBtn.setChecked(False)   # turns the break tool off
             self._clear_breaks()
@@ -4836,6 +4837,11 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         except (TypeError, RuntimeError):
             pass
         self._disconnect_layer_signals()
+        # A draw or break tool left on the canvas would keep drawing after the
+        # panel is gone (closed, or the plugin reloaded).
+        self._cancel_draw_tool()
+        if getattr(self, 'setBreaksBtn', None) and self.setBreaksBtn.isChecked():
+            self.setBreaksBtn.setChecked(False)   # turns the break tool off
         self._remove_survey_area_layer()
         self._leave_orbit_tool()
         self._remove_orbit_centre_layer()

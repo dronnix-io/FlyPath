@@ -835,7 +835,7 @@ class SurveyLifecycleMixin:
         """Remove the drawn polygon and reset the survey area."""
         # Guarantee the crosshair is gone: if a draw is somehow still active
         # (e.g. it started with no prior tool to fall back to), drop it here.
-        self._leave_draw_tool()
+        self._cancel_draw_tool()
         self._remove_survey_area_layer()
         self._on_clear_preview(reset_area=False)
         self._survey_polygon     = None
