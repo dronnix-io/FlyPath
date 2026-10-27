@@ -73,8 +73,9 @@ class _DrawTool(QgsMapTool):
         if event.button() not in (_LeftButton, _RightButton):
             return
         point = self._snap(event.pos())
-        self._points.append(point)
-        self._add_marker(point)
+        if not self._points or point != self._points[-1]:
+            self._points.append(point)
+            self._add_marker(point)
         if event.button() == _RightButton:
             self._finish()
         else:

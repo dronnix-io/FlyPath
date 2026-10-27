@@ -32,6 +32,7 @@ def main():
         'test_flypath_linked_save.py',
         'test_flypath_library.py',
         'test_map_overlays.py',
+        'test_map_tools.py',
         'test_preview_layers.py',
         'test_website_settings.py',
         'test_website_map_extent.py',
