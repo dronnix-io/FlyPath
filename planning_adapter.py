@@ -4,8 +4,9 @@ import math
 import re
 
 from .flypath_engine.planning import (
-    CONTRACT_VERSION, DIRECTION_CONVENTION, PlanningError as _PlanningError, plan_2d,
+    DIRECTION_CONVENTION, PlanningError as _PlanningError, plan_2d,
 )
+from .flypath_engine.precision import CANONICAL_CONTRACT_VERSION as CONTRACT_VERSION
 from .flypath_engine.oblique import plan_oblique
 from .flypath_engine.orbit import plan_orbit
 from .flypath_engine.profiles import PROFILE_VERSION
@@ -13,7 +14,8 @@ from .flypath_engine.profiles import PROFILE_VERSION
 
 PlanningError = _PlanningError
 # Saved Fast oblique results use their original engine geometry during validation.
-SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0', '1.4.1')
+SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0', '1.4.1', '2.0.0')
+SUPPORTED_CONTRACT_VERSIONS = (1, CONTRACT_VERSION)
 ORBIT_MIN_ENGINE_VERSION = (1, 2, 0)   # the first engine release with plan_orbit
 ORBIT_RINGS_MIN_ENGINE_VERSION = (1, 3, 0)
 OBLIQUE_MIN_ENGINE_VERSION = (1, 4, 0)   # the first engine release with plan_oblique
@@ -160,8 +162,10 @@ def consume_result(request, result, *, require_supported=True,
     """Return ordered flight dictionaries after checking saved-result integrity."""
     if not isinstance(result, dict) or not isinstance(request, dict):
         raise ValueError('The saved planning request or result is missing.')
-    if require_supported and (request.get('contract_version') != CONTRACT_VERSION
-                              or result.get('contract_version') != CONTRACT_VERSION):
+    if request.get('contract_version') == 2 and result.get('engine_version') != '2.0.0':
+        raise ValueError('This saved engine version does not support the planning contract.')
+    if require_supported and (request.get('contract_version') not in SUPPORTED_CONTRACT_VERSIONS
+                              or result.get('contract_version') != request.get('contract_version')):
         raise ValueError('This saved planning contract version is not supported.')
     if require_supported and result.get('engine_version') not in SUPPORTED_ENGINE_VERSIONS:
         raise ValueError('This saved engine version is not supported.')
@@ -422,8 +426,8 @@ def validate_mission_provenance(mission):
     if settings.get('mapping_style') == 'orbit' and any(
             flight['headings'] is None for flight in flights):
         raise ValueError('The saved orbit route is invalid.')
-    supported = (request.get('contract_version') == CONTRACT_VERSION
-                 and result.get('contract_version') == CONTRACT_VERSION
+    supported = (request.get('contract_version') in SUPPORTED_CONTRACT_VERSIONS
+                 and result.get('contract_version') == request.get('contract_version')
                  and result.get('engine_version') in SUPPORTED_ENGINE_VERSIONS)
     replay_version = result['engine_version'] if oblique else None
     if supported and not results_match(
@@ -433,17 +437,8 @@ def validate_mission_provenance(mission):
     return supported, flights
 
 
-# Results planned on another operating system (the website runs Linux) can
-# differ from a local plan in the last digits of their coordinates, distances
-# and times, because the maths libraries round differently. Far below a
-# millimetre, such differences are the same plan.
-RESULT_REL_TOLERANCE = 1e-9
-RESULT_ABS_TOLERANCE = 1e-9
-
-
 def results_match(first, second):
-    """True when two planning results are the same plan: the same structure,
-    text and flags, with numbers equal within the rounding tolerance."""
+    """Compare saved provenance exactly, without treating flags as numbers."""
     if isinstance(first, dict) and isinstance(second, dict):
         return first.keys() == second.keys() and all(
             results_match(first[key], second[key]) for key in first)
@@ -453,10 +448,7 @@ def results_match(first, second):
     numbers = (int, float)
     if (isinstance(first, numbers) and isinstance(second, numbers)
             and not isinstance(first, bool) and not isinstance(second, bool)):
-        if not (isinstance(first, float) and isinstance(second, float)):
-            return first == second            # counts and indices match exactly
-        return math.isclose(first, second, rel_tol=RESULT_REL_TOLERANCE,
-                            abs_tol=RESULT_ABS_TOLERANCE)
+        return first == second
     return type(first) is type(second) and first == second
 
 

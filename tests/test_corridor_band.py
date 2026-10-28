@@ -51,6 +51,24 @@ def test_corridor_band_shows_with_the_line_and_follows_the_buffer():
             planner.bufferSpin.setValue(planner.bufferSpin.value() * 2)
             app.processEvents()
             assert band_area(planner) > narrow * 1.5, 'the band follows the Buffer'
+            survey = QgsProject.instance().mapLayer(planner._survey_area_layer_id)
+            fid = next(survey.getFeatures()).id()
+            survey.startEditing()
+            for longitude in (-113, -112):
+                moved = QgsGeometry.fromWkt(
+                    f'LINESTRING({longitude} 51.05, {longitude + .01} 51.052)')
+                survey.changeGeometry(fid, moved)
+                if longitude == -112:
+                    survey.commitChanges()
+                app.processEvents()
+                band = QgsProject.instance().mapLayer(planner._corridor_band_layer_id)
+                assert abs(band.extent().center().x() - (longitude + .005)) < .001
+            survey.startEditing()
+            survey.changeGeometry(fid, line)
+            survey.rollBack()
+            app.processEvents()
+            band = QgsProject.instance().mapLayer(planner._corridor_band_layer_id)
+            assert abs(band.extent().center().x() - (-112 + .005)) < .001
             planner._on_preview()
             assert band_area(planner), 'the band stays with the preview'
             planner._on_remove_drawn_polygon()

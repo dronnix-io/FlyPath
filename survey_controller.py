@@ -808,6 +808,7 @@ class SurveyLifecycleMixin:
             self._survey_line_crs = layer.crs()
             self._clear_breaks()          # editing the line changes vertex indices
             self._on_clear_preview(reset_area=False)
+            self._show_corridor_band()
             self._update_stats()          # corridor branch refreshes Length
             return
         self._survey_polygon     = feat.geometry()
@@ -828,6 +829,7 @@ class SurveyLifecycleMixin:
             self._survey_line     = geom
             self._survey_line_crs = layer.crs()
             self._on_clear_preview(reset_area=False)
+            self._show_corridor_band()
             self._update_stats()          # corridor branch refreshes Length
             return
         self._survey_polygon     = geom
