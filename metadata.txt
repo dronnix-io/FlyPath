@@ -3,8 +3,15 @@ name=FlyPath
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D, oblique, corridor and orbit (3D model) drone missions directly from QGIS
-version=4.0.0
-changelog=4.0.0 - New Oblique Mapping mission type for 3D models of an area: the camera tilts
+version=4.1.0
+changelog=4.1.0 - Fixes and polish. Missions planned on flypath.io (including orbit and
+    oblique) now open in QGIS on any computer. My missions lists standalone missions directly,
+    shows projects with their mission count, and offers Open on website for missions this plugin
+    cannot open. Drawing only starts from the Draw button: it stops when you switch source or
+    mission type, and when the panel closes or the plugin reloads. Finishing a drawing on its last
+    point no longer adds a duplicate vertex. The Survey Area source starts on Draw, and the
+    corridor band shows as soon as the centre line is drawn.
+    4.0.0 - New Oblique Mapping mission type for 3D models of an area: the camera tilts
     to an angle you set and the area is photographed from four sides, after an optional nadir
     pass. Fast flies two crossing grids facing along their lines (about half the flight time);
     Full flies four passes, one facing each side, like DJI Pilot 2. Supports terrain follow and
