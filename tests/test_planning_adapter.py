@@ -65,7 +65,7 @@ def test_locations_survive_the_adapter_request():
 
 
 @pytest.mark.parametrize('pattern,nadir', [('fast', True), ('fast', False), ('full', True), ('full', False)])
-@pytest.mark.parametrize('engine_version', ['1.4.0', '1.4.1'])
+@pytest.mark.parametrize('engine_version', ['1.4.0', '1.4.1', '2.0.0'])
 def test_oblique_sync_provenance_keeps_passes_and_rejects_changed_settings(pattern, nadir, engine_version):
     from FlyPath.flypath_sync import validate_mission, FlypathSyncError
 
@@ -73,6 +73,7 @@ def test_oblique_sync_provenance_keeps_passes_and_rejects_changed_settings(patte
     planned.pop('cross_hatch')
     planned.update(operation='plan_oblique', mapping_style='oblique', pattern=pattern,
                    gimbal_pitch_deg=-45, include_nadir=nadir)
+    planned['contract_version'] = 2 if engine_version == '2.0.0' else 1
     result = planning_adapter.plan(planned, engine_version=engine_version)
     mission = {
         'drone_model': 'mini3pro',
@@ -149,6 +150,7 @@ def test_saved_result_mismatch_is_rejected():
 
 def test_older_result_keeps_view_only_provenance():
     planned_request = request()
+    planned_request['contract_version'] = 1
     result = planning_adapter.plan(planned_request)
     result['engine_version'] = '0.3.0'
     mission = {
@@ -357,14 +359,14 @@ def _nudged(value, relative):
     return value
 
 
-def test_results_from_another_os_still_verify_but_real_changes_do_not():
+def test_saved_results_require_exact_numeric_provenance():
     planned = orbit_request()
     result = planning_adapter.plan(planned)
-    assert planning_adapter.results_match(result, _nudged(result, 1e-12))
+    assert not planning_adapter.results_match(result, _nudged(result, 1e-12))
     assert not planning_adapter.results_match(result, _nudged(result, 1e-6))
     mission = {
         'drone_model': 'mini4pro', 'polygon': [[51.0, -114.0]],
-        'planning_request': planned, 'planning_result': _nudged(result, 1e-12),
+        'planning_request': planned, 'planning_result': result,
         'settings': {
             'mapping_style': 'orbit', 'orbit_radius': 30, 'orbit_tilt': -35,
             'altitude': 25, 'speed': 3, 'reverse_route': False,
@@ -375,7 +377,10 @@ def test_results_from_another_os_still_verify_but_real_changes_do_not():
     supported, flights = planning_adapter.validate_mission_provenance(mission)
     assert supported and flights[0]['headings']
     moved = deepcopy(mission)
-    moved['planning_result']['route']['waypoints'][0]['position']['latitude_deg'] += 1e-6
+    moved['planning_result']['route']['waypoints'][0]['position']['longitude_deg'] += 1e-7
+    moved['waypoints'] = [
+        [row['position']['latitude_deg'], row['position']['longitude_deg']]
+        for row in moved['planning_result']['route']['waypoints']]
     try:
         planning_adapter.validate_mission_provenance(moved)
     except ValueError as exc:
@@ -388,8 +393,10 @@ def test_results_from_another_os_still_verify_but_real_changes_do_not():
     assert not planning_adapter.results_match({'flag': True}, {'flag': 1})
 
 
-def test_orbit_provenance_verifies_result_and_settings():
+@pytest.mark.parametrize('contract_version', [1, 2])
+def test_orbit_provenance_verifies_result_and_settings(contract_version):
     planned = orbit_request()
+    planned['contract_version'] = contract_version
     result = planning_adapter.plan(planned)
     mission = {
         'drone_model': 'mini4pro', 'polygon': [[51.0, -114.0]],
@@ -420,7 +427,7 @@ def test_orbit_provenance_verifies_result_and_settings():
         for version in ('1.2.0', '1.10.0', '1.1.0', '9.0.0', '1.2.x'):
             changed = deepcopy(saved)
             changed['planning_result']['engine_version'] = version
-            if version in ('1.2.0', '1.10.0'):
+            if contract_version == 1 and version in ('1.2.0', '1.10.0'):
                 supported, flights = planning_adapter.validate_mission_provenance(changed)
                 assert supported and flights[0]['headings']
                 assert changed['planning_result']['engine_version'] == version
@@ -493,6 +500,7 @@ def test_multi_ring_split_provenance_verifies_settings_and_flights():
 
 def test_orbit_results_follow_the_supported_engine_versions():
     planned = orbit_request()
+    planned["contract_version"] = 1
     result = planning_adapter.plan(planned)
     malformed = ('1.2', '1.2.0.1', '1.2.x', '1.2.0-rc1', '+1.2.0', ' 1.2.0', '')
     supported = planning_adapter.SUPPORTED_ENGINE_VERSIONS + ('1.10.0',) + malformed
@@ -521,3 +529,11 @@ if __name__ == '__main__':
     for test in tests:
         test()
     print('%d planning adapter checks passed' % len(tests))
+
+
+def test_canonical_contract_rejects_legacy_engine_label():
+    planned = orbit_request()
+    result = dict(planning_adapter.plan(planned), engine_version='1.4.1')
+    for require_supported in (True, False):
+        with pytest.raises(ValueError, match='does not support the planning contract'):
+            planning_adapter.consume_result(planned, result, require_supported=require_supported)

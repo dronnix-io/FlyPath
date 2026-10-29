@@ -229,6 +229,10 @@ def test_planning_dialog_state():
         assert not planner._preview_layer_ids and not planner._waypoints
         assert planner._split_choice_required, 'Do not guess an older splitting choice'
         older = deepcopy(shared)
+        older['planning_request']['contract_version'] = 1
+        older['planning_result'] = module.planning_adapter.plan(older['planning_request'])
+        older['waypoints'] = [[row['position']['latitude_deg'], row['position']['longitude_deg']]
+                              for row in older['planning_result']['route']['waypoints']]
         older['planning_result']['engine_version'] = '0.3.0'
         planner._apply_website_mission(older)
         assert planner._planning.unsupported and planner._planning.locked

@@ -43,3 +43,13 @@ Calculation rules use WGS84 ellipsoidal measurements, explicit recovery travel,
 capture-based photo counts, and named time allowances. Sync rejects unsupported
 engine or contract versions and asks the user to update. Updating software never
 regenerates a saved route.
+
+## Contract 2 integration
+
+The plugin pins the engine 2.0.0 candidate by immutable commit. Newly generated
+2D, Orbit and Oblique missions use contract 2 and its engine-owned numeric
+precision. Saved results still compare exactly; consumers never round imported
+results to make them match. Contract-1 missions retain their original replay
+behavior and saved routes until explicit regeneration. Both consumers must be
+updated before transferring contract-2 missions. The corridor coverage band is
+a UI overlay and does not affect the engine route.
