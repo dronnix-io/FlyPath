@@ -3,8 +3,14 @@ name=FlyPath
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D, oblique, corridor and orbit (3D model) drone missions directly from QGIS
-version=4.1.0
-changelog=4.1.0 - Fixes and polish. Missions planned on flypath.io (including orbit and
+version=4.2.0
+changelog=4.2.0 - Exact plans on every computer. New missions use planning engine 2.0.0,
+    which gives the same result on Windows, Linux and macOS, so orbit and oblique missions can
+    be saved to flypath.io from any computer once the website supports the new format. The
+    corridor band now follows the centre line while you edit it, and after you save or undo
+    the edit. Orbit and oblique missions saved on flypath.io before this version may need to be
+    regenerated on the website before they open in QGIS.
+    4.1.0 - Fixes and polish. Missions planned on flypath.io (including orbit and
     oblique) now open in QGIS on any computer. My missions lists standalone missions directly,
     shows projects with their mission count, and offers Open on website for missions this plugin
     cannot open. Drawing only starts from the Draw button: it stops when you switch source or
