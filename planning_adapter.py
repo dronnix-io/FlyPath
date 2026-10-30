@@ -9,7 +9,7 @@ from .flypath_engine.planning import (
 from .flypath_engine.precision import CANONICAL_CONTRACT_VERSION as CONTRACT_VERSION
 from .flypath_engine.oblique import plan_oblique
 from .flypath_engine.orbit import plan_orbit
-from .flypath_engine.panorama import plan_panorama
+from .flypath_engine.panorama import AUTO_SPACING_PER_ALTITUDE, plan_panorama
 from .flypath_engine.profiles import PROFILE_VERSION
 
 
@@ -23,6 +23,8 @@ ORBIT_MIN_ENGINE_VERSION = (1, 2, 0)   # the first engine release with plan_orbi
 ORBIT_RINGS_MIN_ENGINE_VERSION = (1, 3, 0)
 OBLIQUE_MIN_ENGINE_VERSION = (1, 4, 0)   # the first engine release with plan_oblique
 PANORAMA_MIN_ENGINE_VERSION = (2, 1, 0)  # the first engine release with plan_panorama
+# Area panoramas: the engine's default point spacing, as a multiple of the altitude.
+PANORAMA_AUTO_SPACING_PER_ALTITUDE = AUTO_SPACING_PER_ALTITUDE
 
 
 def _orbit_capable(version, minimum=ORBIT_MIN_ENGINE_VERSION):

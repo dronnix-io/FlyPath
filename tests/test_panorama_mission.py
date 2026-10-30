@@ -223,7 +223,11 @@ def test_panorama_area_places_points_on_a_hexagon_grid():
             # The usual area sources replace the point buttons.
             assert shown(planner._sourceStack) and shown(planner.areaLabel)
             assert shown(planner.panoramaSpacingSpin) and not shown(planner._panoramaPlaceRow)
-            assert planner.panoramaSpacingSpin.text() == 'Auto (3 × altitude)'
+            assert planner.panoramaSpacingSpin.text() == 'Auto (180 m)'
+            assert shown(planner.panoramaSpacingHint)
+            assert planner.panoramaSpacingHint.text() == (
+                'Each panorama sees the ground well out to about 104 m, so points 180 m '
+                'apart cover the area with no gaps.')
 
             # Choosing an area previews its points at once, numbered in flight order.
             planner._set_survey_polygon(area, QgsCoordinateReferenceSystem('EPSG:4326'))
@@ -237,9 +241,15 @@ def test_panorama_area_places_points_on_a_hexagon_grid():
             # A set spacing places fewer, wider points.
             planner.panoramaSpacingSpin.setValue(300)
             app.processEvents()
+            assert planner.panoramaSpacingHint.text().startswith('Wider than the 180 m needed')
             if planner._planning.settings_changed():
                 planner._on_preview()
             assert len(planner._planning.result['panorama']['points']) == 7 and len(markers()) == 7
+            # Auto follows the altitude.
+            planner.panoramaSpacingSpin.setValue(0)
+            planner.altitudeSpin.setValue(80)
+            assert planner.panoramaSpacingSpin.text() == 'Auto (240 m)'
+            assert '139 m' in planner.panoramaSpacingHint.text()
 
             # Back to points clears the area; leaving Panorama restores the 2D rows.
             planner.panoramaSingleRadio.click()

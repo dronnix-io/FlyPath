@@ -12,6 +12,7 @@ polygon from the usual Draw, Layer or Selection source, and the engine places
 the points on a hexagon grid inside it, by default three altitudes apart.
 """
 
+import math
 import sys
 
 from qgis.PyQt.QtCore import Qt
@@ -49,6 +50,10 @@ PLACE_TEXT = 'Place Point on Map'
 ADD_TEXT = 'Add Points on Map'
 _INFO_IDLE = 'ⓘ  Hover over any field to see what it does.'
 _WGS84 = QgsCoordinateReferenceSystem('EPSG:4326')
+# The lowest oblique row looks 30 degrees down: it sees the ground well out to
+# altitude / tan(30), about 1.7 altitudes. Hexagon points sqrt(3) times that
+# apart (the engine's three altitudes) cover an area with those circles.
+_VIEW_DEPRESSION_DEG = 30
 
 
 class PanoramaPointTool(QgsMapTool):
@@ -182,7 +187,6 @@ class PanoramaMixin:
         self.panoramaSpacingSpin.setRange(0, 5000)
         self.panoramaSpacingSpin.setSingleStep(10)
         self.panoramaSpacingSpin.setSuffix(' m')
-        self.panoramaSpacingSpin.setSpecialValueText('Auto (3 × altitude)')
         self.panoramaSpacingSpin.setValue(0)
         self._tip(self.panoramaSpacingSpin,
             'Distance between neighbouring panorama points in Area mode. Auto '
@@ -191,13 +195,23 @@ class PanoramaMixin:
             'the area without gaps. Closer points give sharper views of the '
             'ground between them, but more points and flight time.')
         form.addRow('Point Spacing', self.panoramaSpacingSpin)
-        for widget in (self.panoramaOverlapSpin, self.panoramaNadirCheck, self.panoramaSpacingSpin):
+
+        # What the spacing means at the current altitude, in metres.
+        self.panoramaSpacingHint = QLabel()
+        self.panoramaSpacingHint.setObjectName('selectionInfo')
+        self.panoramaSpacingHint.setWordWrap(True)
+        form.addRow(self.panoramaSpacingHint)
+        for widget in (self.panoramaOverlapSpin, self.panoramaNadirCheck, self.panoramaSpacingSpin,
+                       self.panoramaSpacingHint):
             self._set_row_visible(form, widget, False)
+        self._refresh_panorama_spacing_hint()
 
     def _panorama_connect_signals(self):
         self.panoramaMultipleRadio.toggled.connect(self._on_panorama_mode_changed)
         self.panoramaAreaRadio.toggled.connect(self._on_panorama_area_toggled)
         self.panoramaSpacingSpin.valueChanged.connect(self._on_param_changed)
+        self.panoramaSpacingSpin.valueChanged.connect(self._refresh_panorama_spacing_hint)
+        self.altitudeSpin.valueChanged.connect(self._refresh_panorama_spacing_hint)
         self.placePointBtn.toggled.connect(self._on_place_point_toggled)
         self.undoPointBtn.clicked.connect(self._on_undo_panorama_point)
         self.removePointBtn.clicked.connect(self._on_remove_panorama_point)
@@ -218,6 +232,9 @@ class PanoramaMixin:
         for widget in (self.panoramaOverlapSpin, self.panoramaNadirCheck):
             self._set_row_visible(self._flight_form, widget, panorama)
         self._set_row_visible(self._flight_form, self.panoramaSpacingSpin, area)
+        self._set_row_visible(self._flight_form, self.panoramaSpacingHint, area)
+        if area:
+            self._refresh_panorama_spacing_hint()
         self._set_row_visible(self._area_form, self.areaLabel, area or not panorama)
         # Every photo has its own waypoint, so the capture choice is hidden.
         self._set_row_visible(self._mission_form, self._captureRow, not panorama)
@@ -266,6 +283,25 @@ class PanoramaMixin:
         self._set_row_visible(self._flight_form, self.sideOverlapSpin, False)
         self._set_row_visible(self._flight_form, self.frontOverlapStack, False)
         self._set_row_visible(self._area_form, self.demCombo, False)
+
+    def _refresh_panorama_spacing_hint(self, *_args):
+        """Show Auto's distance at this altitude, and what the spacing gives."""
+        altitude = self.altitudeSpin.value()
+        auto = planning_adapter.PANORAMA_AUTO_SPACING_PER_ALTITUDE * altitude
+        view = altitude / math.tan(math.radians(_VIEW_DEPRESSION_DEG))
+        self.panoramaSpacingSpin.setSpecialValueText(f'Auto ({auto:.0f} m)')
+        spacing = self.panoramaSpacingSpin.value()
+        if not spacing:
+            text = (f'Each panorama sees the ground well out to about {view:.0f} m, so '
+                    f'points {auto:.0f} m apart cover the area with no gaps.')
+        elif spacing <= auto:
+            text = (f'Closer than the {auto:.0f} m needed at this altitude: the views '
+                    'overlap more, for sharper ground between points, but take more '
+                    'points and flight time.')
+        else:
+            text = (f'Wider than the {auto:.0f} m needed at this altitude: some ground '
+                    'between points is only seen at a low angle.')
+        self.panoramaSpacingHint.setText(text)
 
     def _panorama_multiple(self):
         return self.panoramaMultipleRadio.isChecked()
