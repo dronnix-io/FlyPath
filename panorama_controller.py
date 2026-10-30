@@ -7,7 +7,9 @@ translation. The dialog's shared planning flow runs the request in the engine
 per camera row, because DJI Fly missions cannot turn the drone in place.
 
 Single places one point, and a click moves it. Multiple adds a point with each
-click, numbered in flight order; Undo removes the last one.
+click, numbered in flight order; Undo removes the last one. Area takes a survey
+polygon from the usual Draw, Layer or Selection source, and the engine places
+the points on a hexagon grid inside it, by default three altitudes apart.
 """
 
 import sys
@@ -28,12 +30,13 @@ from qgis.gui import QgsMapTool
 from .map_tools import FLYPATH_TOOL_NAME, is_flypath_tool, previous_tool
 
 try:
-    from . import form_rows, planning_adapter, preview_layers
+    from . import form_rows, planning_adapter, preview_layers, survey_geometry
     from .hardware import registry
 except ImportError:  # standalone tests import modules as top-level packages
     import form_rows
     import planning_adapter
     import preview_layers
+    import survey_geometry
     from hardware import registry
 
 
@@ -92,10 +95,11 @@ class PanoramaMixin:
         dialog = sys.modules[type(self).__module__]   # the panel's segmented buttons
         self.panoramaSingleRadio = dialog._SegmentButton('Single')
         self.panoramaMultipleRadio = dialog._SegmentButton('Multiple')
+        self.panoramaAreaRadio = dialog._SegmentButton('Area')
         self.panoramaSingleRadio.setChecked(True)
         self._panoramaModeGroup = QButtonGroup(self)
-        self._panoramaModeGroup.addButton(self.panoramaSingleRadio)
-        self._panoramaModeGroup.addButton(self.panoramaMultipleRadio)
+        for button in (self.panoramaSingleRadio, self.panoramaMultipleRadio, self.panoramaAreaRadio):
+            self._panoramaModeGroup.addButton(button)
         self._tip(self.panoramaSingleRadio,
             'Single: one panorama. A click on the map places the point, and '
             'another click moves it.')
@@ -103,10 +107,14 @@ class PanoramaMixin:
             'Multiple: a panorama at every point you click, flown in the order '
             'you click them. Undo removes the last point. Points need some room '
             'between them, so the laps around them do not overlap.')
+        self._tip(self.panoramaAreaRadio,
+            'Area: draw or choose a survey area, and FlyPath spreads panorama '
+            'points over it on a hexagon grid (like Spexi), flown row by row.')
         self._panoramaModeRow = QWidget()
         mode_layout = QHBoxLayout(self._panoramaModeRow)
         mode_layout.setContentsMargins(0, 0, 0, 0)
-        mode_layout.addWidget(dialog._segmented(self.panoramaSingleRadio, self.panoramaMultipleRadio))
+        mode_layout.addWidget(dialog._segmented(
+            self.panoramaSingleRadio, self.panoramaMultipleRadio, self.panoramaAreaRadio))
         mode_layout.addStretch()
         form.addRow('Points', self._panoramaModeRow)
         self._set_row_visible(form, self._panoramaModeRow, False)
@@ -165,11 +173,27 @@ class PanoramaMixin:
             'End each panorama with one photo straight down over its point, so '
             'the ground under the drone is in the panorama too.')
         form.addRow('Nadir Photo', self.panoramaNadirCheck)
-        for widget in (self.panoramaOverlapSpin, self.panoramaNadirCheck):
+
+        self.panoramaSpacingSpin = QSpinBox()
+        self.panoramaSpacingSpin.setRange(0, 5000)
+        self.panoramaSpacingSpin.setSingleStep(10)
+        self.panoramaSpacingSpin.setSuffix(' m')
+        self.panoramaSpacingSpin.setSpecialValueText('Auto (3 × altitude)')
+        self.panoramaSpacingSpin.setValue(0)
+        self._tip(self.panoramaSpacingSpin,
+            'Distance between neighbouring panorama points in Area mode. Auto '
+            'uses three times the altitude: each panorama sees the ground well '
+            'out to about 1.7 times the altitude, so points this far apart cover '
+            'the area without gaps. Closer points give sharper views of the '
+            'ground between them, but more points and flight time.')
+        form.addRow('Point Spacing', self.panoramaSpacingSpin)
+        for widget in (self.panoramaOverlapSpin, self.panoramaNadirCheck, self.panoramaSpacingSpin):
             self._set_row_visible(form, widget, False)
 
     def _panorama_connect_signals(self):
         self.panoramaMultipleRadio.toggled.connect(self._on_panorama_mode_changed)
+        self.panoramaAreaRadio.toggled.connect(self._on_panorama_area_toggled)
+        self.panoramaSpacingSpin.valueChanged.connect(self._on_param_changed)
         self.placePointBtn.toggled.connect(self._on_place_point_toggled)
         self.undoPointBtn.clicked.connect(self._on_undo_panorama_point)
         self.removePointBtn.clicked.connect(self._on_remove_panorama_point)
@@ -183,16 +207,21 @@ class PanoramaMixin:
 
         Called with False before the other kinds' layouts, which restore
         their own rows, and with True after them."""
-        for widget in (self._panoramaModeRow, self.panoramaPointLabel, self._panoramaPlaceRow):
+        area = panorama and self._panorama_area()
+        for widget in (self._panoramaModeRow, self.panoramaPointLabel):
             self._set_row_visible(self._area_form, widget, panorama)
+        self._set_row_visible(self._area_form, self._panoramaPlaceRow, panorama and not area)
         for widget in (self.panoramaOverlapSpin, self.panoramaNadirCheck):
             self._set_row_visible(self._flight_form, widget, panorama)
+        self._set_row_visible(self._flight_form, self.panoramaSpacingSpin, area)
+        self._set_row_visible(self._area_form, self.areaLabel, area or not panorama)
         # Every photo has its own waypoint, so the capture choice is hidden.
         self._set_row_visible(self._mission_form, self._captureRow, not panorama)
         if not panorama:
             return
-        self._set_row_visible(self._area_form, self._sourceRow, False)
-        self._set_row_visible(self._area_form, self._sourceStack, False)
+        # Area mode takes its polygon from the usual Draw, Layer or Selection source.
+        self._set_row_visible(self._area_form, self._sourceRow, area)
+        self._set_row_visible(self._area_form, self._sourceStack, area)
         self._set_row_visible(self._flight_form, self.gsdSpin, False)
         # Flights split between panoramas by Max Waypoints and the battery,
         # so Split Missions, terrain follow and reversing do not apply.
@@ -234,6 +263,19 @@ class PanoramaMixin:
 
     def _panorama_multiple(self):
         return self.panoramaMultipleRadio.isChecked()
+
+    def _panorama_area(self):
+        return self.panoramaAreaRadio.isChecked()
+
+    def _on_panorama_area_toggled(self, area):
+        """Points and an area are different inputs: switching clears the one
+        in use, then shows the controls of the other."""
+        if self._mission_kind() != 'panorama':
+            return
+        self._on_clear_preview(reset_area=True)
+        self._apply_kind_layout()
+        self._apply_mission_type_capabilities()
+        self._refresh_panorama_controls()
 
     def _on_panorama_mode_changed(self, multiple):
         """Single keeps only the first point; both modes keep placing."""
@@ -337,6 +379,13 @@ class PanoramaMixin:
 
     def _refresh_panorama_controls(self):
         points = self._panorama_points
+        if self._panorama_area():
+            # The engine places the points; the label counts them once planned.
+            self.removePointBtn.setVisible(False)
+            self.undoPointBtn.setVisible(False)
+            if not points:
+                self.panoramaPointLabel.setText('— draw or choose an area —')
+            return
         if not points:
             text = NO_POINT_TEXT
         elif len(points) == 1:
@@ -347,18 +396,21 @@ class PanoramaMixin:
         self.removePointBtn.setVisible(bool(points))
         self.undoPointBtn.setVisible(self._panorama_multiple() and bool(points))
 
-    def _show_panorama_points(self):
+    def _show_panorama_points(self, points=None):
+        """Mark the points, numbered when there are several: the clicked ones,
+        or those the engine placed over an area."""
+        points = self._panorama_points if points is None else points
         self._remove_panorama_layer()
-        if not self._panorama_points:
+        if not points:
             return
         layer = QgsVectorLayer('Point?crs=EPSG:4326&field=label:string',
                                'FlyPath — Panorama Points', 'memory')
         layer.setCustomProperty('flypath_internal', True)
         features = []
-        for number, point in enumerate(self._panorama_points, 1):
+        for number, point in enumerate(points, 1):
             feature = QgsFeature(layer.fields())
             feature.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(*point)))
-            feature.setAttribute('label', str(number) if len(self._panorama_points) > 1 else '')
+            feature.setAttribute('label', str(number) if len(points) > 1 else '')
             features.append(feature)
         layer.dataProvider().addFeatures(features)
         layer.renderer().setSymbol(QgsMarkerSymbol.createSimple({
@@ -396,7 +448,26 @@ class PanoramaMixin:
         self._remove_panorama_layer()
         self._refresh_panorama_controls()
 
+    def _show_planned_panorama_points(self, result):
+        """In Area mode, mark the points the engine placed and count them."""
+        if not self._panorama_area():
+            return
+        centres = [(point['centre']['longitude_deg'], point['centre']['latitude_deg'])
+                   for point in result['panorama']['points']]
+        self._show_panorama_points(centres)
+        self.panoramaPointLabel.setText(
+            '1 point' if len(centres) == 1 else f'{len(centres)} points'
+            f" · {result['panorama']['point_spacing_m']:.0f} m apart")
+
     def _has_panorama_point(self, silent=False):
+        if self._panorama_area():
+            if self._survey_polygon is None or self._survey_polygon_crs is None:
+                if not silent:
+                    QMessageBox.information(
+                        self, 'No Panorama Area',
+                        'Draw a polygon on the map or select a polygon layer first.')
+                return False
+            return True
         if not self._panorama_points:
             if not silent:
                 QMessageBox.information(
@@ -412,8 +483,14 @@ class PanoramaMixin:
         if drone.category != 'consumer' or not drone.website_code:
             raise ValueError('Panorama missions need a DJI Fly drone; %s is not supported.'
                              % drone.name)
+        if self._panorama_area() and points is None:
+            area = {'survey_area': survey_geometry.planning_area(
+                        self._survey_polygon, self._survey_polygon_crs),
+                    'point_spacing_m': self.panoramaSpacingSpin.value() or None}
+        else:
+            area = {'points': self._panorama_points if points is None else points}
         return planning_adapter.build_panorama_request(
-            points=self._panorama_points if points is None else points,
+            **area,
             drone_profile_id=drone.website_code,
             altitude_m=self.altitudeSpin.value(),
             speed_m_s=self.speedSpin.value(),

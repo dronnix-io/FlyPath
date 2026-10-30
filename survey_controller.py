@@ -524,6 +524,11 @@ class SurveyLifecycleMixin:
         area_ha = self._area_ha()
         self.areaLabel.setText(f'{area_ha:.2f} ha')
         self._update_stats()
+        if self._mission_kind() == 'panorama':
+            # Show the panorama points at once, as when they are clicked.
+            if not self._preview_layer_ids:
+                self._on_preview()
+            return
         self._check_area_advisory(area_ha)
 
     def _clear_layer_selection(self):

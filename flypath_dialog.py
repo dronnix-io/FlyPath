@@ -3515,7 +3515,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             rings = len(result['orbit'].get('rings') or (None,))
             self.linesLabel.setText('1 ring' if rings == 1 else f'{rings} rings')
         elif request.get('operation') == 'plan_panorama':
-            self.coverageLabel.setText('—')       # a panorama covers no area
+            area = stats['survey_area_m2']
+            self.coverageLabel.setText(f'{area / 10_000:.1f} ha' if area else '—')
+            self._show_planned_panorama_points(result)
             points = len(result['panorama']['points'])
             rows = len(result['panorama']['points'][0]['rows'])
             self.linesLabel.setText(f'{points} points' if points > 1 else

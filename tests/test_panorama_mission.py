@@ -185,3 +185,72 @@ def test_multiple_panorama_points_number_split_and_undo():
     canvas.close()
     canvas.deleteLater()
     app.processEvents()
+
+
+def test_panorama_area_places_points_on_a_hexagon_grid():
+    try:
+        from qgis.core import QgsApplication, QgsCoordinateReferenceSystem, QgsGeometry, QgsProject
+        from qgis.gui import QgsMapCanvas
+        from qgis.PyQt.QtCore import QSettings
+    except ImportError as exc:
+        raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
+    package = Path(__file__).resolve().parents[1].name
+    dialog = importlib.import_module(package + '.flypath_dialog')
+    app = QgsApplication.instance() or QgsApplication([], False)
+    app.initQgis()
+    ini = os.path.join(tempfile.mkdtemp(), 'settings.ini')
+    ini_format = getattr(QSettings, 'Format', QSettings).IniFormat
+    canvas = QgsMapCanvas()
+    area = QgsGeometry.fromWkt('POLYGON((-114.09 51.05, -114.08 51.05, -114.08 51.055, '
+                               '-114.09 51.055, -114.09 51.05))')
+
+    def shown(widget):
+        return not widget.isHidden()
+
+    def markers():
+        layer = QgsProject.instance().mapLayer(planner._panorama_layer_id)
+        return [feature['label'] for feature in layer.getFeatures()]
+
+    with patch.object(dialog, 'QSettings', lambda *args: QSettings(ini, ini_format)):
+        planner = dialog.FlyPathDialog(SimpleNamespace(mapCanvas=lambda: canvas))
+        try:
+            planner.show()
+            planner.droneModelCombo.setCurrentText('DJI Mini 4 Pro')
+            planner.missionTypeCombo.setCurrentText('Panorama')
+            planner.altitudeSpin.setValue(60)
+            planner.speedSpin.setValue(8)
+            planner.panoramaAreaRadio.click()
+            # The usual area sources replace the point buttons.
+            assert shown(planner._sourceStack) and shown(planner.areaLabel)
+            assert shown(planner.panoramaSpacingSpin) and not shown(planner._panoramaPlaceRow)
+            assert planner.panoramaSpacingSpin.text() == 'Auto (3 × altitude)'
+
+            # Choosing an area previews its points at once, numbered in flight order.
+            planner._set_survey_polygon(area, QgsCoordinateReferenceSystem('EPSG:4326'))
+            result = planner._planning.result
+            assert result['panorama']['layout'] == 'area' and result['panorama']['point_spacing_m'] == 180
+            assert planner.panoramaPointLabel.text() == '11 points · 180 m apart'
+            assert planner.linesLabel.text() == '11 points' and planner.coverageLabel.text() == '39.0 ha'
+            assert markers() == [str(number) for number in range(1, 12)]
+            assert planner._preview_layer_ids
+
+            # A set spacing places fewer, wider points.
+            planner.panoramaSpacingSpin.setValue(300)
+            app.processEvents()
+            if planner._planning.settings_changed():
+                planner._on_preview()
+            assert len(planner._planning.result['panorama']['points']) == 7 and len(markers()) == 7
+
+            # Back to points clears the area; leaving Panorama restores the 2D rows.
+            planner.panoramaSingleRadio.click()
+            assert planner._survey_polygon is None and planner._panorama_layer_id is None
+            assert shown(planner._panoramaPlaceRow) and not shown(planner._sourceStack)
+            assert not shown(planner.panoramaSpacingSpin)
+            planner.missionTypeCombo.setCurrentText('2D Mapping')
+            assert shown(planner.areaLabel) and shown(planner._sourceStack)
+        finally:
+            planner.close()
+            app.processEvents()
+    canvas.close()
+    canvas.deleteLater()
+    app.processEvents()

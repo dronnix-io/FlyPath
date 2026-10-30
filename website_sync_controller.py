@@ -626,6 +626,7 @@ class WebsiteSyncLifecycleMixin:
             'obliqueFastRadio', 'obliqueFullRadio', 'obliquePitchSpin', 'obliqueNadirCheck',
             'placePointBtn', 'removePointBtn', 'undoPointBtn', 'panoramaOverlapSpin',
             'panoramaNadirCheck', 'panoramaSingleRadio', 'panoramaMultipleRadio',
+            'panoramaAreaRadio', 'panoramaSpacingSpin',
         )
         widgets = {}
         appearance = {}
