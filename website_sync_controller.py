@@ -285,6 +285,10 @@ class WebsiteSyncLifecycleMixin:
         kind = self._mission_kind()
         corridor = kind == 'corridor'
         orbit = kind == 'orbit'
+        if kind == 'panorama':
+            raise FlypathSyncError(
+                'flypath.io does not support Panorama missions yet. Export the '
+                'mission as a KMZ or send it to the DJI RC instead.')
         if kind == 'oblique' and self.terrainFollowCheck.isChecked():
             raise FlypathSyncError(
                 'flypath.io does not support Oblique Mapping terrain follow yet. '
@@ -574,7 +578,7 @@ class WebsiteSyncLifecycleMixin:
         active_layer = QgsProject.instance().mapLayer(self._survey_area_layer_id) \
             if self._survey_area_layer_id else None
         if (self._draw_tool is not None or self._break_tool is not None
-                or self._orbit_tool is not None
+                or self._orbit_tool is not None or self._panorama_tool is not None
                 or (active_layer and active_layer.isEditable())):
             raise FlypathSyncError(
                 'Finish or cancel the current survey drawing or edit before loading a mission.')
@@ -598,7 +602,8 @@ class WebsiteSyncLifecycleMixin:
             '_current_kind',
         )
         state_names += tuple(name for name in self.__dict__
-                             if name.startswith(('_survey_', '_preview_', '_live_', '_orbit_', '_oblique_')))
+                             if name.startswith(('_survey_', '_preview_', '_live_', '_orbit_', '_oblique_',
+                                                 '_panorama_')))
         state = {name: getattr(self, name) for name in set(state_names)
                  if hasattr(self, name)}
         planning = self._planning.__dict__.copy()
@@ -619,6 +624,7 @@ class WebsiteSyncLifecycleMixin:
             'orbitRadiusSpin', 'orbitTiltSpin', 'drawCircleBtn', 'editCircleBtn',
             'removeCircleBtn', 'orbitRingCombo', 'addRingBtn', 'removeRingBtn',
             'obliqueFastRadio', 'obliqueFullRadio', 'obliquePitchSpin', 'obliqueNadirCheck',
+            'placePointBtn', 'removePointBtn', 'panoramaOverlapSpin', 'panoramaNadirCheck',
         )
         widgets = {}
         appearance = {}
@@ -651,7 +657,7 @@ class WebsiteSyncLifecycleMixin:
             'frontOverlapStatLabel', 'areaLabel', 'infoBar', 'previewBtn',
             'showTakeoffZoneBtn', 'showContoursBtn', 'editPolygonBtn',
             'cameraInfoLabel', 'frontOverlapLabel', 'takeoffGsdVarLabel',
-            'selectionInfoLabel', 'orbitCentreLabel',
+            'selectionInfoLabel', 'orbitCentreLabel', 'panoramaPointLabel',
         )}
         feature_caption_hidden = self._featureCaption.isHidden()
         selected = (project.mapLayer(state['_selected_layer_id']).selectedFeatureIds()

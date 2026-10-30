@@ -9,16 +9,20 @@ from .flypath_engine.planning import (
 from .flypath_engine.precision import CANONICAL_CONTRACT_VERSION as CONTRACT_VERSION
 from .flypath_engine.oblique import plan_oblique
 from .flypath_engine.orbit import plan_orbit
+from .flypath_engine.panorama import plan_panorama
 from .flypath_engine.profiles import PROFILE_VERSION
 
 
 PlanningError = _PlanningError
 # Saved Fast oblique results use their original engine geometry during validation.
-SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0', '1.4.1', '2.0.0')
+SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0', '1.4.1', '2.0.0',
+                             '2.1.0')
+CONTRACT_2_ENGINE_VERSIONS = ('2.0.0', '2.1.0')   # the releases that plan contract 2
 SUPPORTED_CONTRACT_VERSIONS = (1, CONTRACT_VERSION)
 ORBIT_MIN_ENGINE_VERSION = (1, 2, 0)   # the first engine release with plan_orbit
 ORBIT_RINGS_MIN_ENGINE_VERSION = (1, 3, 0)
 OBLIQUE_MIN_ENGINE_VERSION = (1, 4, 0)   # the first engine release with plan_oblique
+PANORAMA_MIN_ENGINE_VERSION = (2, 1, 0)  # the first engine release with plan_panorama
 
 
 def _orbit_capable(version, minimum=ORBIT_MIN_ENGINE_VERSION):
@@ -142,10 +146,35 @@ def build_oblique_request(*, gimbal_pitch_deg, include_nadir, pattern='fast', **
     return request
 
 
+def build_panorama_request(*, centre, drone_profile_id, altitude_m, speed_m_s, overlap_ratio,
+                           include_nadir, finish_action):
+    """Translate the panorama controls into one engine request.
+
+    `centre` is (lon, lat) in WGS84. Every photo has its own waypoint, so the
+    capture mode is always full automatic; the overlap applies around each
+    camera row and between rows."""
+    return {
+        'contract_version': CONTRACT_VERSION,
+        'operation': 'plan_panorama',
+        'mapping_style': 'panorama',
+        'drone_profile_id': drone_profile_id,
+        'profile_version': PROFILE_VERSION,
+        'centre': {'latitude_deg': centre[1], 'longitude_deg': centre[0]},
+        'altitude_m': altitude_m,
+        'speed_m_s': speed_m_s,
+        'capture': {'mode': 'full_auto', 'overlap_ratio': overlap_ratio},
+        'include_nadir': bool(include_nadir),
+        'finish_action': FINISH_ACTIONS[finish_action],
+        'terrain_follow': False,
+    }
+
+
 def plan(request, *, engine_version=None):
     """Run the bundled engine; consumers validate the returned result once."""
     if request.get('operation') == 'plan_orbit':
         return plan_orbit(request)
+    if request.get('operation') == 'plan_panorama':
+        return plan_panorama(request)
     if request.get('operation') == 'plan_oblique':
         return plan_oblique(request, engine_version=engine_version)
     return plan_2d(request)
@@ -162,7 +191,7 @@ def consume_result(request, result, *, require_supported=True,
     """Return ordered flight dictionaries after checking saved-result integrity."""
     if not isinstance(result, dict) or not isinstance(request, dict):
         raise ValueError('The saved planning request or result is missing.')
-    if request.get('contract_version') == 2 and result.get('engine_version') != '2.0.0':
+    if request.get('contract_version') == 2 and result.get('engine_version') not in CONTRACT_2_ENGINE_VERSIONS:
         raise ValueError('This saved engine version does not support the planning contract.')
     if require_supported and (request.get('contract_version') not in SUPPORTED_CONTRACT_VERSIONS
                               or result.get('contract_version') != request.get('contract_version')):
@@ -177,6 +206,10 @@ def consume_result(request, result, *, require_supported=True,
     if oblique and (result.get('operation') != 'plan_oblique'
                     or not _orbit_capable(result.get('engine_version'), OBLIQUE_MIN_ENGINE_VERSION)):
         raise ValueError('This saved oblique engine version is not supported.')
+    panorama = request.get('operation') == 'plan_panorama'
+    if panorama and (result.get('operation') != 'plan_panorama'
+                     or not _orbit_capable(result.get('engine_version'), PANORAMA_MIN_ENGINE_VERSION)):
+        raise ValueError('This saved panorama engine version is not supported.')
     if any(result.get(key) != request.get(key)
            for key in ('profile_version', 'drone_profile_id')):
         raise ValueError('The saved planning result does not match its request.')
@@ -289,7 +322,7 @@ def consume_result(request, result, *, require_supported=True,
             'headings': flight_headings,
             'heights': altitudes[start:end + 1] if altitudes else None,
             'gimbal_pitches': (_pitch_per_waypoint(actions, start, end)
-                               if altitudes or oblique else None),
+                               if altitudes or oblique or panorama else None),
             'flight': flight,
         })
         previous_end = end

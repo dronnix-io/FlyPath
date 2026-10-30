@@ -212,10 +212,10 @@ def _test_oblique_mapping():
             planner._on_export()
         export.assert_not_called()
         planner._on_preview()
-        assert planner._planning.result['engine_version'] == '2.0.0'
+        assert planner._planning.result['engine_version'] == '2.1.0'
         assert planner._planning.result['contract_version'] == 2
         assert not planner._planning.save_requires_regeneration()
-        assert planner._website_payload('Updated Fast oblique')['planning_result']['engine_version'] == '2.0.0'
+        assert planner._website_payload('Updated Fast oblique')['planning_result']['engine_version'] == '2.1.0'
 
         # Back in 2D Mapping the oblique rows hide and terrain follow returns.
         planner.missionTypeCombo.setCurrentText('2D Mapping')

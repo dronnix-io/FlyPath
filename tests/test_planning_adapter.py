@@ -65,7 +65,7 @@ def test_locations_survive_the_adapter_request():
 
 
 @pytest.mark.parametrize('pattern,nadir', [('fast', True), ('fast', False), ('full', True), ('full', False)])
-@pytest.mark.parametrize('engine_version', ['1.4.0', '1.4.1', '2.0.0'])
+@pytest.mark.parametrize('engine_version', ['1.4.0', '1.4.1', '2.0.0', '2.1.0'])
 def test_oblique_sync_provenance_keeps_passes_and_rejects_changed_settings(pattern, nadir, engine_version):
     from FlyPath.flypath_sync import validate_mission, FlypathSyncError
 
@@ -73,7 +73,7 @@ def test_oblique_sync_provenance_keeps_passes_and_rejects_changed_settings(patte
     planned.pop('cross_hatch')
     planned.update(operation='plan_oblique', mapping_style='oblique', pattern=pattern,
                    gimbal_pitch_deg=-45, include_nadir=nadir)
-    planned['contract_version'] = 2 if engine_version == '2.0.0' else 1
+    planned['contract_version'] = 2 if engine_version in ('2.0.0', '2.1.0') else 1
     result = planning_adapter.plan(planned, engine_version=engine_version)
     mission = {
         'drone_model': 'mini3pro',
@@ -537,3 +537,30 @@ def test_canonical_contract_rejects_legacy_engine_label():
     for require_supported in (True, False):
         with pytest.raises(ValueError, match='does not support the planning contract'):
             planning_adapter.consume_result(planned, result, require_supported=require_supported)
+
+
+def panorama_request(**overrides):
+    values = dict(centre=(-114.09, 51.05), drone_profile_id='mini4pro', altitude_m=60,
+                  speed_m_s=2, overlap_ratio=.3, include_nadir=True, finish_action='Return to Home')
+    values.update(overrides)
+    return planning_adapter.build_panorama_request(**values)
+
+
+def test_panorama_flight_carries_outward_headings_and_row_tilts():
+    planned = panorama_request()
+    assert planned['capture'] == {'mode': 'full_auto', 'overlap_ratio': .3}
+    result = planning_adapter.plan(planned)
+    assert result['engine_version'] == '2.1.0' and result['contract_version'] == 2
+    [flight] = planning_adapter.consume_result(planned, result)
+    assert len(flight['waypoints']) == len(flight['headings']) == len(flight['gimbal_pitches']) == 24
+    assert flight['headings'][:3] == [0.0, 45.0, 90.0] and flight['heights'] is None
+    assert flight['gimbal_pitches'][0] == 0.0 and flight['gimbal_pitches'][-1] == -90.0
+    assert sum(action['type'] == 'take_photo' for action in flight['actions']) == 24
+
+
+def test_panorama_results_need_a_panorama_engine():
+    planned = panorama_request()
+    result = planning_adapter.plan(planned)
+    for changed in (dict(result, engine_version='2.0.0'), dict(result, operation='plan_orbit')):
+        with pytest.raises(ValueError):
+            planning_adapter.consume_result(planned, changed)
