@@ -155,7 +155,7 @@ def build_panorama_request(*, drone_profile_id, altitude_m, speed_m_s, overlap_r
 
     Give `points` as (lon, lat) in WGS84, flown in order, or a `survey_area`
     for the engine to place points over, `point_spacing_m` apart (None for
-    its default, three times the altitude). Every photo has its own waypoint,
+    its default, the altitude). Every photo has its own waypoint,
     so the capture mode is always full automatic; the overlap applies around
     each camera row and between rows. Flights are cut between panoramas to
     fit the waypoint limit and one battery."""
