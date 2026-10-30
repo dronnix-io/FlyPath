@@ -6,8 +6,9 @@ translation. The dialog's shared planning flow runs the request in the engine
 (plan_panorama), which flies small outward-facing laps around each point, one
 per camera row, because DJI Fly missions cannot turn the drone in place.
 
-Single places one point, and a click moves it. Multiple adds a point with each
-click, numbered in flight order; Undo removes the last one. Area takes a survey
+Points: each click adds a point, numbered in flight order, and dragging a
+point moves it; Undo removes the last one. One point is a single panorama.
+Area takes a survey
 polygon from the usual Draw, Layer or Selection source, and the engine places
 the points on a hexagon grid inside it, by default three altitudes apart.
 """
@@ -15,18 +16,18 @@ the points on a hexagon grid inside it, by default three altitudes apart.
 import math
 import sys
 
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import QPoint, Qt
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QButtonGroup, QCheckBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QSpinBox,
     QWidget,
 )
 from qgis.core import (
-    QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsFeature, QgsGeometry,
+    Qgis, QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsFeature, QgsGeometry,
     QgsMarkerSymbol, QgsPalLayerSettings, QgsPointXY, QgsProject, QgsTextBufferSettings,
     QgsTextFormat, QgsVectorLayer, QgsVectorLayerSimpleLabeling,
 )
-from qgis.gui import QgsMapTool
+from qgis.gui import QgsMapTool, QgsRubberBand
 
 from .map_tools import FLYPATH_TOOL_NAME, is_flypath_tool, previous_tool
 
@@ -46,41 +47,107 @@ DEFAULT_PANORAMA_OVERLAP = 30   # % between neighbouring photos, as DJI's own pa
 DEFAULT_PANORAMA_MAX_WAYPOINTS = 200   # whole panoramas per flight, as many as fit
 PANORAMA_MIN_ALTITUDE_M = 10.0
 NO_POINT_TEXT = '— no panorama point —'
-PLACE_TEXT = 'Place Point on Map'
-ADD_TEXT = 'Add Points on Map'
+PLACE_TEXT = 'Place Points on Map'
+PLACING_TEXT = 'Click to add, drag to move…'
 _INFO_IDLE = 'ⓘ  Hover over any field to see what it does.'
 _WGS84 = QgsCoordinateReferenceSystem('EPSG:4326')
 # The lowest oblique row looks 30 degrees down: it sees the ground well out to
 # altitude / tan(30), about 1.7 altitudes. Hexagon points sqrt(3) times that
 # apart (the engine's three altitudes) cover an area with those circles.
 _VIEW_DEPRESSION_DEG = 30
+try:
+    _ICON_CIRCLE = QgsRubberBand.IconType.ICON_CIRCLE
+except AttributeError:
+    _ICON_CIRCLE = getattr(QgsRubberBand, 'ICON_CIRCLE')
 
 
 class PanoramaPointTool(QgsMapTool):
-    """Place panorama points: each click reports one; right click or Esc ends.
+    """Place panorama points: a click on empty map adds one, and a drag that
+    starts on a point moves it. Right click or Esc ends.
 
-    on_done((lon, lat)) reports a point in WGS84, on_done(None) the end."""
+    points() returns the current points, (lon, lat) in WGS84. on_add(point)
+    reports a click, on_move(index, point) a finished drag, and on_done()
+    the end."""
 
-    def __init__(self, canvas, on_done):
+    GRAB_PX = 10
+    DRAG_THRESHOLD_PX = 4
+
+    def __init__(self, canvas, points, on_add, on_move, on_done):
         super().__init__(canvas)
         self.setObjectName(FLYPATH_TOOL_NAME)
+        self._points = points
+        self._on_add = on_add
+        self._on_move = on_move
         self._on_done = on_done
+        self._press = None              # (pos, index of the grabbed point or None)
+        self._band = QgsRubberBand(canvas, Qgis.GeometryType.Point)
+        self._band.setIcon(_ICON_CIRCLE)
+        self._band.setIconSize(12)
+        self._band.setColor(QColor('#FF1493'))
+        self._band.setWidth(2)
         self.setCursor(Qt.CursorShape.CrossCursor)
+
+    def _transform(self, to_wgs84):
+        canvas_crs = self.canvas().mapSettings().destinationCrs()
+        source, destination = (canvas_crs, _WGS84) if to_wgs84 else (_WGS84, canvas_crs)
+        return QgsCoordinateTransform(source, destination, QgsProject.instance())
+
+    def _to_wgs84(self, pos):
+        point = self._transform(True).transform(self.toMapCoordinates(pos))
+        return (point.x(), point.y())
+
+    def point_at(self, pos):
+        """The index of the point under pos (within a few pixels), or None."""
+        transform = self._transform(False)
+        best = None
+        for index, (lon, lat) in enumerate(self._points()):
+            screen = self.toCanvasCoordinates(transform.transform(QgsPointXY(lon, lat)))
+            distance = (screen - pos).manhattanLength()
+            if distance <= self.GRAB_PX and (best is None or distance < best[0]):
+                best = (distance, index)
+        return None if best is None else best[1]
+
+    def canvasPressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press = (QPoint(event.pos()), self.point_at(event.pos()))
+
+    def _dragged(self, start, pos):
+        return (pos - start).manhattanLength() > self.DRAG_THRESHOLD_PX
+
+    def canvasMoveEvent(self, event):
+        if self._press is None:
+            grabbed = self.point_at(event.pos()) is not None
+            self.setCursor(Qt.CursorShape.SizeAllCursor if grabbed else Qt.CursorShape.CrossCursor)
+            return
+        if self._press[1] is not None and self._dragged(self._press[0], event.pos()):
+            self._band.setToGeometry(
+                QgsGeometry.fromPointXY(QgsPointXY(*self._to_wgs84(event.pos()))), _WGS84)
 
     def canvasReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.RightButton:
-            self._on_done(None)
+            self._press = None
+            self._on_done()
             return
-        if event.button() != Qt.MouseButton.LeftButton:
+        if event.button() != Qt.MouseButton.LeftButton or self._press is None:
             return
-        transform = QgsCoordinateTransform(
-            self.canvas().mapSettings().destinationCrs(), _WGS84, QgsProject.instance())
-        point = transform.transform(self.toMapCoordinates(event.pos()))
-        self._on_done((point.x(), point.y()))
+        (start, index), self._press = self._press, None
+        self._band.reset(Qgis.GeometryType.Point)
+        if index is not None:
+            if self._dragged(start, event.pos()):
+                self._on_move(index, self._to_wgs84(event.pos()))
+            return                      # a click on a point leaves it as it is
+        self._on_add(self._to_wgs84(event.pos()))
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
-            self._on_done(None)
+            self._on_done()
+
+    def deactivate(self):
+        self._press = None
+        if self._band is not None:
+            self.canvas().scene().removeItem(self._band)
+            self._band = None
+        super().deactivate()
 
 
 class PanoramaMixin:
@@ -98,31 +165,27 @@ class PanoramaMixin:
     def _build_panorama_area_row(self, form):
         """Mode, point read-out and Place rows for the Survey Area group.
 
-        The mode (Single, Multiple or Area) comes first, above Source, because
-        it decides whether points are clicked or an area is drawn."""
+        The mode (Points or Area) comes first, above Source, because it decides
+        whether points are clicked or an area is drawn."""
         dialog = sys.modules[type(self).__module__]   # the panel's segmented buttons
-        self.panoramaSingleRadio = dialog._SegmentButton('Single')
-        self.panoramaMultipleRadio = dialog._SegmentButton('Multiple')
+        self.panoramaPointsRadio = dialog._SegmentButton('Points')
         self.panoramaAreaRadio = dialog._SegmentButton('Area')
-        self.panoramaSingleRadio.setChecked(True)
+        self.panoramaPointsRadio.setChecked(True)
         self._panoramaModeGroup = QButtonGroup(self)
-        for button in (self.panoramaSingleRadio, self.panoramaMultipleRadio, self.panoramaAreaRadio):
+        for button in (self.panoramaPointsRadio, self.panoramaAreaRadio):
             self._panoramaModeGroup.addButton(button)
-        self._tip(self.panoramaSingleRadio,
-            'Single: one panorama. A click on the map places the point, and '
-            'another click moves it.')
-        self._tip(self.panoramaMultipleRadio,
-            'Multiple: a panorama at every point you click, flown in the order '
-            'you click them. Undo removes the last point. Points need some room '
-            'between them, so the laps around them do not overlap.')
+        self._tip(self.panoramaPointsRadio,
+            'Points: a panorama at every point you click, flown in the order you '
+            'click them; one point is a single panorama. Drag a point to move it, '
+            'and Undo removes the last one. Points need some room between them, '
+            'so the laps around them do not overlap.')
         self._tip(self.panoramaAreaRadio,
             'Area: draw or choose a survey area, and FlyPath spreads panorama '
             'points over it on a hexagon grid (like Spexi), flown row by row.')
         self._panoramaModeRow = QWidget()
         mode_layout = QHBoxLayout(self._panoramaModeRow)
         mode_layout.setContentsMargins(0, 0, 0, 0)
-        mode_layout.addWidget(dialog._segmented(
-            self.panoramaSingleRadio, self.panoramaMultipleRadio, self.panoramaAreaRadio))
+        mode_layout.addWidget(dialog._segmented(self.panoramaPointsRadio, self.panoramaAreaRadio))
         mode_layout.addStretch()
         source_row, _role = form.getWidgetPosition(self._sourceRow)
         form.insertRow(source_row, 'Panorama', self._panoramaModeRow)
@@ -139,8 +202,8 @@ class PanoramaMixin:
         self.placePointBtn.setObjectName('placePointBtn')
         self.placePointBtn.setCheckable(True)
         self._tip(self.placePointBtn,
-            'Click the map where a panorama should be taken. Right click or '
-            'Escape finishes.')
+            'Click the map where each panorama should be taken, in the order to '
+            'fly them. Drag a point to move it. Right click or Escape finishes.')
         self.undoPointBtn = QPushButton('↶ Undo')
         self.undoPointBtn.setObjectName('undoPointBtn')
         self._tip(self.undoPointBtn, 'Remove the last point added.')
@@ -207,7 +270,6 @@ class PanoramaMixin:
         self._refresh_panorama_spacing_hint()
 
     def _panorama_connect_signals(self):
-        self.panoramaMultipleRadio.toggled.connect(self._on_panorama_mode_changed)
         self.panoramaAreaRadio.toggled.connect(self._on_panorama_area_toggled)
         self.panoramaSpacingSpin.valueChanged.connect(self._on_param_changed)
         self.panoramaSpacingSpin.valueChanged.connect(self._refresh_panorama_spacing_hint)
@@ -303,9 +365,6 @@ class PanoramaMixin:
                     'between points is only seen at a low angle.')
         self.panoramaSpacingHint.setText(text)
 
-    def _panorama_multiple(self):
-        return self.panoramaMultipleRadio.isChecked()
-
     def _panorama_area(self):
         return self.panoramaAreaRadio.isChecked()
 
@@ -319,20 +378,6 @@ class PanoramaMixin:
         self._apply_mission_type_capabilities()
         self._refresh_panorama_controls()
 
-    def _on_panorama_mode_changed(self, multiple):
-        """Single keeps only the first point; both modes keep placing."""
-        self.placePointBtn.setText(self._place_text())
-        if not multiple and len(self._panorama_points) > 1:
-            self._panorama_points = self._panorama_points[:1]
-            self._show_panorama_points()
-            self._on_param_changed()
-        self._refresh_panorama_controls()
-
-    def _place_text(self):
-        if self._panorama_tool is not None:
-            return 'Click the points…' if self._panorama_multiple() else 'Click the point…'
-        return ADD_TEXT if self._panorama_multiple() else PLACE_TEXT
-
     # ── Point tool ────────────────────────────────────────────────────────
 
     def _on_place_point_toggled(self, checked):
@@ -342,14 +387,13 @@ class PanoramaMixin:
             return
         if self._panorama_tool is None:
             self._panorama_prev_tool = previous_tool(canvas)
-        self._panorama_tool = PanoramaPointTool(canvas, self._on_panorama_point_placed)
+        self._panorama_tool = PanoramaPointTool(
+            canvas, lambda: self._panorama_points, self._on_panorama_point_placed,
+            self._on_panorama_point_moved, self._leave_panorama_tool)
         canvas.setMapTool(self._panorama_tool)
-        self.placePointBtn.setText(self._place_text())
-        self._set_info(
-            'Click each point where a panorama should be taken, in the order to fly '
-            'them. Right click or Escape finishes.' if self._panorama_multiple() else
-            'Click where the panorama should be taken. Click again to move it. '
-            'Right click or Escape finishes.')
+        self.placePointBtn.setText(PLACING_TEXT)
+        self._set_info('Click where each panorama should be taken, in the order to fly '
+                       'them. Drag a point to move it. Right click or Escape finishes.')
 
     def _leave_panorama_tool(self):
         """Turn the point tool off and restore the earlier map tool."""
@@ -364,20 +408,25 @@ class PanoramaMixin:
         self._panorama_prev_tool = None
         blocked = self.placePointBtn.blockSignals(True)
         self.placePointBtn.setChecked(False)
-        self.placePointBtn.setText(self._place_text())
+        self.placePointBtn.setText(PLACE_TEXT)
         self.placePointBtn.blockSignals(blocked)
 
     def _on_panorama_point_placed(self, point):
-        """A click adds a point (Multiple) or moves it (Single); a cancel ends placing."""
-        if point is None:
-            self._leave_panorama_tool()
-            return
-        points = (self._panorama_points + [point] if self._panorama_multiple()
-                  else [point])
+        """A click adds a point after the others."""
+        self._apply_panorama_points(self._panorama_points + [point], 'Point Not Added')
+
+    def _on_panorama_point_moved(self, index, point):
+        """A drag moves one point; the others and the order stay."""
+        points = list(self._panorama_points)
+        points[index] = point
+        self._apply_panorama_points(points, 'Point Not Moved')
+
+    def _apply_panorama_points(self, points, refused_title):
+        """Use these points and preview them, unless they are too close."""
         problem = self._panorama_points_problem(points)
         if problem:
             self._set_info(problem)
-            QMessageBox.information(self, 'Point Not Added', problem)
+            QMessageBox.information(self, refused_title, problem)
             return
         self.set_panorama_points(points)
         self._on_param_changed()
@@ -390,7 +439,7 @@ class PanoramaMixin:
             planning_adapter.plan(self._panorama_request_from_ui(points))
         except planning_adapter.PlanningError as exc:
             if exc.code == 'points_too_close':
-                return exc.message + ' Click a little further away.'
+                return exc.message + ' Place it a little further away.'
         except ValueError:
             pass                            # the preview reports drone problems
         return None
@@ -436,7 +485,7 @@ class PanoramaMixin:
             text = f'{len(points)} points'
         self.panoramaPointLabel.setText(text)
         self.removePointBtn.setVisible(bool(points))
-        self.undoPointBtn.setVisible(self._panorama_multiple() and bool(points))
+        self.undoPointBtn.setVisible(bool(points))
 
     def _show_panorama_points(self, points=None):
         """Mark the points, numbered when there are several: the clicked ones,
@@ -514,7 +563,7 @@ class PanoramaMixin:
             if not silent:
                 QMessageBox.information(
                     self, 'No Panorama Point',
-                    'Click Place Point on Map, then click where the panorama should be taken.')
+                    'Click Place Points on Map, then click where the panorama should be taken.')
             return False
         return True
 

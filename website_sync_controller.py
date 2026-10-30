@@ -625,8 +625,8 @@ class WebsiteSyncLifecycleMixin:
             'removeCircleBtn', 'orbitRingCombo', 'addRingBtn', 'removeRingBtn',
             'obliqueFastRadio', 'obliqueFullRadio', 'obliquePitchSpin', 'obliqueNadirCheck',
             'placePointBtn', 'removePointBtn', 'undoPointBtn', 'panoramaOverlapSpin',
-            'panoramaNadirCheck', 'panoramaSingleRadio', 'panoramaMultipleRadio',
-            'panoramaAreaRadio', 'panoramaSpacingSpin',
+            'panoramaNadirCheck', 'panoramaPointsRadio', 'panoramaAreaRadio',
+            'panoramaSpacingSpin',
         )
         widgets = {}
         appearance = {}

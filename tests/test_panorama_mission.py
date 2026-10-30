@@ -20,7 +20,7 @@ def test_panorama_point_previews_exports_and_resets():
     try:
         from qgis.core import QgsApplication
         from qgis.gui import QgsMapCanvas, QgsMapToolPan
-        from qgis.PyQt.QtCore import QSettings
+        from qgis.PyQt.QtCore import QSettings, Qt
     except ImportError as exc:
         raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
     package = Path(__file__).resolve().parents[1].name
@@ -64,7 +64,7 @@ def test_panorama_point_previews_exports_and_resets():
                 (0.0, 8), (-30.0, 8), (-60.0, 7), (-90.0, 1)]
             assert planner.photosLabel.text() == '24' and planner.linesLabel.text() == '4 rows'
             assert planner.frontOverlapStatLabel.text() == '30%'
-            planner._on_panorama_point_placed(None)
+            planner._panorama_tool.keyPressEvent(SimpleNamespace(key=lambda: Qt.Key.Key_Escape))
             assert planner._panorama_tool is None and canvas.mapTool() is pan
             assert not planner.placePointBtn.isChecked()
 
@@ -116,9 +116,10 @@ def test_panorama_point_previews_exports_and_resets():
 
 def test_multiple_panorama_points_number_split_and_undo():
     try:
-        from qgis.core import QgsApplication, QgsProject
-        from qgis.gui import QgsMapCanvas
-        from qgis.PyQt.QtCore import QSettings
+        from qgis.core import (QgsApplication, QgsCoordinateReferenceSystem, QgsPointXY, QgsProject,
+                               QgsRectangle)
+        from qgis.gui import QgsMapCanvas, QgsMapMouseEvent
+        from qgis.PyQt.QtCore import QEvent, QPoint, QSettings, Qt
     except ImportError as exc:
         raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
     package = Path(__file__).resolve().parents[1].name
@@ -141,8 +142,8 @@ def test_multiple_panorama_points_number_split_and_undo():
             planner.droneModelCombo.setCurrentText('DJI Mini 4 Pro')
             mapping_limit = planner.maxWaypointsSpin.value()
             planner.missionTypeCombo.setCurrentText('Panorama')
-            planner.panoramaMultipleRadio.click()
-            assert planner.placePointBtn.text() == 'Add Points on Map'
+            assert planner.panoramaPointsRadio.isChecked()
+            assert planner.placePointBtn.text() == 'Place Points on Map'
             assert planner.maxWaypointsSpin.value() == 200 and not planner.maxWaypointsSpin.isHidden()
             planner.placePointBtn.setChecked(True)
             for metres in (0, 40, 80):
@@ -168,13 +169,50 @@ def test_multiple_panorama_points_number_split_and_undo():
             assert [planner.splitPartCombo.itemText(i) for i in range(planner.splitPartCombo.count())] == [
                 'Part 1 of 2 (points 1 to 2)', 'Part 2 of 2 (point 3)']
 
-            # Undo removes the last point; Single keeps only the first.
-            planner._on_panorama_point_placed(None)
+            # Undo removes the last point.
             planner.undoPointBtn.click()
-            assert len(planner._panorama_points) == 2
-            planner.panoramaSingleRadio.click()
-            assert len(planner._panorama_points) == 1 and planner.undoPointBtn.isHidden()
-            assert planner.panoramaPointLabel.text().startswith('51.05000')
+            assert len(planner._panorama_points) == 2 and planner.panoramaPointLabel.text() == '2 points'
+
+            # With the mouse: a drag from a point moves it, a click on a point
+            # leaves it, and a click on empty map adds one.
+            canvas.setDestinationCrs(QgsCoordinateReferenceSystem('EPSG:4326'))
+            canvas.resize(800, 600)
+            canvas.setExtent(QgsRectangle(-114.0915, 51.0485, -114.0870, 51.0515))
+            app.processEvents()
+            tool = planner._panorama_tool
+
+            def mouse(kind, pos):
+                event_type = {'press': QEvent.Type.MouseButtonPress, 'move': QEvent.Type.MouseMove,
+                              'release': QEvent.Type.MouseButtonRelease}[kind]
+                button = Qt.MouseButton.NoButton if kind == 'move' else Qt.MouseButton.LeftButton
+                event = QgsMapMouseEvent(canvas, event_type, pos, button)
+                {'press': tool.canvasPressEvent, 'move': tool.canvasMoveEvent,
+                 'release': tool.canvasReleaseEvent}[kind](event)
+
+            second = tool.toCanvasCoordinates(QgsPointXY(*planner._panorama_points[1]))
+            before = list(planner._panorama_points)
+            mouse('press', second)
+            mouse('release', second)
+            assert planner._panorama_points == before, 'a click on a point leaves it'
+            target = second + QPoint(0, -60)
+            mouse('press', second)
+            mouse('move', target)
+            mouse('release', target)
+            assert len(planner._panorama_points) == 2 and planner._panorama_points[0] == before[0]
+            assert planner._panorama_points[1][1] > before[1][1], 'dragged north'
+            assert planner._planning.result['panorama']['points'][1]['centre']['latitude_deg'] > before[1][1]
+            empty = second + QPoint(-200, 150)
+            mouse('press', empty)
+            mouse('release', empty)
+            assert len(planner._panorama_points) == 3
+            # A drag that ends too close to another point is refused.
+            with patch.object(controller.QMessageBox, 'information') as refused:
+                start = tool.toCanvasCoordinates(QgsPointXY(*planner._panorama_points[2]))
+                end = tool.toCanvasCoordinates(QgsPointXY(*planner._panorama_points[0])) + QPoint(3, 0)
+                mouse('press', start)
+                mouse('move', end)
+                mouse('release', end)
+            assert refused.call_args[0][1] == 'Point Not Moved' and len(planner._panorama_points) == 3
 
             # Leaving restores the mapping waypoint limit.
             planner.missionTypeCombo.setCurrentText('2D Mapping')
@@ -252,7 +290,7 @@ def test_panorama_area_places_points_on_a_hexagon_grid():
             assert '139 m' in planner.panoramaSpacingHint.text()
 
             # Back to points clears the area; leaving Panorama restores the 2D rows.
-            planner.panoramaSingleRadio.click()
+            planner.panoramaPointsRadio.click()
             assert planner._survey_polygon is None and planner._panorama_layer_id is None
             assert shown(planner._panoramaPlaceRow) and not shown(planner._sourceStack)
             assert not shown(planner.panoramaSpacingSpin)
