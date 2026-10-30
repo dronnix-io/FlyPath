@@ -146,25 +146,27 @@ def build_oblique_request(*, gimbal_pitch_deg, include_nadir, pattern='fast', **
     return request
 
 
-def build_panorama_request(*, centre, drone_profile_id, altitude_m, speed_m_s, overlap_ratio,
-                           include_nadir, finish_action):
+def build_panorama_request(*, points, drone_profile_id, altitude_m, speed_m_s, overlap_ratio,
+                           include_nadir, finish_action, max_waypoints_per_flight=200):
     """Translate the panorama controls into one engine request.
 
-    `centre` is (lon, lat) in WGS84. Every photo has its own waypoint, so the
-    capture mode is always full automatic; the overlap applies around each
-    camera row and between rows."""
+    `points` are (lon, lat) in WGS84, flown in order. Every photo has its own
+    waypoint, so the capture mode is always full automatic; the overlap
+    applies around each camera row and between rows. Flights are cut between
+    panoramas to fit the waypoint limit and one battery."""
     return {
         'contract_version': CONTRACT_VERSION,
         'operation': 'plan_panorama',
         'mapping_style': 'panorama',
         'drone_profile_id': drone_profile_id,
         'profile_version': PROFILE_VERSION,
-        'centre': {'latitude_deg': centre[1], 'longitude_deg': centre[0]},
+        'points': [{'latitude_deg': lat, 'longitude_deg': lon} for lon, lat in points],
         'altitude_m': altitude_m,
         'speed_m_s': speed_m_s,
         'capture': {'mode': 'full_auto', 'overlap_ratio': overlap_ratio},
         'include_nadir': bool(include_nadir),
         'finish_action': FINISH_ACTIONS[finish_action],
+        'split': {'max_waypoints_per_flight': max_waypoints_per_flight},
         'terrain_follow': False,
     }
 
@@ -281,8 +283,9 @@ def consume_result(request, result, *, require_supported=True,
     if not isinstance(flights, list) or not flights:
         raise ValueError('The saved planning result has no flights.')
     # Adjacent flights share their seam waypoint, except orbit flights that
-    # split between rings and oblique flights between passes: the next one
-    # starts at its ring's or pass's first waypoint.
+    # split between rings, oblique flights between passes and panorama flights
+    # between points: the next one starts at its ring's, pass's or point's
+    # first waypoint.
     orbit = request.get('operation') == 'plan_orbit'
     consumed = []
     previous_end = None
@@ -295,7 +298,8 @@ def consume_result(request, result, *, require_supported=True,
                 or (previous_end is not None and start != previous_end
                     and not (start == previous_end + 1
                              and ((orbit and 'ring_start' in (rows[start].get('roles') or ()))
-                                  or (oblique and 'pass_start' in (rows[start].get('roles') or ())))))):
+                                  or (oblique and 'pass_start' in (rows[start].get('roles') or ()))
+                                  or (panorama and 'point_start' in (rows[start].get('roles') or ())))))):
             raise ValueError('The saved flight boundaries are invalid.')
         actions = flight.get('actions')
         if not isinstance(actions, list) or any(

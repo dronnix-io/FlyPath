@@ -3516,8 +3516,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self.linesLabel.setText('1 ring' if rings == 1 else f'{rings} rings')
         elif request.get('operation') == 'plan_panorama':
             self.coverageLabel.setText('—')       # a panorama covers no area
-            rows = len(result['panorama']['rows'])
-            self.linesLabel.setText('1 row' if rows == 1 else f'{rows} rows')
+            points = len(result['panorama']['points'])
+            rows = len(result['panorama']['points'][0]['rows'])
+            self.linesLabel.setText(f'{points} points' if points > 1 else
+                                    '1 row' if rows == 1 else f'{rows} rows')
         else:
             self.linesLabel.setText(str(stats['strip_count']))
         self.batteriesLabel.setText(str(stats['battery_count']))
@@ -3616,9 +3618,19 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
     def _oblique_flight_passes(self, count):
         """For an oblique plan, each flight's pass: 'Nadir', 'Grid' or 'Cross
-        grid', or the compass way its camera faces, e.g. 'Facing NE'. None for
-        other missions."""
+        grid', or the compass way its camera faces, e.g. 'Facing NE'. For a
+        panorama plan, the points each flight takes, e.g. 'points 1 to 3'.
+        None for other missions."""
         result = self._planning.result
+        if result and result.get('operation') == 'plan_panorama':
+            # Panorama flights hold whole panoramas: name their points.
+            rows = result['route']['waypoints']
+            names = []
+            for flight in result['flights']:
+                first = rows[flight['route_start_waypoint_index']]['point_index'] + 1
+                last = rows[flight['route_end_waypoint_index']]['point_index'] + 1
+                names.append(f'point {first}' if first == last else f'points {first} to {last}')
+            return names if len(names) == count else None
         if not result or result.get('operation') != 'plan_oblique':
             return None
         rows = result['route']['waypoints']
@@ -4024,7 +4036,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self._clear_breaks()
             self._remove_survey_area_layer()
             self._clear_orbit_centre()
-            self._clear_panorama_point()
+            self._clear_panorama_points()
             self._clear_layer_selection()
             self._survey_polygon     = None
             self._survey_polygon_crs = None

@@ -540,7 +540,7 @@ def test_canonical_contract_rejects_legacy_engine_label():
 
 
 def panorama_request(**overrides):
-    values = dict(centre=(-114.09, 51.05), drone_profile_id='mini4pro', altitude_m=60,
+    values = dict(points=[(-114.09, 51.05)], drone_profile_id='mini4pro', altitude_m=60,
                   speed_m_s=2, overlap_ratio=.3, include_nadir=True, finish_action='Return to Home')
     values.update(overrides)
     return planning_adapter.build_panorama_request(**values)
