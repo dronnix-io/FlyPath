@@ -91,7 +91,10 @@ class PanoramaMixin:
     # ── Building the controls ─────────────────────────────────────────────
 
     def _build_panorama_area_row(self, form):
-        """Points, mode and Place rows for the Survey Area group (replace Source)."""
+        """Mode, point read-out and Place rows for the Survey Area group.
+
+        The mode (Single, Multiple or Area) comes first, above Source, because
+        it decides whether points are clicked or an area is drawn."""
         dialog = sys.modules[type(self).__module__]   # the panel's segmented buttons
         self.panoramaSingleRadio = dialog._SegmentButton('Single')
         self.panoramaMultipleRadio = dialog._SegmentButton('Multiple')
@@ -116,14 +119,15 @@ class PanoramaMixin:
         mode_layout.addWidget(dialog._segmented(
             self.panoramaSingleRadio, self.panoramaMultipleRadio, self.panoramaAreaRadio))
         mode_layout.addStretch()
-        form.addRow('Points', self._panoramaModeRow)
+        source_row, _role = form.getWidgetPosition(self._sourceRow)
+        form.insertRow(source_row, 'Panorama', self._panoramaModeRow)
         self._set_row_visible(form, self._panoramaModeRow, False)
 
         self.panoramaPointLabel = QLabel(NO_POINT_TEXT)
         self.panoramaPointLabel.setObjectName('selectionInfo')
         self._tip(self.panoramaPointLabel,
             'Where the panoramas are taken: the point, or how many points.')
-        form.addRow('Panorama', self.panoramaPointLabel)
+        form.addRow('Points', self.panoramaPointLabel)
         self._set_row_visible(form, self.panoramaPointLabel, False)
 
         self.placePointBtn = QPushButton(PLACE_TEXT)
@@ -217,6 +221,7 @@ class PanoramaMixin:
         self._set_row_visible(self._area_form, self.areaLabel, area or not panorama)
         # Every photo has its own waypoint, so the capture choice is hidden.
         self._set_row_visible(self._mission_form, self._captureRow, not panorama)
+        self._routeTitle.setVisible(True)
         if not panorama:
             return
         # Area mode takes its polygon from the usual Draw, Layer or Selection source.
@@ -229,6 +234,7 @@ class PanoramaMixin:
             self._set_row_visible(self._organizer_form, widget, False)
         self.terrainFollowCheck.setVisible(False)
         self.reverseRouteCheck.setVisible(False)
+        self._routeTitle.setVisible(False)      # no route options apply
         self._takeoffGroup.setVisible(False)
         blocked = self.altitudeSpin.blockSignals(True)
         self.altitudeSpin.setMinimum(PANORAMA_MIN_ALTITUDE_M)

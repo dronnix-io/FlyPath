@@ -1699,6 +1699,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         # Route options: independent of splitting.
         route_title = QLabel('ROUTE OPTIONS')
         route_title.setObjectName('subsectionLabel')
+        self._routeTitle = route_title   # hidden when no route option applies
         section.addWidget(route_title)
         form = QFormLayout()
         self._route_form = form       # kept so capability logic can hide rows
