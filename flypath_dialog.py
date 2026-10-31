@@ -133,6 +133,7 @@ from .planning_lifecycle import PlanningLifecycle
 from .survey_controller import SurveyLifecycleMixin
 from .website_sync_controller import WebsiteSyncLifecycleMixin
 from .orbit_controller import ORBIT_LABEL, OrbitMixin
+from .panorama_controller import PANORAMA_LABEL, PanoramaMixin
 
 OBLIQUE_LABEL = 'Oblique Mapping'
 _GEOD = Geod(ellps='WGS84')
@@ -990,7 +991,8 @@ class _ThumbnailViewer(QDialog):
         self._view.fitInView(self._item, _KeepAspect)
 
 
-class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin, QWidget):
+class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin, PanoramaMixin,
+                    QWidget):
 
     def __init__(self, iface, parent=None):
         super().__init__(parent)
@@ -1016,6 +1018,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._break_tool         = None   # active vertex-pick map tool
         self._current_kind       = '2d'   # tracks Mission Type for kind switches
         self._orbit_init_state()
+        self._panorama_init_state()
         self._draw_tool          = None
         self._selected_layer_id  = None   # layer carrying the current map selection
         self._monitored_layer_id = None   # layer whose edit signals we're connected to
@@ -1204,13 +1207,15 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.missionTypeCombo.addItem(OBLIQUE_LABEL)
         self.missionTypeCombo.addItem('Corridor Mapping')
         self.missionTypeCombo.addItem(ORBIT_LABEL)
+        self.missionTypeCombo.addItem(PANORAMA_LABEL)
         self._tip(self.missionTypeCombo,
             'The kind of mission to plan. 2D Mapping flies a grid over a survey '
             'polygon. Oblique Mapping flies that grid with a tilted camera, once '
             'facing each side, for 3D models of an area. Corridor Mapping follows '
             'a centre line (roads, pipelines, rivers) and covers a buffer each '
             'side. Orbit (3D Model) circles a centre point, facing it with a '
-            'tilted camera, for 3D models.')
+            'tilted camera, for 3D models. Panorama takes photos all around one '
+            'point, for a stitched 360° panorama.')
         form.addRow('Mission Type', self.missionTypeCombo)
 
         # Capture mode for mapping missions: how the camera is triggered.
@@ -1253,13 +1258,15 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         capture_layout = QHBoxLayout(capture_row)
         capture_layout.setContentsMargins(0, 0, 0, 0)
         capture_layout.setSpacing(8)
-        capture_layout.addWidget(_segmented(self.captureSemiRadio, self.captureFullRadio))
+        self._captureToggle = _segmented(self.captureSemiRadio, self.captureFullRadio)
+        capture_layout.addWidget(self._captureToggle)
         capture_layout.addSpacing(10)
         self._pathRow = QWidget()
         path_layout = QHBoxLayout(self._pathRow)
         path_layout.setContentsMargins(0, 0, 0, 0)
         path_layout.setSpacing(8)
         path_caption = QLabel('Flight Path')
+        self._pathCaption = path_caption   # hidden when the row is the path alone
         path_caption.setObjectName('inlineFormLabel')
         path_layout.addWidget(path_caption)
         path_layout.addWidget(_segmented(self.pathCurvedRadio, self.pathStraightRadio))
@@ -1406,6 +1413,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         form.addRow('Layer', self._sourceStack)
         self._fit_source_stack()
         self._build_orbit_area_row(form)   # orbit centre, hidden until Orbit
+        self._build_panorama_area_row(form)   # panorama point, hidden until Panorama
 
         # DEM feeds terrain follow, the takeoff zone and the contours, so it is
         # shown for both sources.
@@ -1619,6 +1627,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._set_row_visible(form, self.bufferSpin, False)
 
         self._build_orbit_flight_rows(form)   # radius, tilt, direction; Orbit only
+        self._build_panorama_flight_rows(form)   # overlap, nadir; Panorama only
 
         return group
 
@@ -1692,6 +1701,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         # Route options: independent of splitting.
         route_title = QLabel('ROUTE OPTIONS')
         route_title.setObjectName('subsectionLabel')
+        self._routeTitle = route_title   # hidden when no route option applies
         section.addWidget(route_title)
         form = QFormLayout()
         self._route_form = form       # kept so capability logic can hide rows
@@ -2053,19 +2063,21 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             # An orbit has no front overlap or nadir GSD: it reports the side
             # overlap between neighbouring photos around the ring instead.
             orbit = self._mission_kind() == 'orbit'
+            panorama = self._mission_kind() == 'panorama'
             context = [self.coverageLabel.text()]
-            if not orbit:
+            if not orbit and not panorama:
                 context.append(f'{self.gsdSpin.value():.2f} cm')
             self._hudContext.setText(' · '.join(value for value in context if value != '—'))
             if self._mission_type() == 'full':
-                spin = self.sideOverlapSpin if orbit else self.frontOverlapSpin
+                spin = (self.sideOverlapSpin if orbit else self.panoramaOverlapSpin if panorama
+                        else self.frontOverlapSpin)
                 overlap = f'{spin.value()}%'
             else:
                 overlap = self.frontOverlapLabel.text().split()[0]
                 overlap = overlap if overlap == '—' else f'{overlap}%'
             self.frontOverlapStatLabel.setText(overlap)
             self._hudCaptions['frontOverlapStatLabel'].setText(
-                'Side Overlap' if orbit else 'Front Overlap')
+                'Side Overlap' if orbit else 'Photo Overlap' if panorama else 'Front Overlap')
             self._position_hud()
             self._hud.show()
             self._hud.raise_()
@@ -2508,6 +2520,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
         self.missionTypeCombo.currentIndexChanged.connect(self._on_mission_type_changed)
         self._orbit_connect_signals()
+        self._panorama_connect_signals()
         self.captureSemiRadio.toggled.connect(self._on_mission_type_changed)
         self.frontOverlapSpin.valueChanged.connect(self._on_param_changed)
         self.maxWaypointsSpin.valueChanged.connect(self._on_param_changed)
@@ -2635,7 +2648,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
     # ── Mission type (semi- / full-automatic 2D mapping) ──────────────────
 
     def _mission_type(self):
-        """'full' for full-automatic capture (a waypoint per photo), else 'semi'."""
+        """'full' for full-automatic capture (a waypoint per photo), else 'semi'.
+        A panorama always has a waypoint per photo."""
+        if self._mission_kind() == 'panorama':
+            return 'full'
         return 'full' if self.captureFullRadio.isChecked() else 'semi'
 
     def _path_curved(self):
@@ -2643,12 +2659,14 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         return self.pathCurvedRadio.isChecked()
 
     def _mission_kind(self):
-        """'corridor', 'orbit', 'oblique', or '2d' (the default 2D grid)."""
+        """'corridor', 'orbit', 'oblique', 'panorama', or '2d' (the default 2D grid)."""
         text = self.missionTypeCombo.currentText()
         if text == 'Corridor Mapping':
             return 'corridor'
         if text == ORBIT_LABEL:
             return 'orbit'
+        if text == PANORAMA_LABEL:
+            return 'panorama'
         if text == OBLIQUE_LABEL:
             return 'oblique'
         return '2d'
@@ -2673,6 +2691,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         versa), so the layer list is repopulated for the new geometry type."""
         self._apply_kind_layout()
         self._switch_orbit_mode(self._mission_kind() == 'orbit')
+        self._switch_panorama_mode(self._mission_kind() == 'panorama')
         self._on_clear_preview(reset_area=True)
         self._refresh_layer_combo()
 
@@ -2734,7 +2753,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         if mapping_2d and self.terrainFollowCheck.isChecked():
             self.reverseRouteCheck.setChecked(False)
         self.reverseRouteCheck.setEnabled(oblique or not self.terrainFollowCheck.isChecked())
+        self._apply_panorama_layout(False)
         self._apply_orbit_layout(kind == 'orbit')
+        if kind == 'panorama':
+            self._apply_panorama_layout(True)
         self._place_safety_group()
 
     # ── Corridor mission breaks (manual line grouping) ────────────────────
@@ -2775,6 +2797,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._set_row_visible(self._area_form, self.demCombo, True)
         if self._mission_kind() == 'orbit':
             self._apply_orbit_capabilities(full)
+        elif self._mission_kind() == 'panorama':
+            self._apply_panorama_capabilities()
         else:
             self._restore_mapping_overlap_rows()
 
@@ -3429,11 +3453,13 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
     def _uses_shared_planning(self):
         kind = self._mission_kind()
-        return kind in ('orbit', 'oblique') or (kind == '2d' and not self.terrainFollowCheck.isChecked())
+        return kind in ('orbit', 'oblique', 'panorama') or (kind == '2d' and not self.terrainFollowCheck.isChecked())
 
     def _planning_request_from_ui(self):
         if self._mission_kind() == 'orbit':
             return self._orbit_request_from_ui()
+        if self._mission_kind() == 'panorama':
+            return self._panorama_request_from_ui()
         drone = registry.get(self.droneModelCombo.currentText())
         if not drone.website_code:
             raise ValueError('%s has no shared engine profile.' % drone.name)
@@ -3491,6 +3517,14 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         if orbit:
             rings = len(result['orbit'].get('rings') or (None,))
             self.linesLabel.setText('1 ring' if rings == 1 else f'{rings} rings')
+        elif request.get('operation') == 'plan_panorama':
+            area = stats['survey_area_m2']
+            self.coverageLabel.setText(f'{area / 10_000:.1f} ha' if area else '—')
+            self._show_planned_panorama_points(result)
+            points = len(result['panorama']['points'])
+            rows = len(result['panorama']['points'][0]['rows'])
+            self.linesLabel.setText(f'{points} points' if points > 1 else
+                                    '1 row' if rows == 1 else f'{rows} rows')
         else:
             self.linesLabel.setText(str(stats['strip_count']))
         self.batteriesLabel.setText(str(stats['battery_count']))
@@ -3524,7 +3558,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                 self._missions = [plan['waypoints'] for plan in self._oblique_terrain]
                 self.waypointsLabel.setText(
                     f"{sum(len(plan['waypoints']) for plan in self._oblique_terrain):,}")
-            if (self._mission_kind() == 'orbit'
+            if (self._mission_kind() in ('orbit', 'panorama')
                     and not result['validation']['export_allowed']):
                 self._set_info(result['validation']['errors'][0]['message'])
             return result
@@ -3535,7 +3569,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self._missions = []
             self._shot_spacing_m = 0.0
             if not silent:
-                title = 'Cannot Plan Orbit' if self._mission_kind() == 'orbit' else 'Cannot Plan Mission'
+                title = {'orbit': 'Cannot Plan Orbit', 'panorama': 'Cannot Plan Panorama'}.get(
+                    self._mission_kind(), 'Cannot Plan Mission')
                 QMessageBox.warning(self, title, str(exc))
             return None
 
@@ -3588,9 +3623,19 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
     def _oblique_flight_passes(self, count):
         """For an oblique plan, each flight's pass: 'Nadir', 'Grid' or 'Cross
-        grid', or the compass way its camera faces, e.g. 'Facing NE'. None for
-        other missions."""
+        grid', or the compass way its camera faces, e.g. 'Facing NE'. For a
+        panorama plan, the points each flight takes, e.g. 'points 1 to 3'.
+        None for other missions."""
         result = self._planning.result
+        if result and result.get('operation') == 'plan_panorama':
+            # Panorama flights hold whole panoramas: name their points.
+            rows = result['route']['waypoints']
+            names = []
+            for flight in result['flights']:
+                first = rows[flight['route_start_waypoint_index']]['point_index'] + 1
+                last = rows[flight['route_end_waypoint_index']]['point_index'] + 1
+                names.append(f'point {first}' if first == last else f'points {first} to {last}')
+            return names if len(names) == count else None
         if not result or result.get('operation') != 'plan_oblique':
             return None
         rows = result['route']['waypoints']
@@ -3996,6 +4041,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self._clear_breaks()
             self._remove_survey_area_layer()
             self._clear_orbit_centre()
+            self._clear_panorama_points()
             self._clear_layer_selection()
             self._survey_polygon     = None
             self._survey_polygon_crs = None
@@ -4361,8 +4407,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         its headings, heights and camera tilts go with it. Without it, the whole
         route's."""
         orbit = self._mission_kind() == 'orbit'
+        point = orbit or self._mission_kind() == 'panorama'    # no survey polygon
         headings = heights = pitches = None
-        if self._mission_kind() in ('orbit', 'oblique') and flight is not None:
+        if self._mission_kind() in ('orbit', 'oblique', 'panorama') and flight is not None:
             headings, heights, pitches = (
                 flight['headings'], flight['heights'], flight['gimbal_pitches'])
             terrain = getattr(self, '_oblique_terrain', None)
@@ -4391,7 +4438,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             gimbal_pitch=(pitches[0] if pitches else
                           self.orbitTiltSpin.value() if orbit
                           else self.gimbalAngleSpin.value()),
-            polygon=(None if orbit else survey_geometry.polygon_vertices(
+            polygon=(None if point else survey_geometry.polygon_vertices(
                 self._survey_polygon, self._survey_polygon_crs)),
             side_overlap=self.sideOverlapSpin.value() / 100.0,
             front_overlap=self._front_overlap_fraction(),
@@ -4400,7 +4447,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             capture_mode=self._mission_type(),
             curved_path=self._path_curved(),
             # The launch offset lives in the Takeoff Zone group, hidden for orbits.
-            launch_offset_m=0.0 if orbit else self.launchOffsetSpin.value(),
+            launch_offset_m=0.0 if point else self.launchOffsetSpin.value(),
             headings=tuple(headings) if headings else None,
             heights=tuple(heights) if heights else None,
             gimbal_pitches=tuple(pitches) if pitches else None,
@@ -4539,9 +4586,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             missions_h = [(terrain[index]['waypoints'] if terrain else flight['waypoints'], None, None)
                           for index, flight in enumerate(consumed)]
             flight_actions = [flight['actions'] for flight in consumed]
-            if self._mission_kind() in ('orbit', 'oblique'):
-                # Each orbit or oblique flight has its own headings, heights
-                # and tilts.
+            if self._mission_kind() in ('orbit', 'oblique', 'panorama'):
+                # Each orbit, oblique or panorama flight has its own headings,
+                # heights and tilts.
                 flight_settings = [self._export_settings(flight) for flight in consumed]
         else:
             missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
@@ -4853,6 +4900,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._clear_corridor_band()
         self._leave_orbit_tool()
         self._remove_orbit_centre_layer()
+        self._leave_panorama_tool()
+        self._remove_panorama_layer()
         self._on_clear_preview(reset_area=False)
         # Belt-and-suspenders cleanup if panel state got out of sync.
         preview_layers.remove_stale()
@@ -4890,6 +4939,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
     def _has_survey_area(self, silent=False):
         if self._mission_kind() == 'orbit':
             return self._has_orbit_centre(silent)
+        if self._mission_kind() == 'panorama':
+            return self._has_panorama_point(silent)
         if self._mission_kind() == 'corridor':
             if self._survey_line is None or self._survey_line_crs is None:
                 if not silent:

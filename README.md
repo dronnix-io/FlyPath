@@ -35,7 +35,7 @@ Follow FlyPath updates on [X (@SalarDrones)](https://x.com/SalarDrones) and [Lin
 
 ## What FlyPath does
 
-- **Four mission types:** 2D Mapping, Oblique Mapping, Corridor Mapping and Orbit (3D Model).
+- **Five mission types:** 2D Mapping, Oblique Mapping, Corridor Mapping, Orbit (3D Model) and Panorama.
 - **Plans with your GIS data:** draw an area, or use any polygon or line layer or a QGIS selection.
 - **Shows the real route:** a live preview with flight time, distance, photos, waypoints and batteries.
 - **Handles big jobs:** splits a survey into several flights by battery and waypoint limit.
@@ -115,6 +115,20 @@ Circles around an object with the camera facing it, for 3D models of buildings, 
 - **Edit** moves or resizes the circle with handles; **Remove** clears it.
 - **Reverse route** flies the rings counterclockwise.
 - Rings that need more than one battery are split into flights, whole rings first.
+
+### Panorama
+
+Photos all around a point, for stitched 360° panoramas. DJI Fly missions cannot turn the drone in place, so at each point the drone flies small laps (3 to 5 m) facing outward and takes a photo at each heading: one lap per camera row (0°, -30° and -60° with the default overlap), then one photo straight down. With a DJI Mini 4 Pro and 30% overlap that is 24 photos per point.
+
+Choose how the points are placed under **Survey Area > Panorama**:
+
+- **Points:** click **Place Points on Map** and click each point, in the order to fly them. One point is a single panorama. Drag a point to move it; **Undo** removes the last one and **Remove** clears them all.
+- **Area:** draw or pick a survey area, and FlyPath spreads the points over it on a hexagon grid, flown row by row. **Point Spacing** sets how far apart they are; **Auto** uses the altitude.
+
+- **Photo Overlap** sets the overlap between photos, around each row and between rows. **Nadir Photo** adds the straight-down photo.
+- Points closer than 15 m are refused, because their laps would overlap.
+- A mission that needs more than one flight is split between points, never in the middle of a panorama. The RC part picker names the points in each part.
+- Stitch the photos of each point with panorama software such as PTGui or Hugin.
 
 ---
 
@@ -196,7 +210,7 @@ Under **Survey Area**, choose the **Source** (**Draw** is selected when FlyPath 
 - **Layer:** pick a polygon layer and feature already in your QGIS project.
 - **Selection:** select a feature on the map with the QGIS selection tools, then click **Use QGIS Selection**.
 
-Only one area is active at a time. Corridor Mapping uses a **line** instead of a polygon, in the same three ways, and shows its **Length** instead of its area. Orbit uses a **circle**: click **Draw Circle on Map** on the object, or press and drag to set the radius.
+Only one area is active at a time. Corridor Mapping uses a **line** instead of a polygon, in the same three ways, and shows its **Length** instead of its area. Orbit uses a **circle**: click **Draw Circle on Map** on the object, or press and drag to set the radius. Panorama uses **points** you click, or an area in **Area** mode.
 
 **DEM** (optional) picks a loaded elevation raster for terrain follow, the takeoff zone and contours. Leave it on "none" to use the online data.
 
@@ -206,8 +220,8 @@ Only one area is active at a time. Corridor Mapping uses a **line** instead of a
 
 | Setting | What it does |
 |---|---|
-| Mission Type | **2D Mapping**, **Oblique Mapping**, **Corridor Mapping** or **Orbit (3D Model)**. See [Mission types](#mission-types) |
-| Capture | **Semi** or **Full**. See [Capture](#capture-semi-or-full) |
+| Mission Type | **2D Mapping**, **Oblique Mapping**, **Corridor Mapping**, **Orbit (3D Model)** or **Panorama**. See [Mission types](#mission-types) |
+| Capture | **Semi** or **Full**. See [Capture](#capture-semi-or-full). Panorama always takes a photo at every waypoint |
 | Flight Path | **Curved** (recommended) or **Straight**. See [Flight Path](#flight-path-curved-or-straight) |
 | Drone | Your drone model. It sets the camera used for GSD and photo spacing |
 
@@ -228,6 +242,9 @@ Only one area is active at a time. Corridor Mapping uses a **line** instead of a
 | Nadir Pass | Oblique only. Fly the area straight down before the oblique passes (on by default) |
 | Radius | Orbit only. Size of the selected ring, in metres |
 | Camera Tilt | Orbit only. Camera tilt of the selected ring: 0° is the horizon, -90° straight down |
+| Photo Overlap | Panorama only. Overlap between photos, around each row and between rows (default 30%) |
+| Nadir Photo | Panorama only. End each panorama with a photo straight down (on by default) |
+| Point Spacing | Panorama Area mode only. Distance between points; **Auto** uses the altitude |
 
 2D and Corridor missions always look straight down (-90°).
 
@@ -237,7 +254,7 @@ Only one area is active at a time. Corridor Mapping uses a **line** instead of a
 |---|---|
 | Enable splitting | Divide the mission into several flights |
 | Split Missions / Min Flights | The smallest number of flights. Corridor calls it **Min Flights** and splits the line into stretches |
-| Max Waypoints | The most waypoints in one flight (DJI allows about 200). Orbits use 200 |
+| Max Waypoints | The most waypoints in one flight (DJI allows about 200). Orbits and panoramas use 200 |
 | Cross-hatch | 2D only. Fly the grid again at 90° |
 | Reverse route | Start from the other end; in Orbit, fly counterclockwise |
 | Terrain follow | Keep the same height above the ground |
@@ -425,6 +442,7 @@ Go to **Plugins > FlyPath > FlyPath**, or click the FlyPath icon in the toolbar.
 - Terrain follow uses a bare-earth elevation model of about 30 m, so it does not see trees or buildings. Heights are measured from takeoff at the first waypoint of each flight.
 - Oblique terrain follow works out where the camera looks at takeoff level, so on steep slopes the photo centres move a little. Oblique missions with terrain follow cannot be saved to flypath.io yet.
 - Orbit missions do not use terrain follow.
+- Panorama missions do not use terrain follow, work with DJI Fly drones only, and cannot be saved to flypath.io yet. FlyPath takes the photos; stitch them with panorama software.
 - Corridor and 2D missions always look straight down. Mission Breaks go on the centre line's existing vertices.
 - The Mini 3 Pro mission settings are community-verified, not confirmed from a mission made on its controller.
 
