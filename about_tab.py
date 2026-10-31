@@ -39,6 +39,8 @@ AVAILABLE = (
     'tilted camera, for 3D models.',
     '<b>Orbit (3D Model)</b>: up to 3 rings around an object, each with its own '
     'radius, altitude and camera tilt.',
+    '<b>Panorama</b>: photos all around one or more points, or points spread '
+    'over an area, for stitched 360° panoramas.',
     'Semi- or full-automatic capture, and a curved or straight flight path.',
     'Terrain follow with online elevation data or your own DEM, plus the '
     'Takeoff Zone and contours.',
@@ -49,7 +51,6 @@ AVAILABLE = (
 )
 
 COMING = (
-    '<b>Panoramic missions</b>.',
     '<b>Cloud 2D maps and 3D models</b> on FlyPath.io, for the missions you have flown.',
     '<b>Enterprise drone support</b>.',
     '<b>Large survey area splitting</b>.',
