@@ -281,8 +281,13 @@ class PanoramaMixin:
         if area:
             self._refresh_panorama_spacing_hint()
         self._set_row_visible(self._area_form, self.areaLabel, area or not panorama)
-        # Every photo has its own waypoint, so the capture choice is hidden.
-        self._set_row_visible(self._mission_form, self._captureRow, not panorama)
+        # Every photo has its own waypoint, so the capture choice is hidden and
+        # the row offers the Flight Path alone.
+        self._captureToggle.setVisible(not panorama)
+        self._pathCaption.setVisible(not panorama)
+        label = self._row_label(self._mission_form, self._captureRow)
+        if label is not None:
+            label.setText('Flight Path' if panorama else 'Capture')
         self._routeTitle.setVisible(True)
         if not panorama:
             return
@@ -297,6 +302,7 @@ class PanoramaMixin:
         self.terrainFollowCheck.setVisible(False)
         self.reverseRouteCheck.setVisible(False)
         self._routeTitle.setVisible(False)      # no route options apply
+        self._pathRow.setVisible(True)
         self._takeoffGroup.setVisible(False)
         blocked = self.altitudeSpin.blockSignals(True)
         self.altitudeSpin.setMinimum(PANORAMA_MIN_ALTITUDE_M)
@@ -305,7 +311,6 @@ class PanoramaMixin:
     def _switch_panorama_mode(self, panorama):
         """Change values when the mission kind switches into or out of panorama."""
         if panorama:
-            self.pathCurvedRadio.setChecked(True)   # DJI Fly keeps curved paths on re-save
             self.terrainFollowCheck.setChecked(False)
             self.reverseRouteCheck.setChecked(False)
             self.splitCheck.setChecked(False)
@@ -558,4 +563,5 @@ class PanoramaMixin:
             include_nadir=self.panoramaNadirCheck.isChecked(),
             finish_action=self.finishActionCombo.currentText(),
             max_waypoints_per_flight=self.maxWaypointsSpin.value(),
+            turn_style='curved' if self._path_curved() else 'straight',
         )

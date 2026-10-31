@@ -49,10 +49,13 @@ def test_panorama_point_previews_exports_and_resets():
             assert all(shown(widget) for widget in (
                 planner.panoramaOverlapSpin, planner.panoramaNadirCheck, planner.placePointBtn))
             still_shown = [name for name in (
-                '_captureRow', '_sourceStack', 'sideOverlapSpin', 'frontOverlapStack', 'gsdSpin',
+                '_captureToggle', '_pathCaption', '_sourceStack', 'sideOverlapSpin', 'frontOverlapStack', 'gsdSpin',
                 'splitCheck', 'terrainFollowCheck', 'reverseRouteCheck',
                 'orbitRadiusSpin', 'demCombo', '_takeoffGroup') if shown(getattr(planner, name))]
             assert not still_shown, still_shown
+            # The capture row offers the Flight Path alone.
+            assert shown(planner._captureRow) and shown(planner._pathRow)
+            assert dialog.form_rows.label(planner._mission_form, planner._captureRow).text() == 'Flight Path'
 
             # A click places the point and previews it; Escape ends placing.
             planner.placePointBtn.setChecked(True)
@@ -80,6 +83,20 @@ def test_panorama_point_previews_exports_and_resets():
             assert re.findall(r'<wpml:gimbalPitchRotateAngle>([-\d.]+)<', wpml) == [
                 '0.0', '-30.0', '-60.0', '-90.0']
             assert re.findall(r'<wpml:waypointHeadingAngle>([-\d.]+)<', wpml)[:3] == ['0.0', '45.0', '90.0']
+            assert wpml.count('<wpml:useStraightLine>0<') == 24
+
+            # Straight: the same waypoints with straight legs, stopping at each one.
+            planner.pathStraightRadio.click()
+            planner._on_preview()
+            assert planner._planning.result['turn_style'] == 'straight'
+            flight = dialog.planning_adapter.consume_result(
+                planner._planning.request, planner._planning.result)[0]
+            mission_export.write_kmz(path, planner._export_settings(flight), flight['waypoints'],
+                                     'Panorama', actions=flight['actions'])
+            wpml = zipfile.ZipFile(path).read('wpmz/waylines.wpml').decode()
+            assert wpml.count('<wpml:useStraightLine>1<') == 24
+            assert wpml.count('toPointAndStopWithDiscontinuityCurvature') == 24
+            planner.pathCurvedRadio.click()
 
             # flypath.io does not store panoramas yet.
             try:
@@ -94,8 +111,9 @@ def test_panorama_point_previews_exports_and_resets():
             app.processEvents()
             assert not planner._panorama_points and planner._panorama_layer_id is None
             assert all(shown(widget) for widget in (
-                planner._captureRow, planner.maxWaypointsSpin, planner._sourceStack,
-                planner.sideOverlapSpin))
+                planner._captureRow, planner._captureToggle, planner._pathCaption,
+                planner.maxWaypointsSpin, planner._sourceStack, planner.sideOverlapSpin))
+            assert dialog.form_rows.label(planner._mission_form, planner._captureRow).text() == 'Capture'
             assert not shown(planner.panoramaOverlapSpin)
 
             # Remove clears the point and its waypoints.

@@ -150,7 +150,8 @@ def build_oblique_request(*, gimbal_pitch_deg, include_nadir, pattern='fast', **
 
 def build_panorama_request(*, drone_profile_id, altitude_m, speed_m_s, overlap_ratio,
                            include_nadir, finish_action, max_waypoints_per_flight=200,
-                           points=None, survey_area=None, point_spacing_m=None):
+                           points=None, survey_area=None, point_spacing_m=None,
+                           turn_style='curved'):
     """Translate the panorama controls into one engine request.
 
     Give `points` as (lon, lat) in WGS84, flown in order, or a `survey_area`
@@ -158,7 +159,8 @@ def build_panorama_request(*, drone_profile_id, altitude_m, speed_m_s, overlap_r
     its default, the altitude). Every photo has its own waypoint,
     so the capture mode is always full automatic; the overlap applies around
     each camera row and between rows. Flights are cut between panoramas to
-    fit the waypoint limit and one battery."""
+    fit the waypoint limit and one battery. `turn_style` is the Flight Path,
+    'curved' or 'straight'."""
     if survey_area is not None:
         place = {'survey_area': survey_area}
         if point_spacing_m is not None:
@@ -178,6 +180,7 @@ def build_panorama_request(*, drone_profile_id, altitude_m, speed_m_s, overlap_r
         'include_nadir': bool(include_nadir),
         'finish_action': FINISH_ACTIONS[finish_action],
         'split': {'max_waypoints_per_flight': max_waypoints_per_flight},
+        'turn_style': turn_style,
         'terrain_follow': False,
     }
 
