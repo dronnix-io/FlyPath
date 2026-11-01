@@ -304,9 +304,6 @@ class PanoramaMixin:
         self._routeTitle.setVisible(False)      # no route options apply
         self._pathRow.setVisible(True)
         self._takeoffGroup.setVisible(False)
-        blocked = self.altitudeSpin.blockSignals(True)
-        self.altitudeSpin.setMinimum(PANORAMA_MIN_ALTITUDE_M)
-        self.altitudeSpin.blockSignals(blocked)
 
     def _switch_panorama_mode(self, panorama):
         """Change values when the mission kind switches into or out of panorama."""

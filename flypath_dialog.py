@@ -132,8 +132,9 @@ from . import map_overlays
 from .planning_lifecycle import PlanningLifecycle
 from .survey_controller import SurveyLifecycleMixin
 from .website_sync_controller import WebsiteSyncLifecycleMixin
-from .orbit_controller import ORBIT_LABEL, OrbitMixin
-from .panorama_controller import PANORAMA_LABEL, PanoramaMixin
+from .orbit_controller import (MAPPING_MIN_ALTITUDE_M, ORBIT_LABEL, ORBIT_MIN_ALTITUDE_M,
+                               OrbitMixin)
+from .panorama_controller import PANORAMA_LABEL, PANORAMA_MIN_ALTITUDE_M, PanoramaMixin
 
 OBLIQUE_LABEL = 'Oblique Mapping'
 _GEOD = Geod(ellps='WGS84')
@@ -2690,8 +2691,13 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         survey area: a polygon is not valid input for a corridor (and vice
         versa), so the layer list is repopulated for the new geometry type."""
         self._apply_kind_layout()
-        self._switch_orbit_mode(self._mission_kind() == 'orbit')
-        self._switch_panorama_mode(self._mission_kind() == 'panorama')
+        kind = self._mission_kind()
+        if kind == 'orbit':
+            self._switch_panorama_mode(False)
+            self._switch_orbit_mode(True)
+        else:
+            self._switch_orbit_mode(False)
+            self._switch_panorama_mode(kind == 'panorama')
         self._on_clear_preview(reset_area=True)
         self._refresh_layer_combo()
 
@@ -2757,6 +2763,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._apply_orbit_layout(kind == 'orbit')
         if kind == 'panorama':
             self._apply_panorama_layout(True)
+        minimum = (ORBIT_MIN_ALTITUDE_M if kind == 'orbit' else
+                   PANORAMA_MIN_ALTITUDE_M if kind == 'panorama' else
+                   MAPPING_MIN_ALTITUDE_M)
+        blocked = self.altitudeSpin.blockSignals(True)
+        self.altitudeSpin.setMinimum(minimum)
+        self.altitudeSpin.blockSignals(blocked)
         self._place_safety_group()
 
     # ── Corridor mission breaks (manual line grouping) ────────────────────

@@ -344,3 +344,54 @@ def test_panorama_area_places_points_on_a_hexagon_grid():
     canvas.close()
     canvas.deleteLater()
     app.processEvents()
+
+
+def test_panorama_orbit_switches_preserve_mapping_limit_and_low_altitude():
+    try:
+        from qgis.core import QgsApplication
+        from qgis.gui import QgsMapCanvas
+        from qgis.PyQt.QtCore import QSettings
+    except ImportError as exc:
+        raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
+    package = Path(__file__).resolve().parents[1].name
+    dialog = importlib.import_module(package + '.flypath_dialog')
+    app = QgsApplication.instance() or QgsApplication([], False)
+    app.initQgis()
+    ini = os.path.join(tempfile.mkdtemp(), 'settings.ini')
+    ini_format = getattr(QSettings, 'Format', QSettings).IniFormat
+    canvas = QgsMapCanvas()
+
+    with patch.object(dialog, 'QSettings', lambda *args: QSettings(ini, ini_format)):
+        planner = dialog.FlyPathDialog(SimpleNamespace(mapCanvas=lambda: canvas))
+        try:
+            planner.show()
+            planner.droneModelCombo.setCurrentText('DJI Mini 4 Pro')
+            planner.maxWaypointsSpin.setValue(99)
+            planner.missionTypeCombo.setCurrentText('Panorama')
+            planner.altitudeSpin.setValue(10)
+            planner.panoramaAreaRadio.click()
+            assert planner.altitudeSpin.value() == planner.altitudeSpin.minimum() == 10
+            planner.panoramaPointsRadio.click()
+            planner._apply_kind_layout()
+            assert planner.altitudeSpin.value() == 10
+            planner.maxWaypointsSpin.setValue(80)
+            planner.missionTypeCombo.setCurrentText(dialog.ORBIT_LABEL)
+            assert planner.maxWaypointsSpin.value() == 200
+            planner.maxWaypointsSpin.setValue(70)
+            planner.missionTypeCombo.setCurrentText('2D Mapping')
+            assert planner.maxWaypointsSpin.value() == 99
+
+            planner.missionTypeCombo.setCurrentText(dialog.ORBIT_LABEL)
+            planner.maxWaypointsSpin.setValue(60)
+            planner.missionTypeCombo.setCurrentText('Panorama')
+            assert planner.maxWaypointsSpin.value() == 200
+            planner.maxWaypointsSpin.setValue(50)
+            planner.missionTypeCombo.setCurrentText('2D Mapping')
+            assert planner.maxWaypointsSpin.value() == 99
+            assert planner.altitudeSpin.minimum() == 30
+        finally:
+            planner.close()
+            app.processEvents()
+    canvas.close()
+    canvas.deleteLater()
+    app.processEvents()
