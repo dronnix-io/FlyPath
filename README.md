@@ -360,7 +360,7 @@ Open the **My missions** tab and click **Connect account**. Paste the token from
 - If someone changed the mission on the website after you opened it, FlyPath does not overwrite their work. It asks whether to load the latest version, save yours as a copy, or cancel; your local plan is kept.
 - Projects are created and renamed on the website.
 
-**What syncs:** 2D, Corridor, Orbit (with rings and splitting) and Oblique missions with the consumer drones FlyPath supports. A few cases do not open in QGIS yet: reversed corridor routes, terrain-follow routes and routes from older versions stay on the website. Oblique missions with terrain follow stay local for now: export them, or turn terrain follow off before saving.
+**What syncs:** 2D, Corridor, Orbit (with rings and splitting), Oblique and Panorama missions with the consumer drones FlyPath supports. A few cases do not open in QGIS yet: reversed corridor routes, terrain-follow routes and routes from older versions stay on the website. Oblique missions with terrain follow stay local for now: export them, or turn terrain follow off before saving.
 
 Not connected yet? The tab explains what an account adds and links to [flypath.io/register](https://flypath.io/register/).
 
@@ -442,7 +442,7 @@ Go to **Plugins > FlyPath > FlyPath**, or click the FlyPath icon in the toolbar.
 - Terrain follow uses a bare-earth elevation model of about 30 m, so it does not see trees or buildings. Heights are measured from takeoff at the first waypoint of each flight.
 - Oblique terrain follow works out where the camera looks at takeoff level, so on steep slopes the photo centres move a little. Oblique missions with terrain follow cannot be saved to flypath.io yet.
 - Orbit missions do not use terrain follow.
-- Panorama missions do not use terrain follow, work with DJI Fly drones only, and cannot be saved to flypath.io yet. FlyPath takes the photos; stitch them with panorama software.
+- Panorama missions do not use terrain follow and work with DJI Fly drones only. FlyPath takes the photos; stitch them with panorama software.
 - Corridor and 2D missions always look straight down. Mission Breaks go on the centre line's existing vertices.
 - The Mini 3 Pro mission settings are community-verified, not confirmed from a mission made on its controller.
 

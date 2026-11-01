@@ -367,11 +367,52 @@ def validate_mission_provenance(mission):
     request = mission.get('planning_request')
     settings = mission.get('settings') or {}
     oblique = settings.get('mapping_style') == 'oblique'
+    panorama = settings.get('mapping_style') == 'panorama'
     if not isinstance(request, dict):
         raise ValueError('The saved planning request is missing.')
     if oblique and not _orbit_capable(result.get('engine_version'), OBLIQUE_MIN_ENGINE_VERSION):
         raise ValueError('This saved oblique engine version is not supported.')
-    if settings.get('mapping_style') == 'orbit':
+    if panorama:
+        if not _orbit_capable(result.get('engine_version'), PANORAMA_MIN_ENGINE_VERSION):
+            raise ValueError('This saved panorama engine version is not supported.')
+        expected = {
+            'operation': 'plan_panorama',
+            'mapping_style': 'panorama',
+            'drone_profile_id': mission.get('drone_model'),
+            'altitude_m': settings.get('altitude'),
+            'speed_m_s': settings.get('speed'),
+            'turn_style': settings.get('flight_path', 'curved'),
+            'finish_action': WEBSITE_FINISH_ACTIONS.get(settings.get('finish_action')),
+            'include_nadir': settings.get('panorama_nadir', True),
+            'terrain_follow': False,
+        }
+        if any(request.get(key) != value for key, value in expected.items()):
+            raise ValueError('The saved panorama request does not match the mission settings.')
+        if (request.get('capture') != {'mode': 'full_auto',
+                                       'overlap_ratio': _ratio(settings.get('panorama_overlap', 30))}
+                or request.get('split') != {'max_waypoints_per_flight': settings.get('split_max_wp', 200)}):
+            raise ValueError('The saved panorama capture or split does not match the mission settings.')
+        polygon = mission.get('polygon') or []
+        layout = settings.get('panorama_layout', 'points')
+        if layout == 'points':
+            points = request.get('points')
+            geometry = ([[point.get('latitude_deg'), point.get('longitude_deg')]
+                         for point in points] if isinstance(points, list)
+                        and all(isinstance(point, dict) for point in points) else None)
+            if geometry != polygon or 'survey_area' in request:
+                raise ValueError('The saved panorama points do not match the mission geometry.')
+        else:
+            area = request.get('survey_area')
+            exterior = area.get('exterior') if isinstance(area, dict) else None
+            geometry = ([[point.get('latitude_deg'), point.get('longitude_deg')]
+                         for point in exterior] if isinstance(exterior, list)
+                        and all(isinstance(point, dict) for point in exterior) else None)
+            spacing = request.get('point_spacing_m', 0) or 0
+            if (geometry != polygon or 'points' in request
+                    or (isinstance(area, dict) and (area.get('holes') or area.get('parts')))
+                    or spacing != settings.get('panorama_spacing', 0)):
+                raise ValueError('The saved panorama area does not match the mission geometry.')
+    elif settings.get('mapping_style') == 'orbit':
         if not _orbit_capable(result.get('engine_version')):
             raise ValueError('This saved orbit engine version is not supported.')
         rings = settings.get('orbit_rings') or [{

@@ -1,6 +1,7 @@
-"""Panorama missions: place points, preview the laps, export, then leave (no network)."""
+"""Panorama missions: place points, preview, sync, export and leave (no network)."""
 
 import importlib
+from copy import deepcopy
 import math
 import os
 from pathlib import Path
@@ -98,13 +99,27 @@ def test_panorama_point_previews_exports_and_resets():
             assert wpml.count('toPointAndStopWithDiscontinuityCurvature') == 24
             planner.pathCurvedRadio.click()
 
-            # flypath.io does not store panoramas yet.
+            mission = planner._website_payload('Panorama')
+            sync.validate_mission(mission)
+            assert mission['polygon'] == [[51.05, -114.09]]
+            assert mission['settings']['panorama_layout'] == 'points'
+            assert mission['settings']['panorama_overlap'] == 30
+            assert mission['settings']['panorama_nadir'] is True
+            saved = mission['planning_result']
+            with patch.object(planner, '_plan_shared', side_effect=AssertionError('regenerated')):
+                adjusted, note = planner._apply_website_mission(mission)
+            assert not adjusted and not note
+            assert planner._planning.result == saved
+            assert planner._website_payload('Panorama again')['planning_result'] == saved
+            changed = deepcopy(mission)
+            changed['settings']['panorama_overlap'] = 35
             try:
-                planner._website_payload('Panorama')
-            except sync.FlypathSyncError as exc:
-                assert 'Panorama' in str(exc)
+                planner._apply_website_mission(changed)
+            except sync.FlypathSyncError:
+                pass
             else:
-                raise AssertionError('A panorama was sent to flypath.io')
+                raise AssertionError('Mismatched panorama settings accepted')
+            assert planner._planning.result == saved
 
             # Leaving restores the mapping rows and drops the point.
             planner.missionTypeCombo.setCurrentText('2D Mapping')
@@ -289,6 +304,15 @@ def test_panorama_area_places_points_on_a_hexagon_grid():
             assert planner.linesLabel.text() == '11 points' and planner.coverageLabel.text() == '39.0 ha'
             assert markers() == [str(number) for number in range(1, 12)]
             assert planner._preview_layer_ids
+            mission = planner._website_payload('Panorama area')
+            assert mission['settings']['panorama_layout'] == 'area'
+            assert mission['settings']['panorama_spacing'] == 0
+            saved = mission['planning_result']
+            with patch.object(planner, '_plan_shared', side_effect=AssertionError('regenerated')):
+                adjusted, note = planner._apply_website_mission(mission)
+            assert not adjusted and not note
+            assert planner._planning.result == saved
+            assert planner._website_payload('Panorama area again')['planning_result'] == saved
 
             # A set spacing places fewer, wider points.
             planner.panoramaSpacingSpin.setValue(300)
@@ -296,6 +320,12 @@ def test_panorama_area_places_points_on_a_hexagon_grid():
             if planner._planning.settings_changed():
                 planner._on_preview()
             assert len(planner._planning.result['panorama']['points']) == 7 and len(markers()) == 7
+            spaced = planner._website_payload('Spaced panorama area')
+            assert spaced['settings']['panorama_spacing'] == 300
+            assert spaced['planning_request']['point_spacing_m'] == 300
+            planner._apply_website_mission(spaced)
+            assert planner.panoramaSpacingSpin.value() == 300
+            assert planner._planning.result == spaced['planning_result']
             # Auto follows the altitude.
             planner.panoramaSpacingSpin.setValue(0)
             planner.altitudeSpin.setValue(200)
