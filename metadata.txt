@@ -7,7 +7,7 @@ version=5.0.0
 changelog=5.0.0 - New Panorama mission type: photos all around one or more points, for
     stitched 360 degree panoramas. DJI Fly missions cannot turn the drone in place, so at each
     point the drone flies small laps facing outward, one per camera row, then takes one photo
-    straight down (24 photos per point with a Mini 4 Pro at 30% overlap). Points mode: click
+    straight down (24 photos per point with a Mini 4 Pro at 30 percent overlap). Points mode: click
     each point in flying order, drag a point to move it, Undo removes the last one. Area mode:
     draw or pick an area and FlyPath spreads the points over it on a hexagon grid; Point
     Spacing uses the altitude by default. Choose Photo Overlap, Nadir Photo and a curved or
