@@ -27,19 +27,23 @@ def test_dialog_lifecycle_ownership_without_qgis():
     survey = _class(ROOT / 'survey_controller.py', 'SurveyLifecycleMixin')
     website = _class(ROOT / 'website_sync_controller.py', 'WebsiteSyncLifecycleMixin')
     orbit = _class(ROOT / 'orbit_controller.py', 'OrbitMixin')
+    panorama = _class(ROOT / 'panorama_controller.py', 'PanoramaMixin')
 
     assert [base.id for base in dialog.bases] == [
-        'SurveyLifecycleMixin', 'WebsiteSyncLifecycleMixin', 'OrbitMixin', 'QWidget']
+        'SurveyLifecycleMixin', 'WebsiteSyncLifecycleMixin', 'OrbitMixin', 'PanoramaMixin', 'QWidget']
 
     dialog_methods = {node.name for node in dialog.body if isinstance(node, ast.FunctionDef)}
     survey_methods = {node.name for node in survey.body if isinstance(node, ast.FunctionDef)}
     website_methods = {node.name for node in website.body if isinstance(node, ast.FunctionDef)}
     orbit_methods = {node.name for node in orbit.body if isinstance(node, ast.FunctionDef)}
+    panorama_methods = {node.name for node in panorama.body if isinstance(node, ast.FunctionDef)}
 
     assert {'_on_draw_polygon', '_on_draw_line', '_set_survey_geometry'} <= survey_methods
     assert {'_on_send_to_website', '_on_load_from_website', '_website_payload'} <= website_methods
     assert {'_apply_orbit_layout', '_orbit_request_from_ui', 'set_orbit_centre'} <= orbit_methods
-    assert not dialog_methods & (survey_methods | website_methods | orbit_methods)
+    assert {'_apply_panorama_layout', '_panorama_request_from_ui', 'set_panorama_point'} <= panorama_methods
+    assert not dialog_methods & (survey_methods | website_methods | orbit_methods | panorama_methods)
+    assert not orbit_methods & panorama_methods
 
 
 def test_dialog_lifecycle_modules():

@@ -48,7 +48,7 @@ MAX_JSON_DEPTH = 32
 TIMEOUT_S = 20
 SYNC_API_VERSION = 1
 SYNC_VERSION_HEADER = 'X-FlyPath-Sync-Version'
-SUPPORTED_MAPPING_STYLES = ('2d', 'corridor', 'orbit', 'oblique')
+SUPPORTED_MAPPING_STYLES = ('2d', 'corridor', 'orbit', 'oblique', 'panorama')
 SYNC_MISMATCH_MESSAGE = ('Website sync is incompatible with this FlyPath plugin. '
                          'Update the plugin to reconnect.')
 
@@ -221,6 +221,7 @@ def validate_mission(mission):
             raise FlypathSyncError('Unsupported in this plugin. Open on website to edit this mission.')
         enums = {'capture_mode': ('semi', 'full'),
                  'oblique_pattern': ('fast', 'full'),
+                 'panorama_layout': ('points', 'area'),
                  'flight_path': ('straight', 'curved'),
                  'finish_action': tuple(WEBSITE_FINISH_ACTIONS.values()),
                  'rc_lost_action': tuple(WEBSITE_RC_LOST_ACTIONS.values())}
@@ -230,17 +231,30 @@ def validate_mission(mission):
                 if key not in ('finish_action', 'rc_lost_action') or settings[key] is not None:
                     raise ValueError()
         for key in ('cross_hatch', 'terrain_follow', 'split_enabled',
-                    'auto_direction', 'reverse_route', 'oblique_nadir'):
+                    'auto_direction', 'reverse_route', 'oblique_nadir', 'panorama_nadir'):
             if key in settings and type(settings[key]) is not bool:
                 raise ValueError()
         for key in ('altitude', 'speed', 'side_overlap', 'front_overlap', 'margin',
                     'direction', 'terrain_tolerance', 'split_max_wp',
-                    'corridor_width', 'split_count', 'orbit_radius', 'orbit_tilt', 'oblique_pitch'):
+                    'corridor_width', 'split_count', 'orbit_radius', 'orbit_tilt', 'oblique_pitch',
+                    'panorama_overlap', 'panorama_spacing'):
             if settings.get(key) is not None and (type(settings[key]) not in (int, float)
                                     or not math.isfinite(settings[key])):
                 raise ValueError()
         if 'orbit_rings' in settings and settings.get('mapping_style') != 'orbit':
             raise ValueError()
+        if settings.get('mapping_style') == 'panorama':
+            layout = settings.get('panorama_layout', 'points')
+            if (len(mission.get('polygon', [])) < (1 if layout == 'points' else 3)
+                    or (layout == 'points' and len(mission['polygon']) > 50)
+                    or settings.get('capture_mode', 'full') != 'full'
+                    or settings.get('terrain_follow', False)
+                    or settings.get('cross_hatch', False)
+                    or settings.get('reverse_route', False)
+                    or settings.get('split_enabled', False)
+                    or not 20 <= settings.get('panorama_overlap', 30) <= 70
+                    or not 0 <= settings.get('panorama_spacing', 0) <= 5000):
+                raise ValueError()
         if settings.get('mapping_style') == 'oblique':
             if (settings.get('oblique_pattern') not in ('fast', 'full')
                     or type(settings.get('oblique_nadir')) is not bool

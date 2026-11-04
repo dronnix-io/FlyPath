@@ -433,10 +433,6 @@ class OrbitMixin:
                 'either way.') if orbit else self._mapping_reverse_tip)
         # The takeoff zone and contours are built for mapping grids.
         self._takeoffGroup.setVisible(not orbit)
-        # Orbits may fly lower than mapping.
-        blocked = self.altitudeSpin.blockSignals(True)
-        self.altitudeSpin.setMinimum(ORBIT_MIN_ALTITUDE_M if orbit else MAPPING_MIN_ALTITUDE_M)
-        self.altitudeSpin.blockSignals(blocked)
 
     def _switch_orbit_mode(self, orbit):
         """Change values when the mission kind switches into or out of orbit."""

@@ -285,13 +285,15 @@ class WebsiteSyncLifecycleMixin:
         kind = self._mission_kind()
         corridor = kind == 'corridor'
         orbit = kind == 'orbit'
+        panorama = kind == 'panorama'
         if kind == 'oblique' and self.terrainFollowCheck.isChecked():
             raise FlypathSyncError(
                 'flypath.io does not support Oblique Mapping terrain follow yet. '
                 'Turn off Terrain Follow and regenerate, or export locally.')
         drone = registry.get(self.droneModelCombo.currentText())
-        if kind == 'oblique' and drone.category != 'consumer':
-            raise FlypathSyncError('Oblique website missions require a DJI Fly consumer drone.')
+        if kind in ('oblique', 'panorama') and drone.category != 'consumer':
+            raise FlypathSyncError('%s website missions require a DJI Fly consumer drone.'
+                                   % kind.capitalize())
         if not drone.website_code:
             raise FlypathSyncError(
                 '%s is not one of the drones flypath.io offers, so this mission '
@@ -300,6 +302,8 @@ class WebsiteSyncLifecycleMixin:
         try:
             if orbit:
                 area = [self._orbit_centre] if self._orbit_centre is not None else []
+            elif panorama and not self._panorama_area():
+                area = self._panorama_points
             elif corridor:
                 area = survey_geometry.line_vertices(self._survey_line, self._survey_line_crs)
             else:
@@ -311,7 +315,7 @@ class WebsiteSyncLifecycleMixin:
                 'separate lines. Send them as separate missions.' % exc.args[0]) from None
         if not area:
             raise FlypathSyncError('This mission has no survey area to send.')
-        if not corridor and not orbit and self._planning.request:
+        if not corridor and not orbit and self._planning.request and (not panorama or self._panorama_area()):
             survey_area = self._planning.request.get('survey_area', {})
             if survey_area.get('parts') or survey_area.get('holes'):
                 raise FlypathSyncError(
@@ -398,6 +402,13 @@ class WebsiteSyncLifecycleMixin:
                     {'radius_m': radius, 'altitude_m': altitude,
                      'gimbal_pitch_deg': pitch}
                     for radius, altitude, pitch in rings]
+        elif kind == 'panorama':
+            settings.update(panorama_layout='area' if self._panorama_area() else 'points',
+                            panorama_overlap=self.panoramaOverlapSpin.value(),
+                            panorama_nadir=self.panoramaNadirCheck.isChecked(),
+                            panorama_spacing=self.panoramaSpacingSpin.value() if self._panorama_area() else 0,
+                            terrain_follow=False, split_enabled=False, split_count=1,
+                            cross_hatch=False, reverse_route=False)
         elif corridor:
             # The plugin's Buffer is the half-width each side; the website's
             # corridor_width is the full mapped width.
@@ -413,11 +424,11 @@ class WebsiteSyncLifecycleMixin:
                             oblique_pitch=self.obliquePitchSpin.value(),
                             oblique_nadir=self.obliqueNadirCheck.isChecked(),
                             cross_hatch=False)
-        if self._mission_type() == 'full' and not orbit:
+        if self._mission_type() == 'full' and not orbit and kind != 'panorama':
             # Semi-automatic front overlap is derived from speed and interval,
             # not a setting the pilot chose, so it is not sent as one.
             settings['front_overlap'] = self.frontOverlapSpin.value()
-        if self.terrainFollowCheck.isChecked():
+        if self.terrainFollowCheck.isChecked() and kind != 'panorama':
             settings['terrain_tolerance'] = round(self.terrainToleranceSpin.value(), 1)
         return settings
 
@@ -574,7 +585,7 @@ class WebsiteSyncLifecycleMixin:
         active_layer = QgsProject.instance().mapLayer(self._survey_area_layer_id) \
             if self._survey_area_layer_id else None
         if (self._draw_tool is not None or self._break_tool is not None
-                or self._orbit_tool is not None
+                or self._orbit_tool is not None or self._panorama_tool is not None
                 or (active_layer and active_layer.isEditable())):
             raise FlypathSyncError(
                 'Finish or cancel the current survey drawing or edit before loading a mission.')
@@ -598,7 +609,8 @@ class WebsiteSyncLifecycleMixin:
             '_current_kind',
         )
         state_names += tuple(name for name in self.__dict__
-                             if name.startswith(('_survey_', '_preview_', '_live_', '_orbit_', '_oblique_')))
+                             if name.startswith(('_survey_', '_preview_', '_live_', '_orbit_', '_oblique_',
+                                                 '_panorama_')))
         state = {name: getattr(self, name) for name in set(state_names)
                  if hasattr(self, name)}
         planning = self._planning.__dict__.copy()
@@ -619,6 +631,9 @@ class WebsiteSyncLifecycleMixin:
             'orbitRadiusSpin', 'orbitTiltSpin', 'drawCircleBtn', 'editCircleBtn',
             'removeCircleBtn', 'orbitRingCombo', 'addRingBtn', 'removeRingBtn',
             'obliqueFastRadio', 'obliqueFullRadio', 'obliquePitchSpin', 'obliqueNadirCheck',
+            'placePointBtn', 'removePointBtn', 'undoPointBtn', 'panoramaOverlapSpin',
+            'panoramaNadirCheck', 'panoramaPointsRadio', 'panoramaAreaRadio',
+            'panoramaSpacingSpin',
         )
         widgets = {}
         appearance = {}
@@ -651,7 +666,7 @@ class WebsiteSyncLifecycleMixin:
             'frontOverlapStatLabel', 'areaLabel', 'infoBar', 'previewBtn',
             'showTakeoffZoneBtn', 'showContoursBtn', 'editPolygonBtn',
             'cameraInfoLabel', 'frontOverlapLabel', 'takeoffGsdVarLabel',
-            'selectionInfoLabel', 'orbitCentreLabel',
+            'selectionInfoLabel', 'orbitCentreLabel', 'panoramaPointLabel',
         )}
         feature_caption_hidden = self._featureCaption.isHidden()
         selected = (project.mapLayer(state['_selected_layer_id']).selectedFeatureIds()
@@ -741,12 +756,14 @@ class WebsiteSyncLifecycleMixin:
         except ValueError as exc:
             raise FlypathSyncError('The saved route could not be verified: %s' % exc) from None
         style = settings.get('mapping_style', '2d')
-        if style not in ('2d', 'corridor', 'orbit', 'oblique'):
+        if style not in flypath_sync.SUPPORTED_MAPPING_STYLES:
             raise FlypathSyncError(
                 'This mission is a "%s" survey, which this plugin cannot plan. '
-                'Only 2D, corridor, orbit and oblique missions can be loaded.' % style)
+                'Only 2D, corridor, orbit, oblique and panorama missions can be loaded.' % style)
         corridor = style == 'corridor'
         orbit = style == 'orbit'
+        panorama = style == 'panorama'
+        panorama_points = panorama and settings.get('panorama_layout', 'points') == 'points'
         if settings.get('reverse_route') and (
                 corridor or settings.get('terrain_follow')
                 or (not orbit and not mission.get('planning_result'))):
@@ -760,8 +777,8 @@ class WebsiteSyncLifecycleMixin:
             raise FlypathSyncError(
                 'This mission is planned for a drone this plugin does not '
                 'offer, so its settings would not carry over.')
-        if style in ('orbit', 'oblique') and registry.get(drone_name).category != 'consumer':
-            raise FlypathSyncError('Orbit and oblique missions need a DJI Fly drone.')
+        if style in ('orbit', 'oblique', 'panorama') and registry.get(drone_name).category != 'consumer':
+            raise FlypathSyncError('Orbit, oblique and panorama missions need a DJI Fly drone.')
 
         capture = settings.get('capture_mode', 'semi')
         if capture not in ('semi', 'full'):
@@ -781,12 +798,12 @@ class WebsiteSyncLifecycleMixin:
                     % (label, code))
 
         points = mission.get('polygon') or []
-        needed = 1 if orbit else 2 if corridor else 3
+        needed = 1 if orbit or panorama_points else 2 if corridor else 3
         if len(points) < needed:
             raise FlypathSyncError(
                 'This mission has no %s yet — draw one on the website first, '
                 'or plan it here.'
-                % ('centre point' if orbit else 'centre line' if corridor else 'survey area'))
+                % ('centre point' if orbit or panorama_points else 'centre line' if corridor else 'survey area'))
         try:
             vertices = [QgsPointXY(float(lon), float(lat)) for lat, lon in points]
         except (TypeError, ValueError):
@@ -794,10 +811,12 @@ class WebsiteSyncLifecycleMixin:
 
         wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
         geom = (QgsGeometry.fromPointXY(vertices[0]) if orbit
+                else QgsGeometry.fromMultiPointXY(vertices) if panorama_points
                 else QgsGeometry.fromPolylineXY(vertices) if corridor
                 else QgsGeometry.fromPolygonXY([vertices]))
         if (geom.isEmpty() or not geom.isGeosValid()
-                or (not orbit and (geom.length() <= 0 if corridor else geom.area() <= 0))):
+                or (not orbit and not panorama_points and
+                    (geom.length() <= 0 if corridor else geom.area() <= 0))):
             raise FlypathSyncError('This mission has an invalid survey geometry.')
 
         return settings, provenance, style, drone_name, capture, finish, rc_lost, geom, wgs84
@@ -808,6 +827,7 @@ class WebsiteSyncLifecycleMixin:
          geom, wgs84) = prepared
         corridor = style == 'corridor'
         orbit = style == 'orbit'
+        panorama = style == 'panorama'
         recovery_note = ''
         self._loading_mission = True
         self._planning.begin_import()
@@ -815,8 +835,11 @@ class WebsiteSyncLifecycleMixin:
         # not optimise the imported heading against the previous survey area.
         self.autoDirectionBtn.setChecked(False)
         self.missionTypeCombo.setCurrentText(
-            'Orbit (3D Model)' if orbit else 'Corridor Mapping' if corridor
+            'Panorama' if panorama else 'Orbit (3D Model)' if orbit else 'Corridor Mapping' if corridor
             else 'Oblique Mapping' if style == 'oblique' else '2D Mapping')
+        if panorama:
+            (self.panoramaAreaRadio if settings.get('panorama_layout', 'points') == 'area'
+             else self.panoramaPointsRadio).setChecked(True)
         self._oblique_terrain = None
         if style == 'oblique':
             (self.obliqueFastRadio if settings['oblique_pattern'] == 'fast'
@@ -854,6 +877,12 @@ class WebsiteSyncLifecycleMixin:
                            ('orbit tilt', self.orbitTiltSpin, settings.get('orbit_tilt'))))
         if style == 'oblique':
             fields.append(('camera angle', self.obliquePitchSpin, settings['oblique_pitch']))
+        if panorama:
+            fields.extend((('panorama overlap', self.panoramaOverlapSpin,
+                            settings.get('panorama_overlap', 30)),
+                           ('panorama spacing', self.panoramaSpacingSpin,
+                            settings.get('panorama_spacing', 0))))
+            self.panoramaNadirCheck.setChecked(settings.get('panorama_nadir', True))
         if isinstance(settings.get('corridor_width'), (int, float)):
             # The website's corridor_width is the full mapped width; the
             # plugin's Buffer is the half-width each side.
@@ -901,6 +930,8 @@ class WebsiteSyncLifecycleMixin:
         if orbit:
             centre = geom.asPoint()
             self.set_orbit_centre(centre.x(), centre.y())
+        elif panorama and not self._panorama_area():
+            self.set_panorama_points([(point.x(), point.y()) for point in geom.asMultiPoint()])
         elif corridor:
             self._show_drawn_line(geom, wgs84)
             self._set_survey_line(geom, wgs84)
@@ -912,7 +943,10 @@ class WebsiteSyncLifecycleMixin:
         self._split_overridden = True
         split_enabled = settings.get('split_enabled')
         self._setting_split = True
-        if orbit:
+        if panorama:
+            self.splitCheck.setChecked(False)
+            self._split_choice_required = False
+        elif orbit:
             # Saved orbits fly as one; splitting stays on for later edits that
             # need it, as when an orbit is drawn.
             self.splitCheck.setChecked(True)

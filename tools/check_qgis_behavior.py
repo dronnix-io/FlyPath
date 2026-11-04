@@ -41,6 +41,7 @@ def main():
         'test_oblique_mapping.py',
         'test_draw_tool_lifecycle.py',
         'test_corridor_band.py',
+        'test_panorama_mission.py',
     ]
     # Keep the application alive across modules; the vault suite owns its own.
     app = None if args.vault else QgsApplication([], False)
