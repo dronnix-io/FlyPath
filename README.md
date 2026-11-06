@@ -120,10 +120,16 @@ Circles around an object with the camera facing it, for 3D models of buildings, 
 
 Photos all around a point, for stitched 360° panoramas. DJI Fly missions cannot turn the drone in place, so at each point the drone flies small laps (3 to 5 m) facing outward and takes a photo at each heading: one lap per camera row (0°, -30° and -60° with the default overlap), then one photo straight down. With a DJI Mini 4 Pro and 30% overlap that is 24 photos per point.
 
+![Panorama: one point up close, with three small laps of waypoints facing outward (8, 8 and 7 photos) and the straight-down photo in the middle](docs/images/mission_panorama_laps.png)
+
 Choose how the points are placed under **Survey Area > Panorama**:
 
 - **Points:** click **Place Points on Map** and click each point, in the order to fly them. One point is a single panorama. Drag a point to move it; **Undo** removes the last one and **Remove** clears them all.
 - **Area:** draw or pick a survey area, and FlyPath spreads the points over it on a hexagon grid, flown row by row. **Point Spacing** sets how far apart they are; **Auto** uses the altitude.
+
+![Panorama in Points mode: seven numbered points around a car park, flown in the order they were placed](docs/images/mission_panorama_points.png)
+
+![Panorama in Area mode: points spread on a hexagon grid inside the drawn area around a stadium](docs/images/mission_panorama_area.png)
 
 - **Photo Overlap** sets the overlap between photos, around each row and between rows. **Nadir Photo** adds the straight-down photo.
 - Points closer than 15 m are refused, because their laps would overlap.
@@ -136,7 +142,7 @@ Choose how the points are placed under **Survey Area > Panorama**:
 
 ### Capture: Semi or Full
 
-Set under **Mission Setup > Capture**. It works with every mission type.
+Set under **Mission Setup > Capture**. It works with every mission type except Panorama, which always takes a photo at every waypoint.
 
 - **Semi:** FlyPath places waypoints only where the drone turns. Before takeoff, set the camera to interval capture (its shortest interval is shown next to **Front Overlap**). Fewer waypoints and a shorter flight.
 - **Full:** FlyPath places a waypoint at every photo and the drone takes each photo by itself. Exact overlap with no camera setup, and the route stays on the lines in DJI Fly.
