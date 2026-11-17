@@ -132,9 +132,9 @@ from . import map_overlays
 from .planning_lifecycle import PlanningLifecycle
 from .survey_controller import SurveyLifecycleMixin
 from .website_sync_controller import WebsiteSyncLifecycleMixin
-from .orbit_controller import (MAPPING_MIN_ALTITUDE_M, ORBIT_LABEL, ORBIT_MIN_ALTITUDE_M,
-                               OrbitMixin)
-from .panorama_controller import PANORAMA_LABEL, PANORAMA_MIN_ALTITUDE_M, PanoramaMixin
+from .orbit_controller import ORBIT_LABEL, OrbitMixin
+from .panorama_controller import PANORAMA_LABEL, PanoramaMixin
+from .low_altitude_controller import LowAltitudeMixin
 
 OBLIQUE_LABEL = 'Oblique Mapping'
 _GEOD = Geod(ellps='WGS84')
@@ -602,6 +602,7 @@ QLabel#selectionInfo { color: #8A93A0; font-size: 11px; }
 QLabel#frontOverlapWarnLabel {
     color: #E05050; font-weight: bold;
 }
+QLabel#lowAltitudeWarnLabel { color: #FF5A5A; font-weight: bold; }
 QLabel#cameraInfoLabel { color: #7FB3E8; font-size: 10px; }
 QWidget#actionBar {
     border-top: 1px solid #3A3D45; background-color: #181B22;
@@ -993,7 +994,7 @@ class _ThumbnailViewer(QDialog):
 
 
 class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin, PanoramaMixin,
-                    QWidget):
+                    LowAltitudeMixin, QWidget):
 
     def __init__(self, iface, parent=None):
         super().__init__(parent)
@@ -1461,6 +1462,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'Higher altitude → wider coverage per photo but lower resolution (larger GSD). '
             'Lower altitude → sharper images but more flight lines and longer mission time.')
         form.addRow('Altitude', self.altitudeSpin)
+        self._build_low_altitude_rows(form)   # opt-in below the usual minimum
 
         self.gsdSpin = QDoubleSpinBox()
         self.gsdSpin.setRange(0.10, 20.0)
@@ -2522,6 +2524,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.missionTypeCombo.currentIndexChanged.connect(self._on_mission_type_changed)
         self._orbit_connect_signals()
         self._panorama_connect_signals()
+        self._low_altitude_connect_signals()
         self.captureSemiRadio.toggled.connect(self._on_mission_type_changed)
         self.frontOverlapSpin.valueChanged.connect(self._on_param_changed)
         self.maxWaypointsSpin.valueChanged.connect(self._on_param_changed)
@@ -2763,12 +2766,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._apply_orbit_layout(kind == 'orbit')
         if kind == 'panorama':
             self._apply_panorama_layout(True)
-        minimum = (ORBIT_MIN_ALTITUDE_M if kind == 'orbit' else
-                   PANORAMA_MIN_ALTITUDE_M if kind == 'panorama' else
-                   MAPPING_MIN_ALTITUDE_M)
-        blocked = self.altitudeSpin.blockSignals(True)
-        self.altitudeSpin.setMinimum(minimum)
-        self.altitudeSpin.blockSignals(blocked)
+        self._apply_altitude_minimum()   # the kind's minimum, or the low-altitude one
+        self._refresh_low_altitude_warning()
         self._place_safety_group()
 
     # ── Corridor mission breaks (manual line grouping) ────────────────────
@@ -4535,6 +4534,8 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             errors = '\n'.join('• ' + error['message']
                                for error in self._planning.result['validation']['errors'])
             QMessageBox.warning(self, 'Export Blocked', errors)
+            return
+        if not self._confirm_low_altitude_export():
             return
         mission = 'FlyPath Mission'
         flight_actions = []

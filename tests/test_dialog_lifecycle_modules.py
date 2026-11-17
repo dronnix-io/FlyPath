@@ -30,7 +30,8 @@ def test_dialog_lifecycle_ownership_without_qgis():
     panorama = _class(ROOT / 'panorama_controller.py', 'PanoramaMixin')
 
     assert [base.id for base in dialog.bases] == [
-        'SurveyLifecycleMixin', 'WebsiteSyncLifecycleMixin', 'OrbitMixin', 'PanoramaMixin', 'QWidget']
+        'SurveyLifecycleMixin', 'WebsiteSyncLifecycleMixin', 'OrbitMixin', 'PanoramaMixin',
+        'LowAltitudeMixin', 'QWidget']
 
     dialog_methods = {node.name for node in dialog.body if isinstance(node, ast.FunctionDef)}
     survey_methods = {node.name for node in survey.body if isinstance(node, ast.FunctionDef)}
