@@ -235,7 +235,8 @@ Only one area is active at a time. Corridor Mapping uses a **line** instead of a
 
 | Setting | What it does |
 |---|---|
-| Altitude | Height above the takeoff point, in metres. In an orbit with several rings, the selected ring's altitude |
+| Altitude | Height above the takeoff point, in metres. In an orbit with several rings, the selected ring's altitude. The minimum is 30 m for mapping and 10 m for Orbit and Panorama |
+| Allow low altitude | Lowers the minimum to 5 m, for example for plant counting on trial plots. See [Low-altitude flight](#low-altitude-flight) |
 | GSD | Ground detail per pixel, in cm. Linked to altitude: change one and the other follows |
 | Side Overlap | How much neighbouring lines overlap. Higher means more lines |
 | Front Overlap | **Full:** how much photos overlap along a line. **Semi:** the overlap you will get from the speed and the camera interval, shown with the shortest interval |
@@ -253,6 +254,15 @@ Only one area is active at a time. Corridor Mapping uses a **line** instead of a
 | Point Spacing | Panorama Area mode only. Distance between points; **Auto** uses the altitude |
 
 2D and Corridor missions always look straight down (-90°).
+
+##### Low-altitude flight
+
+**Allow low altitude** under Altitude lowers the minimum to 5 m. The first time you tick it, FlyPath asks you to accept that you are responsible for flying this low: checking the site for trees, buildings, poles, power lines, people and crops, and following local minimum-height rules. Obstacle avoidance is not a guarantee.
+
+- While the altitude is below the usual minimum, a warning shows under Altitude, and FlyPath asks again before each export.
+- Use **Full** capture this low: with Semi, the drone often cannot fly slowly enough to keep the front overlap.
+- Do not rely on **Terrain follow** for clearance: its elevation data (about 30 m) is too coarse at a few metres.
+- At a few metres even small areas need many photos and flights; check the stats before flying.
 
 #### Adv. Mission Organizers
 
@@ -449,6 +459,7 @@ Go to **Plugins > FlyPath > FlyPath**, or click the FlyPath icon in the toolbar.
 - Oblique terrain follow works out where the camera looks at takeoff level, so on steep slopes the photo centres move a little. Oblique missions with terrain follow cannot be saved to flypath.io yet.
 - Orbit missions do not use terrain follow.
 - Panorama missions do not use terrain follow and work with DJI Fly drones only. FlyPath takes the photos; stitch them with panorama software.
+- Low-altitude missions (below 30 m for mapping, 10 m for Orbit and Panorama) cannot be saved to flypath.io yet. Export them as a KMZ or send them to the RC.
 - Corridor and 2D missions always look straight down. Mission Breaks go on the centre line's existing vertices.
 - The Mini 3 Pro mission settings are community-verified, not confirmed from a mission made on its controller.
 

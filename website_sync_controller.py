@@ -286,6 +286,7 @@ class WebsiteSyncLifecycleMixin:
         corridor = kind == 'corridor'
         orbit = kind == 'orbit'
         panorama = kind == 'panorama'
+        self._check_low_altitude_sync()
         if kind == 'oblique' and self.terrainFollowCheck.isChecked():
             raise FlypathSyncError(
                 'flypath.io does not support Oblique Mapping terrain follow yet. '
@@ -631,6 +632,7 @@ class WebsiteSyncLifecycleMixin:
             'orbitRadiusSpin', 'orbitTiltSpin', 'drawCircleBtn', 'editCircleBtn',
             'removeCircleBtn', 'orbitRingCombo', 'addRingBtn', 'removeRingBtn',
             'obliqueFastRadio', 'obliqueFullRadio', 'obliquePitchSpin', 'obliqueNadirCheck',
+            'lowAltitudeCheck',
             'placePointBtn', 'removePointBtn', 'undoPointBtn', 'panoramaOverlapSpin',
             'panoramaNadirCheck', 'panoramaPointsRadio', 'panoramaAreaRadio',
             'panoramaSpacingSpin',
