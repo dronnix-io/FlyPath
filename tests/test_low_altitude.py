@@ -67,11 +67,9 @@ def test_low_altitude_needs_acceptance_warns_and_confirms_export():
             planner.altitudeSpin.setValue(8)
             app.processEvents()
             assert shown(planner.lowAltitudeWarning)
-            assert 'Low altitude (8 m)' in planner.lowAltitudeWarning.text()
-            assert 'Semi capture' not in planner.lowAltitudeWarning.text()
-            planner.captureSemiRadio.setChecked(True)
-            assert 'Semi capture' in planner.lowAltitudeWarning.text()
-            planner.captureFullRadio.setChecked(True)
+            assert planner.lowAltitudeWarning.text() == (
+                '⚠ Low altitude (8 m): check the site for obstacles. You are responsible '
+                'for flying safely and legally.')
             planner._set_survey_polygon(area, QgsCoordinateReferenceSystem('EPSG:4326'))
             planner._on_preview()
             result = planner._planning.result
@@ -117,7 +115,7 @@ def test_low_altitude_needs_acceptance_warns_and_confirms_export():
             planner.lowAltitudeCheck.click()
             assert planner.altitudeSpin.minimum() == 5
             planner.altitudeSpin.setValue(7)
-            assert shown(planner.lowAltitudeWarning) and 'Semi capture' not in planner.lowAltitudeWarning.text()
+            assert shown(planner.lowAltitudeWarning) and 'Low altitude (7 m)' in planner.lowAltitudeWarning.text()
             planner.missionTypeCombo.setCurrentText('2D Mapping')
             assert planner.altitudeSpin.minimum() == 5
         finally:

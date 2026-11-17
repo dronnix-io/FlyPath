@@ -260,7 +260,7 @@ Only one area is active at a time. Corridor Mapping uses a **line** instead of a
 **Advanced: allow low altitude** under Altitude lowers the minimum to 5 m, for experienced pilots. The first time you tick it, FlyPath asks you to accept that you are responsible for flying this low: checking the site for trees, buildings, poles, power lines, people and crops, and following local minimum-height rules. Obstacle avoidance is not a guarantee.
 
 - While the altitude is below the usual minimum, a red warning shows under Altitude, and FlyPath asks again before each export.
-- Use **Full** capture this low: with Semi, the drone often cannot fly slowly enough to keep the front overlap.
+- In Semi, watch the **Front Overlap** read-out: this low, the drone usually has to fly slower to keep the overlap.
 - Do not rely on **Terrain follow** for clearance: its elevation data (about 30 m) is too coarse at a few metres.
 - At a few metres even small areas need many photos and flights; check the stats before flying.
 

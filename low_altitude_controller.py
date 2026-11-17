@@ -69,9 +69,7 @@ class LowAltitudeMixin:
 
     def _low_altitude_connect_signals(self):
         self.lowAltitudeCheck.toggled.connect(self._on_low_altitude_toggled)
-        for signal in (self.altitudeSpin.valueChanged, self.speedSpin.valueChanged,
-                       self.captureFullRadio.toggled, self.terrainFollowCheck.toggled,
-                       self.missionTypeCombo.currentIndexChanged):
+        for signal in (self.altitudeSpin.valueChanged, self.missionTypeCombo.currentIndexChanged):
             signal.connect(self._refresh_low_altitude_warning)
 
     # ── Minimum altitude ──────────────────────────────────────────────────
@@ -136,15 +134,9 @@ class LowAltitudeMixin:
         self._set_row_visible(self._flight_form, self.lowAltitudeWarning, low)
         if not low:
             return
-        lines = ['⚠ Low altitude (%g m): check the site for obstacles. You are '
-                 'responsible for flying safely and legally.' % self._lowest_planned_altitude()]
-        if self._mission_kind() in ('2d', 'oblique', 'corridor') and self._mission_type() == 'semi':
-            lines.append('Semi capture may not keep the front overlap this low; Full '
-                         'capture takes a photo at every waypoint.')
-        if self.terrainFollowCheck.isChecked():
-            lines.append('Terrain follow data is too coarse to keep a safe clearance '
-                         'at this height.')
-        self.lowAltitudeWarning.setText('\n'.join(lines))
+        self.lowAltitudeWarning.setText(
+            '⚠ Low altitude (%g m): check the site for obstacles. You are responsible '
+            'for flying safely and legally.' % self._lowest_planned_altitude())
 
     def _confirm_low_altitude_export(self):
         """Before an export, ask again when the mission flies low."""
