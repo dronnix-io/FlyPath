@@ -3,8 +3,16 @@ name=FlyPath
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D, oblique, corridor, orbit (3D model) and panorama drone missions directly from QGIS
-version=5.0.0
-changelog=5.0.0 - New Panorama mission type: photos all around one or more points, for
+version=5.1.0
+changelog=5.1.0 - Low-altitude flight for experienced pilots: a new Advanced option under
+    Altitude lets every mission type fly as low as 5 m above the takeoff point, for example
+    for plant counting and crop emergence on trial plots. The usual minimum stays 30 m for
+    mapping and 10 m for orbit and panorama until you turn it on. The first time, FlyPath asks
+    you to accept that you are responsible for flying this low; while the mission is below the
+    usual minimum a red warning shows under Altitude, and FlyPath asks again before each export.
+    Check the site for obstacles: obstacle avoidance is not a guarantee. Low-altitude missions
+    cannot be saved to flypath.io yet.
+    5.0.0 - New Panorama mission type: photos all around one or more points, for
     stitched 360 degree panoramas. DJI Fly missions cannot turn the drone in place, so at each
     point the drone flies small laps facing outward, one per camera row, then takes one photo
     straight down (24 photos per point with a Mini 4 Pro at 30 percent overlap). Points mode: click
