@@ -236,7 +236,7 @@ Only one area is active at a time. Corridor Mapping uses a **line** instead of a
 | Setting | What it does |
 |---|---|
 | Altitude | Height above the takeoff point, in metres. In an orbit with several rings, the selected ring's altitude. The minimum is 30 m for mapping and 10 m for Orbit and Panorama |
-| Allow low altitude | Lowers the minimum to 5 m, for example for plant counting on trial plots. See [Low-altitude flight](#low-altitude-flight) |
+| Advanced: allow low altitude | For experienced pilots. Lowers the minimum to 5 m, for example for plant counting on trial plots. See [Low-altitude flight](#low-altitude-flight) |
 | GSD | Ground detail per pixel, in cm. Linked to altitude: change one and the other follows |
 | Side Overlap | How much neighbouring lines overlap. Higher means more lines |
 | Front Overlap | **Full:** how much photos overlap along a line. **Semi:** the overlap you will get from the speed and the camera interval, shown with the shortest interval |
@@ -257,9 +257,9 @@ Only one area is active at a time. Corridor Mapping uses a **line** instead of a
 
 ##### Low-altitude flight
 
-**Allow low altitude** under Altitude lowers the minimum to 5 m. The first time you tick it, FlyPath asks you to accept that you are responsible for flying this low: checking the site for trees, buildings, poles, power lines, people and crops, and following local minimum-height rules. Obstacle avoidance is not a guarantee.
+**Advanced: allow low altitude** under Altitude lowers the minimum to 5 m, for experienced pilots. The first time you tick it, FlyPath asks you to accept that you are responsible for flying this low: checking the site for trees, buildings, poles, power lines, people and crops, and following local minimum-height rules. Obstacle avoidance is not a guarantee.
 
-- While the altitude is below the usual minimum, a warning shows under Altitude, and FlyPath asks again before each export.
+- While the altitude is below the usual minimum, a red warning shows under Altitude, and FlyPath asks again before each export.
 - Use **Full** capture this low: with Semi, the drone often cannot fly slowly enough to keep the front overlap.
 - Do not rely on **Terrain follow** for clearance: its elevation data (about 30 m) is too coarse at a few metres.
 - At a few metres even small areas need many photos and flights; check the stats before flying.

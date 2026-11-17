@@ -602,6 +602,7 @@ QLabel#selectionInfo { color: #8A93A0; font-size: 11px; }
 QLabel#frontOverlapWarnLabel {
     color: #E05050; font-weight: bold;
 }
+QLabel#lowAltitudeWarnLabel { color: #FF5A5A; font-weight: bold; }
 QLabel#cameraInfoLabel { color: #7FB3E8; font-size: 10px; }
 QWidget#actionBar {
     border-top: 1px solid #3A3D45; background-color: #181B22;

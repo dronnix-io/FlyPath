@@ -50,17 +50,19 @@ class LowAltitudeMixin:
 
     def _build_low_altitude_rows(self, form):
         """The opt-in checkbox and the warning, right under Altitude."""
-        self.lowAltitudeCheck = QCheckBox('Allow low altitude (down to %g m)' % LOW_ALTITUDE_MIN_M)
+        self.lowAltitudeCheck = QCheckBox('Advanced: allow low altitude (down to %g m)'
+                                          % LOW_ALTITUDE_MIN_M)
         self._tip(self.lowAltitudeCheck,
-            'Lets the Altitude go below the usual minimum (30 m for mapping, 10 m '
-            'for orbit and panorama), down to %g m, for example for plant counting '
-            'on trial plots. You confirm once that you take responsibility for '
-            'flying this low, and FlyPath asks again before each export.'
-            % LOW_ALTITUDE_MIN_M)
+            'For experienced pilots. Lets the Altitude go below the usual minimum '
+            '(30 m for mapping, 10 m for orbit and panorama), down to %g m, for '
+            'example for plant counting on trial plots. You confirm once that you '
+            'take responsibility for flying this low, a red warning shows while the '
+            'altitude is below the usual minimum, and FlyPath asks again before '
+            'each export.' % LOW_ALTITUDE_MIN_M)
         form.addRow(self.lowAltitudeCheck)
 
         self.lowAltitudeWarning = QLabel()
-        self.lowAltitudeWarning.setObjectName('frontOverlapWarnLabel')   # the panel's warning colour
+        self.lowAltitudeWarning.setObjectName('lowAltitudeWarnLabel')    # red, bold
         self.lowAltitudeWarning.setWordWrap(True)
         form.addRow(self.lowAltitudeWarning)
         self._set_row_visible(form, self.lowAltitudeWarning, False)
@@ -110,7 +112,7 @@ class LowAltitudeMixin:
         if str(settings.value(ACCEPTED_KEY, 'false')).lower() == 'true':
             return True
         reply = QMessageBox.question(
-            self, 'Allow Low Altitude?',
+            self, 'Advanced: Allow Low Altitude?',
             ACCEPT_TEXT + '\n\nDo you understand and accept this responsibility?',
             _MB_YES | _MB_NO, _MB_NO)
         if reply != _MB_YES:
