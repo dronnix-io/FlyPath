@@ -1720,10 +1720,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'and battery use.')
         self.reverseRouteCheck = QCheckBox('Reverse route')
         self._tip(self.reverseRouteCheck,
-            'Start the mission from the opposite end. Available for 2D '
-            'missions without terrain follow, for Corridor Mapping, which flies '
-            'the whole route backwards from where it used to end, and for '
-            'Oblique Mapping, where each pass starts from its other end.')
+            'Start the mission from the opposite end. 2D and Corridor Mapping '
+            'fly the whole route backwards, from where it used to end; in '
+            'Oblique Mapping each pass starts from its other end. It works '
+            'with terrain follow: heights are measured from the new start.')
         self.terrainFollowCheck = QCheckBox('Terrain follow')
         self._tip(self.terrainFollowCheck,
             'Vary each waypoint height to hold a constant height above ground, '
@@ -2758,12 +2758,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             'are listed.')
 
         # Orbit swaps the survey area for a centre point and its own controls.
-        # 2D terrain follow re-plans outside the engine, which cannot reverse
-        # it; oblique terrain heights are set on the engine route, and a
-        # corridor is reversed before its terrain heights, so both can.
-        if mapping_2d and self.terrainFollowCheck.isChecked():
-            self.reverseRouteCheck.setChecked(False)
-        self.reverseRouteCheck.setEnabled(not mapping_2d or not self.terrainFollowCheck.isChecked())
+        # Reverse route works with terrain follow in every kind: 2D and
+        # corridor routes are reversed before their terrain heights, and the
+        # other kinds' heights are set on the reversed engine route.
         self._apply_panorama_layout(False)
         self._apply_orbit_layout(kind == 'orbit')
         if kind == 'panorama':
@@ -2821,20 +2818,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
     # ── Terrain follow ────────────────────────────────────────────────────
 
     def _on_terrain_toggled(self):
-        # Oblique, orbit and panorama terrain heights are set on the engine
-        # route, and a corridor is reversed before its terrain heights, so
-        # Reverse route (an orbit's direction) still applies. 2D terrain follow
-        # re-plans outside the engine, which cannot reverse it.
-        kind = self._mission_kind()
-        reversible = kind != '2d'
-        if self.terrainFollowCheck.isChecked() and not reversible:
-            self.reverseRouteCheck.setChecked(False)
-        self.reverseRouteCheck.setEnabled(
-            reversible or not self.terrainFollowCheck.isChecked())
+        # Reverse route (an orbit's direction) stays as it is: it works with
+        # terrain follow in every mission kind.
         # Retry a fresh network the next time it is turned on, and re-apply.
         self._terrain.clear()
         self._terrain_warned = False
-        if kind in ('orbit', 'panorama'):
+        if self._mission_kind() in ('orbit', 'panorama'):
             self._apply_kind_layout()   # the Takeoff Zone shows with terrain follow
         self._apply_mission_type_capabilities()
         self._on_param_changed()
@@ -3800,7 +3789,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
         # Terrain follow: densify the flight lines where the ground moves (semi)
         # or sample the dense route (full); waypoints/heights follow the terrain.
-        waypoints, self._live_elevations = self._apply_terrain(waypoints)
+        # Reverse route turns the route round first; flight lines keep their
+        # even leg positions, as each line has two end points.
+        waypoints, self._live_elevations = self._apply_terrain(self._flown_order(waypoints))
         self._live_waypoints = waypoints
 
         dist_m     = measure_route(turn_pts)
@@ -5106,7 +5097,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         except ValueError as exc:
             QMessageBox.warning(self, 'Cannot Generate Grid', str(exc))
             return None
-        waypoints, self._gen_elevations = self._apply_terrain(waypoints)
+        waypoints, self._gen_elevations = self._apply_terrain(self._flown_order(waypoints))
         return waypoints, shot_spacing_m
 
     def _generate_corridor_waypoints(self):

@@ -495,10 +495,12 @@ class WebsiteSyncLifecycleMixin:
         elif legacy:
             route = [(float(lon), float(lat)) for lat, lon in legacy]
             settings = mission.get('settings') or {}
-            if settings.get('reverse_route') and settings.get('mapping_style') == 'corridor':
-                # flypath.io keeps a reversed corridor as flown but sends it
-                # back in its original order, so put it in flown order again.
-                # (An orbit's Reverse route is its direction, not this.)
+            if (settings.get('reverse_route')
+                    and settings.get('mapping_style', '2d') in ('2d', 'corridor')):
+                # flypath.io keeps a reversed corridor or 2D terrain route as
+                # flown but sends it back in its original order, so put it in
+                # flown order again. (An orbit's Reverse route is its
+                # direction, not this.)
                 route.reverse()
             self._waypoints = route
             self._missions = (self._split_missions(route)
@@ -775,13 +777,12 @@ class WebsiteSyncLifecycleMixin:
         orbit = style == 'orbit'
         panorama = style == 'panorama'
         panorama_points = panorama and settings.get('panorama_layout', 'points') == 'points'
-        if settings.get('reverse_route') and not corridor and (
-                settings.get('terrain_follow')
-                or (not orbit and not mission.get('planning_result'))):
+        if (settings.get('reverse_route') and not corridor and not orbit
+                and not settings.get('terrain_follow') and not mission.get('planning_result')):
             raise FlypathSyncError(
                 'This reversed route cannot be edited by the plugin. Reverse '
-                'route is supported for corridors, and for 2D missions planned '
-                'by the shared engine without terrain follow.')
+                'route is supported for corridors, 2D missions with terrain '
+                'follow, and missions planned by the shared engine.')
 
         drone_name = registry.name_for_website_code(mission.get('drone_model'))
         if drone_name is None or drone_name not in registry.names():
@@ -927,7 +928,6 @@ class WebsiteSyncLifecycleMixin:
         blocked = self.terrainFollowCheck.blockSignals(True)
         self.terrainFollowCheck.setChecked(bool(settings.get('terrain_follow')))
         self.terrainFollowCheck.blockSignals(blocked)
-        self.reverseRouteCheck.setEnabled(corridor or not self.terrainFollowCheck.isChecked())
         self._apply_mission_type_capabilities()
         self.reverseRouteCheck.setChecked(bool(settings.get('reverse_route')))
 

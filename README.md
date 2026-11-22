@@ -166,7 +166,7 @@ Set under **Adv. Mission Organizers > Route Options** (2D Mapping only). It flie
 
 ### Reverse route
 
-Starts the mission from the other end. In Corridor Mapping the whole route is flown backwards, starting where it used to end; in Oblique Mapping each pass starts from its other end; in Orbit the rings are flown counterclockwise.
+Starts the mission from the other end. In 2D and Corridor Mapping the whole route is flown backwards, starting where it used to end; in Oblique Mapping each pass starts from its other end; in Orbit the rings are flown counterclockwise. It works with terrain follow, which then measures heights from the new start.
 
 ---
 
@@ -380,7 +380,7 @@ Open the **My missions** tab and click **Connect account**. Paste the token from
 - If someone changed the mission on the website after you opened it, FlyPath does not overwrite their work. It asks whether to load the latest version, save yours as a copy, or cancel; your local plan is kept.
 - Projects are created and renamed on the website.
 
-**What syncs:** 2D, Corridor, Orbit (with rings and splitting), Oblique and Panorama missions with the consumer drones FlyPath supports. A few reversed routes do not open in QGIS yet: 2D routes with terrain follow and routes from older versions stay on the website. Oblique, Orbit and Panorama missions with terrain follow stay local for now: export them, or turn terrain follow off before saving.
+**What syncs:** 2D, Corridor, Orbit (with rings and splitting), Oblique and Panorama missions with the consumer drones FlyPath supports. Reversed routes from older versions do not open in QGIS yet and stay on the website. Oblique, Orbit and Panorama missions with terrain follow stay local for now: export them, or turn terrain follow off before saving.
 
 Not connected yet? The tab explains what an account adds and links to [flypath.io/register](https://flypath.io/register/).
 

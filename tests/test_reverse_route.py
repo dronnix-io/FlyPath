@@ -11,6 +11,8 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 LINE_WKT = 'LINESTRING(-114.09 51.05, -114.0885 51.051, -114.087 51.052)'
+AREA_WKT = ('POLYGON((-114.09 51.05, -114.087 51.05, -114.087 51.0515, '
+            '-114.09 51.0515, -114.09 51.05))')
 
 
 class _KeepUserSettings:
@@ -142,6 +144,79 @@ def _test_corridor_reverse_route():
         assert payload['waypoints'] == [[lat, lon] for lon, lat in flown]
         planner._apply_website_mission(dict(payload, waypoints=payload['waypoints'][::-1]))
         assert planner._mission_kind() == 'corridor'
+        assert planner.reverseRouteCheck.isChecked() and planner.reverseRouteCheck.isEnabled()
+        assert planner._waypoints == flown
+    finally:
+        planner.close()
+        canvas.close()
+        app.processEvents()
+
+
+def test_2d_terrain_follow_with_reverse_route():
+    try:
+        importlib.import_module('qgis.PyQt.QtCore')
+    except ImportError as exc:
+        raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
+    with _KeepUserSettings():
+        _test_2d_terrain_follow_with_reverse_route()
+
+
+def _test_2d_terrain_follow_with_reverse_route():
+    from qgis.core import QgsCoordinateReferenceSystem, QgsGeometry
+    app, canvas, dialog, sync = _modules()
+    planner = dialog.FlyPathDialog(SimpleNamespace(mapCanvas=lambda: canvas))
+    try:
+        planner.show()
+        app.processEvents()
+        planner.droneModelCombo.setCurrentText('DJI Mini 4 Pro')
+        planner.missionTypeCombo.setCurrentText('2D Mapping')
+        planner.altitudeSpin.setValue(60)
+        planner.captureFullRadio.setChecked(True)
+        slope = _Slope()
+        planner._terrain = slope
+        planner._set_survey_polygon(QgsGeometry.fromWkt(AREA_WKT),
+                                    QgsCoordinateReferenceSystem('EPSG:4326'))
+        planner.reverseRouteCheck.setChecked(True)
+        # Turning terrain follow on keeps Reverse route.
+        planner.terrainFollowCheck.setChecked(True)
+        assert not planner._uses_shared_planning()
+        assert planner.reverseRouteCheck.isChecked() and planner.reverseRouteCheck.isEnabled()
+        reverse, _ = planner._generate_waypoints()
+        planner.reverseRouteCheck.setChecked(False)
+        forward, _ = planner._generate_waypoints()
+        # Full automatic: the same photo waypoints, flown backwards.
+        assert reverse == forward[::-1]
+        planner.reverseRouteCheck.setChecked(True)
+        assert planner._live_waypoints == reverse
+
+        # Heights are measured from the new first waypoint.
+        planner._on_preview()
+        altitude = planner.altitudeSpin.value()
+        base = slope.sample(*planner._missions[0][0])
+        for waypoints, heights in zip(planner._missions, planner._preview_heights):
+            assert heights == [round(altitude + slope.sample(lon, lat) - base, 1)
+                               for lon, lat in waypoints]
+        assert planner._preview_heights[0][0] == altitude
+
+        # Semi automatic adds terrain waypoints along the reversed lines.
+        planner.captureSemiRadio.setChecked(True)
+        reverse, _ = planner._generate_waypoints()
+        planner.reverseRouteCheck.setChecked(False)
+        forward, _ = planner._generate_waypoints()
+        planner.reverseRouteCheck.setChecked(True)
+        assert reverse[0] == forward[-1] and reverse[-1] == forward[0]
+        assert len(reverse) > len(planner._grid_directions()) * 2
+
+        # flypath.io keeps the route as flown; the plugin opens it again.
+        planner._on_preview()
+        flown = list(planner._waypoints)
+        payload = planner._website_payload('Reversed terrain 2D')
+        sync.validate_mission(payload)
+        assert payload['settings']['reverse_route'] is True
+        assert payload['settings']['terrain_follow'] is True
+        assert payload['waypoints'] == [[lat, lon] for lon, lat in flown]
+        planner._apply_website_mission(dict(payload, waypoints=payload['waypoints'][::-1]))
+        assert planner._mission_kind() == '2d' and planner.terrainFollowCheck.isChecked()
         assert planner.reverseRouteCheck.isChecked() and planner.reverseRouteCheck.isEnabled()
         assert planner._waypoints == flown
     finally:
