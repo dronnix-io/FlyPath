@@ -295,7 +295,7 @@ def _test_oblique_terrain_follow():
         rows = result['route']['waypoints']
         passes = result['oblique']['passes']
         offset = result['oblique']['offset_m']
-        terrain = planner._oblique_terrain
+        terrain = planner._terrain_flights
         assert len(terrain) == len(result['flights'])
         for flight, plan in zip(result['flights'], terrain):
             start, end = flight['route_start_waypoint_index'], flight['route_end_waypoint_index']
@@ -328,7 +328,7 @@ def _test_oblique_terrain_follow():
         planner._on_preview()
         assert 'densify_m' not in planner._planning.request
         result = planner._planning.result
-        terrain = planner._oblique_terrain
+        terrain = planner._terrain_flights
         engine_points = sum(f['waypoint_count'] for f in result['flights'])
         added = sum(len(plan['waypoints']) for plan in terrain)
         assert added > engine_points
@@ -341,16 +341,16 @@ def _test_oblique_terrain_follow():
         assert max(layer.featureCount() for layer in layers if layer is not None) == added
         # A coarser tolerance adds fewer waypoints; flat ground adds none.
         planner.terrainToleranceSpin.setValue(20)
-        coarse = sum(len(plan['waypoints']) for plan in planner._oblique_terrain)
+        coarse = sum(len(plan['waypoints']) for plan in planner._terrain_flights)
         assert engine_points < coarse < added
         planner._terrain = _Flat()
         planner._on_preview()
-        assert sum(len(plan['waypoints']) for plan in planner._oblique_terrain) == sum(
+        assert sum(len(plan['waypoints']) for plan in planner._terrain_flights) == sum(
             f['waypoint_count'] for f in planner._planning.result['flights'])
         # Each exported flight matches its terrain waypoints, heading and tilt.
         consumed = planning_consumed(planner, len(result['flights']) - 1)
         settings = planner._export_settings(consumed)
-        count = len(planner._oblique_terrain[-1]['waypoints'])
+        count = len(planner._terrain_flights[-1]['waypoints'])
         assert len(settings.heights) == count and len(settings.gimbal_pitches) == count
 
         FlypathSyncError = importlib.import_module(package + '.flypath_sync').FlypathSyncError
@@ -359,13 +359,13 @@ def _test_oblique_terrain_follow():
         with patch.object(dialog, 'densify_by_terrain', side_effect=ValueError('waypoint limit')), \
                 patch.object(dialog.QMessageBox, 'warning') as warning:
             planner._on_preview()
-            assert planner._terrain_failed and planner._oblique_terrain is None
+            assert planner._terrain_failed and planner._terrain_flights is None
             planner._on_export()
         assert warning.called
 
         # Off again, no terrain waypoints.
         planner.terrainFollowCheck.setChecked(False)
-        assert planner._oblique_terrain is None
+        assert planner._terrain_flights is None
     finally:
         planner.close()
         canvas.close()

@@ -47,11 +47,13 @@ def test_panorama_point_previews_exports_and_resets():
             planner.missionTypeCombo.setCurrentText('Panorama')
             app.processEvents()
             assert planner._mission_kind() == 'panorama' and planner._mission_type() == 'full'
+            # Terrain follow applies; the DEM and Takeoff Zone come with it.
             assert all(shown(widget) for widget in (
-                planner.panoramaOverlapSpin, planner.panoramaNadirCheck, planner.placePointBtn))
+                planner.panoramaOverlapSpin, planner.panoramaNadirCheck, planner.placePointBtn,
+                planner.terrainFollowCheck))
             still_shown = [name for name in (
                 '_captureToggle', '_pathCaption', '_sourceStack', 'sideOverlapSpin', 'frontOverlapStack', 'gsdSpin',
-                'splitCheck', 'terrainFollowCheck', 'reverseRouteCheck',
+                'splitCheck', 'reverseRouteCheck',
                 'orbitRadiusSpin', 'demCombo', '_takeoffGroup') if shown(getattr(planner, name))]
             assert not still_shown, still_shown
             # The capture row offers the Flight Path alone.

@@ -82,7 +82,8 @@ def test_shared_planning_dispatch_and_failure_without_qgis():
     dialog = _class(ROOT / 'flypath_dialog.py', 'FlyPathDialog')
     methods = [node for node in dialog.body if isinstance(node, ast.FunctionDef)
                and node.name in ('_planning_request_from_ui', '_plan_shared',
-                                 '_uses_shared_planning', '_export_settings')]
+                                 '_uses_shared_planning', '_export_settings',
+                                 '_point_terrain_flights')]
     adapter = SimpleNamespace(plan=Mock(), PlanningError=ValueError)
     warnings = SimpleNamespace(warning=Mock())
     namespace = {'planning_adapter': adapter, 'QMessageBox': warnings,
@@ -114,6 +115,7 @@ def test_shared_planning_dispatch_and_failure_without_qgis():
     planner._planning.result = None
     assert namespace['_export_settings'](planner).headings is None
     planner._planning_request_from_ui = lambda: namespace['_planning_request_from_ui'](planner)
+    planner._point_terrain_flights = lambda result: namespace['_point_terrain_flights'](planner, result)
     adapter.plan.return_value = result
     assert namespace['_plan_shared'](planner) is result
     adapter.plan.assert_called_once_with(request)

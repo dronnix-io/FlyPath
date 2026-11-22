@@ -296,19 +296,20 @@ class PanoramaMixin:
         self._set_row_visible(self._area_form, self._sourceStack, area)
         self._set_row_visible(self._flight_form, self.gsdSpin, False)
         # Flights split between panoramas by Max Waypoints and the battery,
-        # so Split Missions, terrain follow and reversing do not apply.
+        # so Split Missions and reversing do not apply. Terrain follow does.
         for widget in (self.splitCheck, self.splitSpin):
             self._set_row_visible(self._organizer_form, widget, False)
-        self.terrainFollowCheck.setVisible(False)
         self.reverseRouteCheck.setVisible(False)
-        self._routeTitle.setVisible(False)      # no route options apply
         self._pathRow.setVisible(True)
-        self._takeoffGroup.setVisible(False)
+        # With terrain follow, heights are measured from the ground at the
+        # first waypoint, so the takeoff zone shows where to launch. Its GSD
+        # variance is a mapping figure.
+        self._takeoffGroup.setVisible(self.terrainFollowCheck.isChecked())
+        self._set_row_visible(self._takeoff_form, self.takeoffGsdVarLabel, False)
 
     def _switch_panorama_mode(self, panorama):
         """Change values when the mission kind switches into or out of panorama."""
         if panorama:
-            self.terrainFollowCheck.setChecked(False)
             self.reverseRouteCheck.setChecked(False)
             self.splitCheck.setChecked(False)
             for button in (self.showTakeoffZoneBtn, self.showContoursBtn):
@@ -326,10 +327,12 @@ class PanoramaMixin:
             self._clear_panorama_points()
 
     def _apply_panorama_capabilities(self):
-        """No overlap rows of the mapping kinds, nor a DEM, apply here."""
+        """No overlap rows of the mapping kinds apply here, and the DEM only
+        with terrain follow on."""
         self._set_row_visible(self._flight_form, self.sideOverlapSpin, False)
         self._set_row_visible(self._flight_form, self.frontOverlapStack, False)
-        self._set_row_visible(self._area_form, self.demCombo, False)
+        self._set_row_visible(self._area_form, self.demCombo,
+                              self.terrainFollowCheck.isChecked())
 
     def _refresh_panorama_spacing_hint(self, *_args):
         """Show Auto's distance at this altitude."""

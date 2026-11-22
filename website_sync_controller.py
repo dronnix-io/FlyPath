@@ -287,10 +287,13 @@ class WebsiteSyncLifecycleMixin:
         orbit = kind == 'orbit'
         panorama = kind == 'panorama'
         self._check_low_altitude_sync()
-        if kind == 'oblique' and self.terrainFollowCheck.isChecked():
+        if kind in ('oblique', 'orbit', 'panorama') and self.terrainFollowCheck.isChecked():
+            # The website would plan it flat; never present that as this route.
             raise FlypathSyncError(
-                'flypath.io does not support Oblique Mapping terrain follow yet. '
-                'Turn off Terrain Follow and regenerate, or export locally.')
+                'flypath.io does not support %s terrain follow yet. Turn off '
+                'Terrain Follow and regenerate, or export locally.'
+                % {'oblique': 'Oblique Mapping', 'orbit': 'Orbit',
+                   'panorama': 'Panorama'}[kind])
         drone = registry.get(self.droneModelCombo.currentText())
         if kind in ('oblique', 'panorama') and drone.category != 'consumer':
             raise FlypathSyncError('%s website missions require a DJI Fly consumer drone.'
@@ -842,7 +845,7 @@ class WebsiteSyncLifecycleMixin:
         if panorama:
             (self.panoramaAreaRadio if settings.get('panorama_layout', 'points') == 'area'
              else self.panoramaPointsRadio).setChecked(True)
-        self._oblique_terrain = None
+        self._terrain_flights = None
         if style == 'oblique':
             (self.obliqueFastRadio if settings['oblique_pattern'] == 'fast'
              else self.obliqueFullRadio).setChecked(True)

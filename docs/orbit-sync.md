@@ -17,6 +17,8 @@ settings always describe the first ring. A single-ring mission omits
 corridor lines keep their representations.
 
 Orbit missions use a curved path without terrain follow or cross-hatching.
+The plugin can add terrain-follow heights to an orbit, but it does not sync
+those missions: the website would plan them flat.
 `split_enabled` and `split_count` describe the actual `planning_request.split`
 intent, including when the UI split checkbox is on but the planned route fits
 one flight. On import, a checked split preference with count 1 may also accompany
