@@ -287,7 +287,7 @@ class WebsiteSyncLifecycleMixin:
         orbit = kind == 'orbit'
         panorama = kind == 'panorama'
         self._check_low_altitude_sync()
-        if kind in ('oblique', 'orbit', 'panorama') and self.terrainFollowCheck.isChecked():
+        if kind in ('oblique', 'panorama') and self.terrainFollowCheck.isChecked():
             # The website would plan it flat; never present that as this route.
             raise FlypathSyncError(
                 'flypath.io does not support %s terrain follow yet. Turn off '
@@ -392,12 +392,12 @@ class WebsiteSyncLifecycleMixin:
             'auto_direction': self.autoDirectionBtn.isChecked(),
             'reverse_route':  self.reverseRouteCheck.isChecked(),
             'split_max_wp':   self.maxWaypointsSpin.value(),
-            'launch_offset_m': (0 if kind in ('orbit', 'panorama')
+            'launch_offset_m': (0 if kind == 'panorama' or
+                                (orbit and not self.terrainFollowCheck.isChecked())
                                 else self.launchOffsetSpin.value()),
         }
         if orbit:
             settings['flight_path'] = 'curved'
-            settings['terrain_follow'] = False
             rings = self._orbit_rings_from_ui()
             settings['altitude'] = rings[0][1]
             settings['orbit_radius'] = rings[0][0]
@@ -492,6 +492,8 @@ class WebsiteSyncLifecycleMixin:
             supported, flights = provenance
             self._apply_planning_result(request, result, flights=flights)
             self._planning.preserve_imported_route(supported=supported)
+            if self._mission_kind() == 'orbit' and self.terrainFollowCheck.isChecked():
+                self._terrain_flights = self._point_terrain_flights(result)
             if planning_adapter.needs_geometry_update(result):
                 self._planning.require_regeneration()
                 self._set_info('This saved Fast oblique route needs the geometry correction. '
@@ -537,7 +539,7 @@ class WebsiteSyncLifecycleMixin:
         self._planning.preserve_imported_route()
         self.previewBtn.setText('Regenerate on Map' if self._planning.regeneration_required
                                 else 'Preview on Map')
-        if self.terrainFollowCheck.isChecked():
+        if self.terrainFollowCheck.isChecked() and not self._terrain_flights:
             self._terrain_failed = True
         self._preview_layer_ids = preview_layers.create(self._missions)
         self._update_web_buttons()

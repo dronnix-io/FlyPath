@@ -110,7 +110,7 @@ def test_push_posts_json_with_the_token_in_the_header():
     assert fake.request.get_header('Authorization') == f'Token {TOKEN}'
     assert dict(fake.request.header_items())['X-flypath-sync-version'] == '1'
     assert all(dict(request.header_items())['X-flypath-sync-capabilities'] ==
-               'launch-offset-v1,takeoff-reference-v1'
+               'launch-offset-v1,takeoff-reference-v1,orbit-terrain-v1'
                for request in fake.requests)
     assert [request.get_method() for request in fake.requests] == ['GET', 'POST']
     assert json.loads(fake.request.data.decode('utf-8')) == payload
@@ -337,6 +337,8 @@ def test_orbit_geometry_and_settings_validation():
     multi = {**mission, 'settings': {**mission['settings'], 'orbit_rings': rings,
                                      'split_enabled': True, 'split_count': 2}}
     flypath_sync.validate_mission(multi)
+    flypath_sync.validate_mission({**multi, 'settings': {
+        **multi['settings'], 'terrain_follow': True, 'launch_offset_m': 12.5}})
     try:
         flypath_sync.validate_mission({**multi, 'settings': {
             **multi['settings'], 'mapping_style': '2d'}})
@@ -354,7 +356,7 @@ def test_orbit_geometry_and_settings_validation():
             {'settings': {**mission['settings'], 'orbit_rings': [{**rings[0],
                                                                  'radius_m': 31}]}},
             {'settings': {**mission['settings'], 'orbit_rings': rings + rings + rings}},
-            {'settings': {**mission['settings'], 'terrain_follow': True}},
+            {'settings': {**mission['settings'], 'launch_offset_m': 1}},
             {'settings': {**mission['settings'], 'cross_hatch': True}}):
         try:
             flypath_sync.validate_mission({**mission, **changed})

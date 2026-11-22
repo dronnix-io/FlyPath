@@ -246,8 +246,9 @@ def validate_mission(mission):
         launch_offset = settings.get('launch_offset_m', 0)
         if (type(launch_offset) not in (int, float) or not math.isfinite(launch_offset)
                 or not -50 <= launch_offset <= 50
-                or (settings.get('mapping_style') in ('orbit', 'panorama')
-                    and launch_offset != 0)):
+                or (settings.get('mapping_style') == 'panorama' and launch_offset != 0)
+                or (settings.get('mapping_style') == 'orbit'
+                    and not settings.get('terrain_follow', False) and launch_offset != 0)):
             raise ValueError()
         if 'orbit_rings' in settings and settings.get('mapping_style') != 'orbit':
             raise ValueError()
@@ -295,7 +296,6 @@ def validate_mission(mission):
                     or not -90 <= settings.get('orbit_tilt', 1) <= 0
                     or not 10 <= settings.get('altitude', 0) <= 500
                     or settings.get('flight_path', 'curved') != 'curved'
-                    or settings.get('terrain_follow', False)
                     or type(settings.get('split_count', 1)) is not int
                     or not 1 <= settings.get('split_count', 1) <= 99
                     or (not settings.get('split_enabled', False)
@@ -404,7 +404,7 @@ def _call(base_url, token, path, data=None, method=None):
     headers = {'Authorization': 'Token %s' % token.strip(),
                'Accept': 'application/json',
                SYNC_VERSION_HEADER: str(SYNC_API_VERSION),
-               SYNC_CAPABILITIES_HEADER: 'launch-offset-v1,takeoff-reference-v1'}
+               SYNC_CAPABILITIES_HEADER: 'launch-offset-v1,takeoff-reference-v1,orbit-terrain-v1'}
     body = None
     if data is not None:
         try:
