@@ -396,10 +396,11 @@ Not connected yet? The tab explains what an account adds and links to [flypath.i
 | DJI Air 3 | Field-test reports wanted |
 | DJI Air 3S | Field-test reports wanted |
 | DJI Mavic 3 Classic | Field-test reports wanted |
+| DJI Mavic 3 Pro | Field-test reports wanted |
 | DJI Mavic 4 Pro | Field-test reports wanted |
 | DJI Lito X1 | Field-test reports wanted |
 
-> The standard DJI Mini 3 has no waypoint missions, so it is not supported. Of the Mavic 3 family only the single-camera Mavic 3 Classic is supported. On the Air 3, Air 3S and Mavic 4 Pro, select the wide (main) camera for mapping.
+> The standard DJI Mini 3 has no waypoint missions, so it is not supported. Of the Mavic 3 family the Mavic 3 Classic and Mavic 3 Pro are supported. On the Air 3, Air 3S, Mavic 3 Pro and Mavic 4 Pro, select the wide (main Hasselblad) camera for mapping. The Mavic 3 Classic and Mavic 3 Pro pair with a DJI RC, RC-N1 or RC Pro: use Save to computer if Send to DJI RC does not find the controller.
 
 If DJI Fly rejects a mission on one of the "reports wanted" drones, please [open an issue](https://github.com/dronnix-io/FlyPath/issues) so we can fix it.
 

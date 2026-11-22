@@ -65,7 +65,7 @@ def test_locations_survive_the_adapter_request():
 
 
 @pytest.mark.parametrize('pattern,nadir', [('fast', True), ('fast', False), ('full', True), ('full', False)])
-@pytest.mark.parametrize('engine_version', ['1.4.0', '1.4.1', '2.0.0', '2.1.0'])
+@pytest.mark.parametrize('engine_version', ['1.4.0', '1.4.1', '2.0.0', '2.1.0', '2.2.0'])
 def test_oblique_sync_provenance_keeps_passes_and_rejects_changed_settings(pattern, nadir, engine_version):
     from FlyPath.flypath_sync import validate_mission, FlypathSyncError
 
@@ -73,7 +73,7 @@ def test_oblique_sync_provenance_keeps_passes_and_rejects_changed_settings(patte
     planned.pop('cross_hatch')
     planned.update(operation='plan_oblique', mapping_style='oblique', pattern=pattern,
                    gimbal_pitch_deg=-45, include_nadir=nadir)
-    planned['contract_version'] = 2 if engine_version in ('2.0.0', '2.1.0') else 1
+    planned['contract_version'] = 2 if engine_version in ('2.0.0', '2.1.0', '2.2.0') else 1
     result = planning_adapter.plan(planned, engine_version=engine_version)
     mission = {
         'drone_model': 'mini3pro',
@@ -550,7 +550,7 @@ def test_panorama_flight_carries_outward_headings_and_row_tilts():
     planned = panorama_request()
     assert planned['capture'] == {'mode': 'full_auto', 'overlap_ratio': .3}
     result = planning_adapter.plan(planned)
-    assert result['engine_version'] == '2.1.0' and result['contract_version'] == 2
+    assert result['engine_version'] == '2.2.0' and result['contract_version'] == 2
     [flight] = planning_adapter.consume_result(planned, result)
     assert len(flight['waypoints']) == len(flight['headings']) == len(flight['gimbal_pitches']) == 24
     assert flight['headings'][:3] == [0.0, 45.0, 90.0] and flight['heights'] is None
