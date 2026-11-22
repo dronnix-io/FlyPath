@@ -3,8 +3,18 @@ name=FlyPath
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D, oblique, corridor, orbit (3D model) and panorama drone missions directly from QGIS
-version=5.1.0
-changelog=5.1.0 - Low-altitude flight for experienced pilots: a new Advanced option under
+version=5.2.0
+changelog=5.2.0 - Terrain follow for Orbit and Panorama missions. Each orbit waypoint holds
+    its ring's altitude above the ground below it, so a ring on a slope follows the ground
+    around the object, and each ring of a multi-ring orbit keeps its own altitude. Every photo of
+    a panorama point is taken at one height, the altitude above the ground at that point. With
+    terrain follow on, both show the DEM and the Takeoff Zone, with Launch Offset and Same
+    takeoff for all splits. Reverse route now works for Corridor Mapping, which flies the whole
+    route backwards from where it used to end, and together with terrain follow in 2D Mapping;
+    heights are then measured from the new start. Reversed corridor and 2D terrain missions can
+    be saved to and opened from flypath.io. Orbit and panorama missions with terrain follow
+    cannot be saved to flypath.io yet.
+    5.1.0 - Low-altitude flight for experienced pilots: a new Advanced option under
     Altitude lets every mission type fly as low as 5 m above the takeoff point, for example
     for plant counting and crop emergence on trial plots. The usual minimum stays 30 m for
     mapping and 10 m for orbit and panorama until you turn it on. The first time, FlyPath asks
