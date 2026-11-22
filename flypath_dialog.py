@@ -1721,8 +1721,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.reverseRouteCheck = QCheckBox('Reverse route')
         self._tip(self.reverseRouteCheck,
             'Start the mission from the opposite end. Available for 2D '
-            'missions without terrain follow, and for Oblique Mapping, where '
-            'each pass starts from its other end.')
+            'missions without terrain follow, for Corridor Mapping, which flies '
+            'the whole route backwards from where it used to end, and for '
+            'Oblique Mapping, where each pass starts from its other end.')
         self.terrainFollowCheck = QCheckBox('Terrain follow')
         self._tip(self.terrainFollowCheck,
             'Vary each waypoint height to hold a constant height above ground, '
@@ -2728,14 +2729,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         # Adv. Mission Organizers: cross-hatch is meaningless for a corridor; the
         # Mission Breaks tool only applies to corridors. Split Missions is a
         # minimum-flight count in both modes; corridor labels it 'Min Flights'.
-        # The route options share a row, so hide only the 2D-only checkboxes for
-        # corridors (terrain follow works with corridors and stays).
+        # The route options share a row, so hide only the 2D-only cross-hatch
+        # for corridors (reverse route and terrain follow work with corridors).
         self.crossHatchCheck.setVisible(mapping_2d)
-        self.reverseRouteCheck.setVisible(grid)
+        self.reverseRouteCheck.setVisible(grid or corridor)
         if not mapping_2d:
             self.crossHatchCheck.setChecked(False)
-        if corridor:
-            self.reverseRouteCheck.setChecked(False)
         self._set_row_visible(self._organizer_form, self.setBreaksBtn, corridor)
         split_lbl = self._row_label(self._organizer_form, self.splitSpin)
         if split_lbl is not None:
@@ -2760,10 +2759,11 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
         # Orbit swaps the survey area for a centre point and its own controls.
         # 2D terrain follow re-plans outside the engine, which cannot reverse
-        # it; oblique terrain heights are set on the engine route, so it can.
+        # it; oblique terrain heights are set on the engine route, and a
+        # corridor is reversed before its terrain heights, so both can.
         if mapping_2d and self.terrainFollowCheck.isChecked():
             self.reverseRouteCheck.setChecked(False)
-        self.reverseRouteCheck.setEnabled(oblique or not self.terrainFollowCheck.isChecked())
+        self.reverseRouteCheck.setEnabled(not mapping_2d or not self.terrainFollowCheck.isChecked())
         self._apply_panorama_layout(False)
         self._apply_orbit_layout(kind == 'orbit')
         if kind == 'panorama':
@@ -2822,14 +2822,15 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
     def _on_terrain_toggled(self):
         # Oblique, orbit and panorama terrain heights are set on the engine
-        # route, so Reverse route (an orbit's direction) still applies. 2D
-        # terrain follow re-plans outside the engine, which cannot reverse it.
+        # route, and a corridor is reversed before its terrain heights, so
+        # Reverse route (an orbit's direction) still applies. 2D terrain follow
+        # re-plans outside the engine, which cannot reverse it.
         kind = self._mission_kind()
-        engine_route = kind in ('oblique', 'orbit', 'panorama')
-        if self.terrainFollowCheck.isChecked() and not engine_route:
+        reversible = kind != '2d'
+        if self.terrainFollowCheck.isChecked() and not reversible:
             self.reverseRouteCheck.setChecked(False)
         self.reverseRouteCheck.setEnabled(
-            engine_route or not self.terrainFollowCheck.isChecked())
+            reversible or not self.terrainFollowCheck.isChecked())
         # Retry a fresh network the next time it is turned on, and re-apply.
         self._terrain.clear()
         self._terrain_warned = False
@@ -5139,8 +5140,14 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         except ValueError as exc:
             QMessageBox.warning(self, 'Cannot Generate Corridor', str(exc))
             return None
-        waypoints, self._gen_elevations = self._apply_terrain(waypoints)
+        waypoints, self._gen_elevations = self._apply_terrain(self._flown_order(waypoints))
         return waypoints, shot_spacing_m
+
+    def _flown_order(self, waypoints):
+        """A route planned outside the engine, in the order it is flown:
+        backwards with Reverse route on, as flypath.io reverses it. Terrain
+        follow comes after, so heights are measured from the new start."""
+        return waypoints[::-1] if self.reverseRouteCheck.isChecked() else waypoints
 
     def _corridor_shot_spacing(self):
         """Along-track photo/interval spacing for the current corridor mode."""
@@ -5225,7 +5232,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         same_takeoff = self.sameTakeoffCheck.isChecked()
         shared_base = None
         out = []
-        for (pi, a, b) in groups:
+        # Reverse route flies the whole corridor backwards: the last stretch
+        # first, each one backwards.
+        for (pi, a, b) in self._flown_order(groups):
             sub = QgsGeometry.fromPolylineXY(parts[pi][a:b + 1])
             try:
                 wps, _ = generate_corridor_route(
@@ -5234,7 +5243,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                     buffer_m=buf, drone_specs=specs, densify_spacing=densify)
             except ValueError:
                 continue
-            wps, elevs = self._apply_terrain(wps)
+            wps, elevs = self._apply_terrain(self._flown_order(wps))
             if same_takeoff and shared_base is None and elevs and len(elevs) == len(wps):
                 shared_base = elevs[0]      # the corridor's first waypoint ground
             # Max Waypoints still applies: split this stretch's route by count so
