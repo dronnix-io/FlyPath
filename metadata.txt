@@ -3,8 +3,15 @@ name=FlyPath
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D, oblique, corridor, orbit (3D model) and panorama drone missions directly from QGIS
-version=5.2.0
-changelog=5.2.0 - Terrain follow for Orbit and Panorama missions. Each orbit waypoint holds
+version=5.3.0
+changelog=5.3.0 - New drone: DJI Mavic 3 Pro (and Mavic 3 Pro Cine). Missions use its 4/3
+    20 MP Hasselblad main camera, so select that camera for mapping, with 43 min flight time and
+    15 km range from DJI's specs. It uses the shared DJI Fly waypoint value of the other consumer
+    drones; please open an issue if DJI Fly rejects a mission. It pairs with a DJI RC, RC-N1 or RC
+    Pro: use Save to computer if Send to DJI RC does not find the controller. Saving Mavic 3 Pro
+    missions to flypath.io works once the website adds the drone. Planning engine 2.2.0, which
+    adds the drone and plans everything else exactly as 2.1.0.
+    5.2.0 - Terrain follow for Orbit and Panorama missions. Each orbit waypoint holds
     its ring's altitude above the ground below it, so a ring on a slope follows the ground
     around the object, and each ring of a multi-ring orbit keeps its own altitude. Every photo of
     a panorama point is taken at one height, the altitude above the ground at that point. With
@@ -272,7 +279,8 @@ email=salar@dronnix.com
 about=FlyPath is a QGIS plugin for planning autonomous drone mapping missions and exporting
     them as native DJI WPML KMZ files, loadable directly in the DJI Fly app.
     Supported drones: DJI Mini 3 Pro, Mini 4 Pro, Mini 5 Pro (community-verified),
-    plus Air 3, Air 3S, Mavic 3 Classic, Mavic 4 Pro and Lito X1 (field-test reports wanted).
+    plus Air 3, Air 3S, Mavic 3 Classic, Mavic 3 Pro, Mavic 4 Pro and Lito X1 (field-test reports
+    wanted).
     Plan a 2D grid over a survey polygon, an oblique mission that photographs the
     area from four sides with a tilted camera for 3D models, a corridor along a
     centre line for linear features such as roads, pipelines and rivers, an
