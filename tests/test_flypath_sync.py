@@ -109,7 +109,8 @@ def test_push_posts_json_with_the_token_in_the_header():
     assert fake.request.get_method() == 'POST'
     assert fake.request.get_header('Authorization') == f'Token {TOKEN}'
     assert dict(fake.request.header_items())['X-flypath-sync-version'] == '1'
-    assert all(dict(request.header_items())['X-flypath-sync-capabilities'] == 'launch-offset-v1'
+    assert all(dict(request.header_items())['X-flypath-sync-capabilities'] ==
+               'launch-offset-v1,takeoff-reference-v1'
                for request in fake.requests)
     assert [request.get_method() for request in fake.requests] == ['GET', 'POST']
     assert json.loads(fake.request.data.decode('utf-8')) == payload

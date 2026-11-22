@@ -29,7 +29,8 @@ def test_import_preserves_planner():
                'polygon': [[51, 13], [51, 13.001], [51.001, 13.001], [51.001, 13]],
                'settings': {'altitude': 80, 'direction': 95}}
     def snapshot():
-        return (planner._website_settings(), planner._survey_polygon.asWkt(),
+        return (planner._website_settings(), planner.sameTakeoffCheck.isChecked(),
+                planner._survey_polygon.asWkt(),
                 planner._source_mode, copy.deepcopy(planner._website_link),
                 copy.deepcopy(planner._waypoints), copy.deepcopy(planner._missions),
                 copy.deepcopy(planner._terrain_flights),
@@ -38,12 +39,14 @@ def test_import_preserves_planner():
     try:
         planner._apply_website_mission(mission)
         planner._website_link = {'id': 17, 'revision': 2}
+        planner.sameTakeoffCheck.setChecked(True)
         terrain_flights = [{'waypoints': [(13, 51)], 'heights': [80]}]
         planner._terrain_flights = terrain_flights
         before = snapshot()
         invalid = [dict(mission, settings={'mapping_style': 'future-survey'}),
                    dict(mission, settings={'altitude': 90, 'split_count': float('nan')}),
                    dict(mission, settings={'launch_offset_m': 51}),
+                   dict(mission, settings={'takeoff_reference': 'future'}),
                    dict(mission, settings={'side_overlap': '70'}),
                    dict(mission, settings={'flight_path': 'unknown'}),
                    dict(mission, polygon=[[51, 13], [51.001, 13.001], [51, 13.001], [51.001, 13]]),
@@ -62,7 +65,8 @@ def test_import_preserves_planner():
         with patch.object(planner, '_restore_imported_route', side_effect=RuntimeError('test failure')):
             try:
                 planner._apply_website_mission(dict(mission, settings={
-                    'altitude': 80, 'direction': 95, 'launch_offset_m': 8}))
+                    'altitude': 80, 'direction': 95, 'launch_offset_m': 8,
+                    'takeoff_reference': 'per_flight'}))
             except sync_module.FlypathSyncError:
                 pass
             else:

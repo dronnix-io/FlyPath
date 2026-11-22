@@ -223,6 +223,7 @@ def validate_mission(mission):
         enums = {'capture_mode': ('semi', 'full'),
                  'oblique_pattern': ('fast', 'full'),
                  'panorama_layout': ('points', 'area'),
+                 'takeoff_reference': ('shared', 'per_flight'),
                  'flight_path': ('straight', 'curved'),
                  'finish_action': tuple(WEBSITE_FINISH_ACTIONS.values()),
                  'rc_lost_action': tuple(WEBSITE_RC_LOST_ACTIONS.values())}
@@ -403,7 +404,7 @@ def _call(base_url, token, path, data=None, method=None):
     headers = {'Authorization': 'Token %s' % token.strip(),
                'Accept': 'application/json',
                SYNC_VERSION_HEADER: str(SYNC_API_VERSION),
-               SYNC_CAPABILITIES_HEADER: 'launch-offset-v1'}
+               SYNC_CAPABILITIES_HEADER: 'launch-offset-v1,takeoff-reference-v1'}
     body = None
     if data is not None:
         try:

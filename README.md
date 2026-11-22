@@ -384,6 +384,8 @@ Open the **My missions** tab and click **Connect account**. Paste the token from
 
 For 2D, Corridor, and Oblique missions, sync also carries **Launch Offset** as `settings.launch_offset_m` (metres, -50 to 50). Older missions without the field use zero. The plugin sends zero explicitly when clearing a saved offset. Positive values mean the takeoff point is higher than the reference ground, so export subtracts that offset from waypoint heights. Orbit and Panorama terrain-following missions remain local; their syncable flat missions send zero. The plugin advertises `launch-offset-v1` in `X-FlyPath-Sync-Capabilities` so the website can prevent older plugins from opening or changing missions with a nonzero offset.
 
+Sync also carries **Same takeoff for all splits** as `settings.takeoff_reference`: `shared` uses the ground elevation at the first waypoint of the full flown route (after reversal) for every split, while `per_flight` uses the ground elevation at each flight's first waypoint. Older website missions without this field use `per_flight`; new local plugin missions still default to `shared`. The setting is sent for every syncable mission type, though it has no effect while terrain follow is off. The plugin advertises `takeoff-reference-v1` in `X-FlyPath-Sync-Capabilities` so the website can guard terrain-following missions against clients that cannot preserve this choice.
+
 Not connected yet? The tab explains what an account adds and links to [flypath.io/register](https://flypath.io/register/).
 
 ---

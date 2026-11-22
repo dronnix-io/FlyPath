@@ -122,11 +122,16 @@ class TransportValidation(unittest.TestCase):
                              ('settings', {'speed': float('inf')}),
                              ('settings', {'split_count': True}),
                              ('settings', {'terrain_follow': 'false'}),
+                             ('settings', {'takeoff_reference': None}),
+                             ('settings', {'takeoff_reference': True}),
+                             ('settings', {'takeoff_reference': 'future'}),
                              ('settings', {'flight_path': 'unknown'})):
             with self.subTest(field=field, value=str(value)[:70]):
                 with self.assertRaises(sync.FlypathSyncError):
                     sync.validate_mission({**mission, field: value})
         sync.validate_mission({'settings': {'split_count': 1e300, 'speed': -100}})
+        for choice in ('shared', 'per_flight'):
+            sync.validate_mission({'settings': {'takeoff_reference': choice}})
         for project_id in (True, 0, -1, '2', {}):
             with self.subTest(project_id=project_id), self.assertRaises(sync.FlypathSyncError):
                 sync.validate_mission({'project_id': project_id})

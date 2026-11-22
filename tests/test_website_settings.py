@@ -35,8 +35,20 @@ def test_settings_round_trip():
     }
     mission['drone_model'] = module.registry.get('DJI Mini 3 Pro').website_code
     try:
+        assert planner.sameTakeoffCheck.isChecked(), 'New local missions share takeoff by default'
         planner._apply_website_mission(mission)
         saved = planner._website_settings()
+        assert not planner.sameTakeoffCheck.isChecked(), 'Older website missions use per-flight takeoff'
+        assert saved['takeoff_reference'] == 'per_flight'
+        for choice, checked in (('shared', True), ('per_flight', False)):
+            mission['settings']['takeoff_reference'] = choice
+            planner._apply_website_mission(mission)
+            assert planner.sameTakeoffCheck.isChecked() is checked
+            assert planner._website_settings()['takeoff_reference'] == choice
+        del mission['settings']['takeoff_reference']
+        planner._apply_website_mission(mission)
+        assert not planner.sameTakeoffCheck.isChecked()
+        assert planner._website_settings()['takeoff_reference'] == 'per_flight'
         assert saved['launch_offset_m'] == 0
         assert saved['auto_direction'] is True, saved
         assert saved['direction'] == 95, saved

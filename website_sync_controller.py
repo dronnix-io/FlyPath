@@ -385,6 +385,8 @@ class WebsiteSyncLifecycleMixin:
             'speed':          round(self.speedSpin.value(), 1),
             'side_overlap':   self.sideOverlapSpin.value(),
             'terrain_follow': bool(self.terrainFollowCheck.isChecked()),
+            'takeoff_reference': ('shared' if self.sameTakeoffCheck.isChecked()
+                                  else 'per_flight'),
             'split_count':    self.splitSpin.value(),
             'split_enabled':  self.splitCheck.isChecked(),
             'auto_direction': self.autoDirectionBtn.isChecked(),
@@ -635,7 +637,7 @@ class WebsiteSyncLifecycleMixin:
             'altitudeSpin', 'launchOffsetSpin', 'speedSpin', 'sideOverlapSpin', 'frontOverlapSpin',
             'marginSpin', 'directionSpin', 'terrainToleranceSpin',
             'maxWaypointsSpin', 'bufferSpin', 'crossHatchCheck',
-            'terrainFollowCheck', 'reverseRouteCheck', 'sourceDrawRadio',
+            'terrainFollowCheck', 'sameTakeoffCheck', 'reverseRouteCheck', 'sourceDrawRadio',
             'sourceLayerRadio', 'sourceSelectionRadio', 'splitCheck', 'splitSpin',
             'layerCombo', 'featureCombo', 'splitPartCombo',
             'showTakeoffZoneBtn', 'showContoursBtn',
@@ -928,6 +930,9 @@ class WebsiteSyncLifecycleMixin:
                 rings.append(tuple(values))
             self._select_orbit_ring(0, rings)
         self.crossHatchCheck.setChecked(bool(settings.get('cross_hatch')))
+        blocked = self.sameTakeoffCheck.blockSignals(True)
+        self.sameTakeoffCheck.setChecked(settings.get('takeoff_reference') == 'shared')
+        self.sameTakeoffCheck.blockSignals(blocked)
         blocked = self.terrainFollowCheck.blockSignals(True)
         self.terrainFollowCheck.setChecked(bool(settings.get('terrain_follow')))
         self.terrainFollowCheck.blockSignals(blocked)
