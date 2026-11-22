@@ -368,6 +368,8 @@ Open the **My missions** tab and click **Connect account**. Paste the token from
 
 **What syncs:** 2D, Corridor, Orbit (with rings and splitting), Oblique and Panorama missions with the consumer drones FlyPath supports. A few cases do not open in QGIS yet: reversed corridor routes, terrain-follow routes and routes from older versions stay on the website. Oblique missions with terrain follow stay local for now: export them, or turn terrain follow off before saving.
 
+For 2D, Corridor, and Oblique missions, sync also carries **Launch Offset** as `settings.launch_offset_m` (metres, -50 to 50). Older missions without the field use zero. The plugin sends zero explicitly when clearing a saved offset. Positive values mean the takeoff point is higher than the reference ground, so export subtracts that offset from waypoint heights. Orbit and Panorama send zero because they do not use a launch offset.
+
 Not connected yet? The tab explains what an account adds and links to [flypath.io/register](https://flypath.io/register/).
 
 ---

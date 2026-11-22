@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -39,6 +40,7 @@ def test_import_preserves_planner():
         before = snapshot()
         invalid = [dict(mission, settings={'mapping_style': 'future-survey'}),
                    dict(mission, settings={'altitude': 90, 'split_count': float('nan')}),
+                   dict(mission, settings={'launch_offset_m': 51}),
                    dict(mission, settings={'side_overlap': '70'}),
                    dict(mission, settings={'flight_path': 'unknown'}),
                    dict(mission, polygon=[[51, 13], [51.001, 13.001], [51, 13.001], [51.001, 13]]),
@@ -54,6 +56,16 @@ def test_import_preserves_planner():
             else:
                 raise AssertionError('Invalid mission accepted')
             assert snapshot() == before, 'Rejected import mutated the planner'
+        with patch.object(planner, '_restore_imported_route', side_effect=RuntimeError('test failure')):
+            try:
+                planner._apply_website_mission(dict(mission, settings={
+                    'altitude': 80, 'direction': 95, 'launch_offset_m': 8}))
+            except sync_module.FlypathSyncError:
+                pass
+            else:
+                raise AssertionError('Failed import accepted')
+        assert planner.launchOffsetSpin.value() == 0
+        assert snapshot() == before, 'Failed import did not restore the planner'
         adjusted = planner._apply_website_mission(dict(mission, settings={
             'split_count': 1e300, 'split_max_wp': 1e300, 'side_overlap': -1e300}))
         assert adjusted

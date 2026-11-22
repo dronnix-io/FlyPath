@@ -241,6 +241,12 @@ def validate_mission(mission):
             if settings.get(key) is not None and (type(settings[key]) not in (int, float)
                                     or not math.isfinite(settings[key])):
                 raise ValueError()
+        launch_offset = settings.get('launch_offset_m', 0)
+        if (type(launch_offset) not in (int, float) or not math.isfinite(launch_offset)
+                or not -50 <= launch_offset <= 50
+                or (settings.get('mapping_style') in ('orbit', 'panorama')
+                    and launch_offset != 0)):
+            raise ValueError()
         if 'orbit_rings' in settings and settings.get('mapping_style') != 'orbit':
             raise ValueError()
         if settings.get('mapping_style') == 'panorama':

@@ -133,6 +133,18 @@ class TransportValidation(unittest.TestCase):
         sync.validate_mission({'project_id': None})
         sync.validate_mission({'project_id': 2})
 
+    def test_launch_offset_validation(self):
+        sync.validate_mission({'settings': {}})
+        for value in (-50, 0, 12.5, 50):
+            sync.validate_mission({'settings': {'launch_offset_m': value}})
+        for value in (None, True, '2', float('nan'), float('inf'), -50.1, 50.1):
+            with self.subTest(value=value), self.assertRaises(sync.FlypathSyncError):
+                sync.validate_mission({'settings': {'launch_offset_m': value}})
+        for style in ('orbit', 'panorama'):
+            with self.subTest(style=style), self.assertRaises(sync.FlypathSyncError):
+                sync.validate_mission({'settings': {'mapping_style': style,
+                                                    'launch_offset_m': 1}})
+
     def test_real_redirects_never_reach_target(self):
         received = []
         class Handler(http.server.BaseHTTPRequestHandler):

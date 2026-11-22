@@ -37,11 +37,21 @@ def test_settings_round_trip():
     try:
         planner._apply_website_mission(mission)
         saved = planner._website_settings()
+        assert saved['launch_offset_m'] == 0
         assert saved['auto_direction'] is True, saved
         assert saved['direction'] == 95, saved
         assert saved['split_enabled'] is False, saved
         assert planner.splitSpin.value() == 1
         assert planner._split_overridden, 'Imported split-off must not track battery defaults'
+
+        mission['settings']['launch_offset_m'] = 7.5
+        planner._apply_website_mission(mission)
+        assert planner.launchOffsetSpin.value() == 7.5
+        assert planner._website_settings()['launch_offset_m'] == 7.5
+        del mission['settings']['launch_offset_m']
+        planner._apply_website_mission(mission)
+        assert planner.launchOffsetSpin.value() == 0
+        assert planner._website_settings()['launch_offset_m'] == 0
 
         mission['settings'].update(auto_direction=False, split_enabled=True, split_count=3)
         planner._apply_website_mission(mission)

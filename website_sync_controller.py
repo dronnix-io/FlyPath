@@ -350,7 +350,7 @@ class WebsiteSyncLifecycleMixin:
     def _website_settings(self):
         """The mission parameters the website knows, by its own key names.
 
-        Plugin-only settings (launch offset, GSD, photo interval, gimbal angle,
+        Plugin-only settings (GSD, photo interval, gimbal angle,
         DEM choice, takeoff-zone tolerance, corridor mission breaks) are left
         out rather than invented as new server-side keys. Values outside the
         website's own ranges are not clamped here: the server rejects them with
@@ -386,6 +386,8 @@ class WebsiteSyncLifecycleMixin:
             'auto_direction': self.autoDirectionBtn.isChecked(),
             'reverse_route':  self.reverseRouteCheck.isChecked(),
             'split_max_wp':   self.maxWaypointsSpin.value(),
+            'launch_offset_m': (0 if kind in ('orbit', 'panorama')
+                                else self.launchOffsetSpin.value()),
         }
         if orbit:
             settings['flight_path'] = 'curved'
@@ -618,7 +620,7 @@ class WebsiteSyncLifecycleMixin:
             'autoDirectionBtn', 'missionTypeCombo', 'droneModelCombo',
             'captureFullRadio', 'captureSemiRadio', 'pathCurvedRadio',
             'pathStraightRadio', 'finishActionCombo', 'rcLostActionCombo',
-            'altitudeSpin', 'speedSpin', 'sideOverlapSpin', 'frontOverlapSpin',
+            'altitudeSpin', 'launchOffsetSpin', 'speedSpin', 'sideOverlapSpin', 'frontOverlapSpin',
             'marginSpin', 'directionSpin', 'terrainToleranceSpin',
             'maxWaypointsSpin', 'bufferSpin', 'crossHatchCheck',
             'terrainFollowCheck', 'reverseRouteCheck', 'sourceDrawRadio',
@@ -864,6 +866,7 @@ class WebsiteSyncLifecycleMixin:
         # never handed a plan quietly different from the one on the website.
         adjusted = []
         fields = [('altitude', self.altitudeSpin, settings.get('altitude')),
+                  ('launch offset', self.launchOffsetSpin, settings.get('launch_offset_m', 0)),
                   ('speed', self.speedSpin, settings.get('speed')),
                   ('side overlap', self.sideOverlapSpin, settings.get('side_overlap')),
                   ('front overlap', self.frontOverlapSpin, settings.get('front_overlap')),
