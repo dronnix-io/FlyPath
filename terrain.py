@@ -142,6 +142,9 @@ def heights_above_takeoff(elevations, altitude_m, base=None):
     constant `altitude_m` above ground. Because only the difference from `base`
     is used, the DEM's vertical datum cancels out.
 
+    `altitude_m` is one altitude for every waypoint, or a list with one per
+    waypoint (a multi-ring orbit flies each ring at its own altitude).
+
     `base` is the ground elevation of the takeoff point. It defaults to the first
     elevation, so passing one flight's own elevations rebases that flight to its
     own first waypoint. Pass a shared `base` (for example the first waypoint of
@@ -152,4 +155,9 @@ def heights_above_takeoff(elevations, altitude_m, base=None):
         return []
     if base is None:
         base = elevations[0]
-    return [round(altitude_m + (elev - base), 1) for elev in elevations]
+    altitudes = (list(altitude_m) if isinstance(altitude_m, (list, tuple))
+                 else [altitude_m] * len(elevations))
+    if len(altitudes) != len(elevations):
+        raise ValueError('Each waypoint needs one altitude.')
+    return [round(altitude + (elev - base), 1)
+            for altitude, elev in zip(altitudes, elevations)]

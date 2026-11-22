@@ -411,12 +411,11 @@ class OrbitMixin:
         # An orbit always flies a curved path, so the path choice is hidden.
         self._pathRow.setVisible(not orbit)
 
-        # Orbits split into flights like mapping, but have no terrain follow.
+        # Orbits split into flights and follow the terrain like mapping.
         drone = self.droneModelCombo.currentText()
         splitting = registry.has(drone) and registry.get(drone).category == 'consumer'
         self._set_row_visible(self._organizer_form, self.splitCheck, splitting)
         self._set_row_visible(self._organizer_form, self.splitSpin, splitting)
-        self.terrainFollowCheck.setVisible(not orbit)
         # Reverse route sets the orbit direction: clockwise, or reversed to
         # counterclockwise. It keeps its usual place in the route options row.
         hint = next((child for child in self.reverseRouteCheck.children()
@@ -431,8 +430,11 @@ class OrbitMixin:
                 'Fly the ring counterclockwise (seen from above) instead of '
                 'clockwise. The drone starts at the north point of the circle '
                 'either way.') if orbit else self._mapping_reverse_tip)
-        # The takeoff zone and contours are built for mapping grids.
-        self._takeoffGroup.setVisible(not orbit)
+        # With terrain follow, heights are measured from the ground at the
+        # first waypoint, so the takeoff zone shows where to launch. Its GSD
+        # variance is a mapping figure.
+        self._takeoffGroup.setVisible(not orbit or self.terrainFollowCheck.isChecked())
+        self._set_row_visible(self._takeoff_form, self.takeoffGsdVarLabel, not orbit)
 
     def _switch_orbit_mode(self, orbit):
         """Change values when the mission kind switches into or out of orbit."""
@@ -444,7 +446,6 @@ class OrbitMixin:
             self.splitCheck.setChecked(True)
             self._setting_split = False
             self._split_overridden = False
-            self.terrainFollowCheck.setChecked(False)
             for button in (self.showTakeoffZoneBtn, self.showContoursBtn):
                 if button.isCheckable() and button.isChecked():
                     button.setChecked(False)
@@ -478,7 +479,9 @@ class OrbitMixin:
         label = self._row_label(self._flight_form, self.frontOverlapStack)
         if label is not None:
             label.setText('Side Overlap')
-        self._set_row_visible(self._area_form, self.demCombo, False)
+        # The DEM feeds terrain follow and the takeoff zone, both off without it.
+        self._set_row_visible(self._area_form, self.demCombo,
+                              self.terrainFollowCheck.isChecked())
 
     def _restore_mapping_overlap_rows(self):
         self._set_row_visible(self._flight_form, self.sideOverlapSpin, True)

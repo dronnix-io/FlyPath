@@ -32,11 +32,14 @@ def test_import_preserves_planner():
         return (planner._website_settings(), planner._survey_polygon.asWkt(),
                 planner._source_mode, copy.deepcopy(planner._website_link),
                 copy.deepcopy(planner._waypoints), copy.deepcopy(planner._missions),
+                copy.deepcopy(planner._terrain_flights),
                 list(planner._preview_layer_ids), sorted(QgsProject.instance().mapLayers()),
                 canvas.extent().toString())
     try:
         planner._apply_website_mission(mission)
         planner._website_link = {'id': 17, 'revision': 2}
+        terrain_flights = [{'waypoints': [(13, 51)], 'heights': [80]}]
+        planner._terrain_flights = terrain_flights
         before = snapshot()
         invalid = [dict(mission, settings={'mapping_style': 'future-survey'}),
                    dict(mission, settings={'altitude': 90, 'split_count': float('nan')}),
@@ -66,6 +69,7 @@ def test_import_preserves_planner():
                 raise AssertionError('Failed import accepted')
         assert planner.launchOffsetSpin.value() == 0
         assert snapshot() == before, 'Failed import did not restore the planner'
+        assert planner._terrain_flights is terrain_flights, 'Failed import lost terrain flights'
         adjusted = planner._apply_website_mission(dict(mission, settings={
             'split_count': 1e300, 'split_max_wp': 1e300, 'side_overlap': -1e300}))
         assert adjusted

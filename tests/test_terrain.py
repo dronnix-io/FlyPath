@@ -177,6 +177,18 @@ def test_default_base_rebases_each_split_to_its_own_start():
     assert second == [100.0, 110.0]
 
 
+def test_each_waypoint_can_have_its_own_altitude():
+    # A multi-ring orbit flies each ring at its own altitude above the ground.
+    elevs = [1000.0, 1010.0, 1000.0, 1010.0]
+    assert heights_above_takeoff(elevs, [30.0, 30.0, 50.0, 50.0]) == [30.0, 40.0, 50.0, 60.0]
+    assert heights_above_takeoff(elevs, (30.0,) * 4, base=990.0) == [40.0, 50.0, 40.0, 50.0]
+    try:
+        heights_above_takeoff(elevs, [30.0, 50.0])
+        assert False, 'expected ValueError for one altitude per two waypoints'
+    except ValueError:
+        pass
+
+
 if __name__ == '__main__':
     fns = [v for k, v in sorted(globals().items())
            if k.startswith('test_') and callable(v)]

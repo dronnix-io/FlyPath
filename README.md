@@ -166,7 +166,7 @@ Set under **Adv. Mission Organizers > Route Options** (2D Mapping only). It flie
 
 ### Reverse route
 
-Starts the mission from the other end. In Oblique Mapping each pass starts from its other end; in Orbit the rings are flown counterclockwise.
+Starts the mission from the other end. In 2D and Corridor Mapping the whole route is flown backwards, starting where it used to end; in Oblique Mapping each pass starts from its other end; in Orbit the rings are flown counterclockwise. It works with terrain follow, which then measures heights from the new start.
 
 ---
 
@@ -179,6 +179,10 @@ Tick **Terrain follow** under Route Options. Each waypoint's height changes so t
 - **Full:** a height is set at every photo.
 - **Semi:** a waypoint is added along a line only where the ground has risen or fallen by more than the **Terrain Tolerance**.
 - **Oblique:** the height follows the higher of the ground below the drone and the ground the tilted camera looks at, so the drone never gets low over rising ground.
+- **Orbit:** every waypoint holds its ring's altitude above the ground below it, so a ring on a slope follows the ground around the object.
+- **Panorama:** all the photos of a point are taken at one height, the altitude above the ground at that point.
+
+With terrain follow on, Orbit and Panorama also show the **DEM** and the **Takeoff Zone**, since heights are measured from the ground at the first waypoint.
 
 ![Terrain follow: extra waypoints added along the lines where the ground changes](docs/images/terrain_follow.png)
 
@@ -235,7 +239,8 @@ Only one area is active at a time. Corridor Mapping uses a **line** instead of a
 
 | Setting | What it does |
 |---|---|
-| Altitude | Height above the takeoff point, in metres. In an orbit with several rings, the selected ring's altitude |
+| Altitude | Height above the takeoff point, in metres. In an orbit with several rings, the selected ring's altitude. The minimum is 30 m for mapping and 10 m for Orbit and Panorama |
+| Advanced: allow low altitude | For experienced pilots. Lowers the minimum to 5 m, for example for plant counting on trial plots. See [Low-altitude flight](#low-altitude-flight) |
 | GSD | Ground detail per pixel, in cm. Linked to altitude: change one and the other follows |
 | Side Overlap | How much neighbouring lines overlap. Higher means more lines |
 | Front Overlap | **Full:** how much photos overlap along a line. **Semi:** the overlap you will get from the speed and the camera interval, shown with the shortest interval |
@@ -253,6 +258,15 @@ Only one area is active at a time. Corridor Mapping uses a **line** instead of a
 | Point Spacing | Panorama Area mode only. Distance between points; **Auto** uses the altitude |
 
 2D and Corridor missions always look straight down (-90°).
+
+##### Low-altitude flight
+
+**Advanced: allow low altitude** under Altitude lowers the minimum to 5 m, for experienced pilots. The first time you tick it, FlyPath asks you to accept that you are responsible for flying this low: checking the site for trees, buildings, poles, power lines, people and crops, and following local minimum-height rules. Obstacle avoidance is not a guarantee.
+
+- While the altitude is below the usual minimum, a red warning shows under Altitude, and FlyPath asks again before each export.
+- In Semi, watch the **Front Overlap** read-out: this low, the drone usually has to fly slower to keep the overlap.
+- Do not rely on **Terrain follow** for clearance: its elevation data (about 30 m) is too coarse at a few metres.
+- At a few metres even small areas need many photos and flights; check the stats before flying.
 
 #### Adv. Mission Organizers
 
@@ -366,9 +380,9 @@ Open the **My missions** tab and click **Connect account**. Paste the token from
 - If someone changed the mission on the website after you opened it, FlyPath does not overwrite their work. It asks whether to load the latest version, save yours as a copy, or cancel; your local plan is kept.
 - Projects are created and renamed on the website.
 
-**What syncs:** 2D, Corridor, Orbit (with rings and splitting), Oblique and Panorama missions with the consumer drones FlyPath supports. A few cases do not open in QGIS yet: reversed corridor routes, terrain-follow routes and routes from older versions stay on the website. Oblique missions with terrain follow stay local for now: export them, or turn terrain follow off before saving.
+**What syncs:** 2D, Corridor, Orbit (with rings and splitting), Oblique and Panorama missions with the consumer drones FlyPath supports. Reversed routes from older versions do not open in QGIS yet and stay on the website. Oblique, Orbit and Panorama missions with terrain follow stay local for now: export them, or turn terrain follow off before saving.
 
-For 2D, Corridor, and Oblique missions, sync also carries **Launch Offset** as `settings.launch_offset_m` (metres, -50 to 50). Older missions without the field use zero. The plugin sends zero explicitly when clearing a saved offset. Positive values mean the takeoff point is higher than the reference ground, so export subtracts that offset from waypoint heights. Orbit and Panorama send zero because they do not use a launch offset.
+For 2D, Corridor, and Oblique missions, sync also carries **Launch Offset** as `settings.launch_offset_m` (metres, -50 to 50). Older missions without the field use zero. The plugin sends zero explicitly when clearing a saved offset. Positive values mean the takeoff point is higher than the reference ground, so export subtracts that offset from waypoint heights. Orbit and Panorama terrain-following missions remain local; their syncable flat missions send zero. The plugin advertises `launch-offset-v1` in `X-FlyPath-Sync-Capabilities` so the website can prevent older plugins from opening or changing missions with a nonzero offset.
 
 Not connected yet? The tab explains what an account adds and links to [flypath.io/register](https://flypath.io/register/).
 
@@ -448,9 +462,10 @@ Go to **Plugins > FlyPath > FlyPath**, or click the FlyPath icon in the toolbar.
 - Tested on Windows 10 / 11 and Linux. macOS is planned.
 - Sending to the RC needs a DJI RC2 over USB, with one existing DJI Fly mission for each flight you send.
 - Terrain follow uses a bare-earth elevation model of about 30 m, so it does not see trees or buildings. Heights are measured from takeoff at the first waypoint of each flight.
-- Oblique terrain follow works out where the camera looks at takeoff level, so on steep slopes the photo centres move a little. Oblique missions with terrain follow cannot be saved to flypath.io yet.
-- Orbit missions do not use terrain follow.
-- Panorama missions do not use terrain follow and work with DJI Fly drones only. FlyPath takes the photos; stitch them with panorama software.
+- Oblique terrain follow works out where the camera looks at takeoff level, so on steep slopes the photo centres move a little. Oblique, Orbit and Panorama missions with terrain follow cannot be saved to flypath.io yet.
+- Panorama terrain follow sets a height at each point only, so the drone climbs or descends in a straight line between points. Over a ridge between two points, keep a safe altitude.
+- Panorama missions work with DJI Fly drones only. FlyPath takes the photos; stitch them with panorama software.
+- Low-altitude missions (below 30 m for mapping, 10 m for Orbit and Panorama) cannot be saved to flypath.io yet. Export them as a KMZ or send them to the RC.
 - Corridor and 2D missions always look straight down. Mission Breaks go on the centre line's existing vertices.
 - The Mini 3 Pro mission settings are community-verified, not confirmed from a mission made on its controller.
 

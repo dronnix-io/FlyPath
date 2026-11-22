@@ -48,6 +48,7 @@ MAX_JSON_DEPTH = 32
 TIMEOUT_S = 20
 SYNC_API_VERSION = 1
 SYNC_VERSION_HEADER = 'X-FlyPath-Sync-Version'
+SYNC_CAPABILITIES_HEADER = 'X-FlyPath-Sync-Capabilities'
 SUPPORTED_MAPPING_STYLES = ('2d', 'corridor', 'orbit', 'oblique', 'panorama')
 SYNC_MISMATCH_MESSAGE = ('Website sync is incompatible with this FlyPath plugin. '
                          'Update the plugin to reconnect.')
@@ -401,7 +402,8 @@ def _call(base_url, token, path, data=None, method=None):
     url = _api_url(base_url, path)
     headers = {'Authorization': 'Token %s' % token.strip(),
                'Accept': 'application/json',
-               SYNC_VERSION_HEADER: str(SYNC_API_VERSION)}
+               SYNC_VERSION_HEADER: str(SYNC_API_VERSION),
+               SYNC_CAPABILITIES_HEADER: 'launch-offset-v1'}
     body = None
     if data is not None:
         try:
