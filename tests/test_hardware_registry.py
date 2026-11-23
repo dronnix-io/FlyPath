@@ -99,7 +99,7 @@ def test_new_consumer_drones_use_the_shared_mini_enum():
     # one is changed away from the shared value, update this test.
     shared = registry.get('DJI Mini 4 Pro').drone_enum
     assert registry.get('DJI Mini 5 Pro').drone_enum == shared     # the basis (68)
-    for name in ('DJI Air 3', 'DJI Air 3S', 'DJI Mavic 4 Pro', 'DJI Mavic 3 Classic',
+    for name in ('DJI Air 3', 'DJI Air 3S', 'DJI Mavic 4 Pro', 'DJI Mavic 3 Classic', 'DJI Mavic 3 Pro',
                  'DJI Lito X1'):
         assert registry.has(name), f'{name} should be registered'
         d = registry.get(name)
@@ -129,6 +129,7 @@ def test_website_codes_are_unique_and_match_the_live_site():
     # The slugs seeded on flypath.io; a rename there needs a matching edit here.
     assert registry.get('DJI Mini 4 Pro').website_code == 'mini4pro'
     assert registry.get('DJI Mavic 3 Classic').website_code == 'mavic3classic'
+    assert registry.get('DJI Mavic 3 Pro').website_code == 'mavic3pro'
     assert registry.name_for_website_code('not-a-real-drone') is None
 
 

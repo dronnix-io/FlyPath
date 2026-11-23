@@ -65,7 +65,7 @@ def test_locations_survive_the_adapter_request():
 
 
 @pytest.mark.parametrize('pattern,nadir', [('fast', True), ('fast', False), ('full', True), ('full', False)])
-@pytest.mark.parametrize('engine_version', ['1.4.0', '1.4.1', '2.0.0', '2.1.0'])
+@pytest.mark.parametrize('engine_version', ['1.4.0', '1.4.1', '2.0.0', '2.1.0', '2.2.0'])
 def test_oblique_sync_provenance_keeps_passes_and_rejects_changed_settings(pattern, nadir, engine_version):
     from FlyPath.flypath_sync import validate_mission, FlypathSyncError
 
@@ -73,7 +73,7 @@ def test_oblique_sync_provenance_keeps_passes_and_rejects_changed_settings(patte
     planned.pop('cross_hatch')
     planned.update(operation='plan_oblique', mapping_style='oblique', pattern=pattern,
                    gimbal_pitch_deg=-45, include_nadir=nadir)
-    planned['contract_version'] = 2 if engine_version in ('2.0.0', '2.1.0') else 1
+    planned['contract_version'] = 2 if engine_version in ('2.0.0', '2.1.0', '2.2.0') else 1
     result = planning_adapter.plan(planned, engine_version=engine_version)
     mission = {
         'drone_model': 'mini3pro',
@@ -550,7 +550,7 @@ def test_panorama_flight_carries_outward_headings_and_row_tilts():
     planned = panorama_request()
     assert planned['capture'] == {'mode': 'full_auto', 'overlap_ratio': .3}
     result = planning_adapter.plan(planned)
-    assert result['engine_version'] == '2.1.0' and result['contract_version'] == 2
+    assert result['engine_version'] == '2.2.0' and result['contract_version'] == 2
     [flight] = planning_adapter.consume_result(planned, result)
     assert len(flight['waypoints']) == len(flight['headings']) == len(flight['gimbal_pitches']) == 24
     assert flight['headings'][:3] == [0.0, 45.0, 90.0] and flight['heights'] is None
@@ -564,3 +564,36 @@ def test_panorama_results_need_a_panorama_engine():
     for changed in (dict(result, engine_version='2.0.0'), dict(result, operation='plan_orbit')):
         with pytest.raises(ValueError):
             planning_adapter.consume_result(planned, changed)
+
+
+@pytest.mark.parametrize('make_request', [request, orbit_request, panorama_request])
+def test_engine_21_results_keep_their_saved_provenance(make_request):
+    planned = make_request()
+    result = planning_adapter.plan(planned)
+    # These operations have unchanged calculations in the profile-only 2.2 release.
+    result['engine_version'] = '2.1.0'
+    saved = deepcopy(result)
+    assert planning_adapter.consume_result(planned, result)
+    assert result == saved
+
+
+@pytest.mark.parametrize('make_request', [request, orbit_request, panorama_request])
+def test_mavic_3_pro_plans_and_exports_with_engine_22(make_request):
+    planned = make_request(drone_profile_id='mavic3pro')
+    result = planning_adapter.plan(planned)
+    assert result['engine_version'] == '2.2.0'
+    drone = registry.get(registry.name_for_website_code('mavic3pro'))
+    for flight in planning_adapter.consume_result(planned, result):
+        spec = MissionSpec(
+            waypoints=flight['waypoints'], altitude_m=planned['altitude_m'],
+            speed_ms=planned['speed_m_s'], finish_action='Return to Home',
+            rc_lost_action='Return to Home', capture_mode='full',
+            actions=flight['actions'], headings=flight['headings'],
+            gimbal_pitches=flight['gimbal_pitches'], heights=flight['heights'])
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / 'mission.kmz')
+            write_mission(drone, spec, path)
+            with zipfile.ZipFile(path) as archive:
+                wpml = archive.read('wpmz/waylines.wpml').decode('utf-8')
+        assert f'<wpml:droneEnumValue>{drone.drone_enum}</wpml:droneEnumValue>' in wpml
+        assert wpml.count('<Placemark>') == len(flight['waypoints'])

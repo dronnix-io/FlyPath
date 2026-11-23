@@ -16,8 +16,8 @@ from .flypath_engine.profiles import PROFILE_VERSION
 PlanningError = _PlanningError
 # Saved Fast oblique results use their original engine geometry during validation.
 SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0', '1.4.1', '2.0.0',
-                             '2.1.0')
-CONTRACT_2_ENGINE_VERSIONS = ('2.0.0', '2.1.0')   # the releases that plan contract 2
+                             '2.1.0', '2.2.0')
+CONTRACT_2_ENGINE_VERSIONS = ('2.0.0', '2.1.0', '2.2.0')   # the releases that plan contract 2
 SUPPORTED_CONTRACT_VERSIONS = (1, CONTRACT_VERSION)
 ORBIT_MIN_ENGINE_VERSION = (1, 2, 0)   # the first engine release with plan_orbit
 ORBIT_RINGS_MIN_ENGINE_VERSION = (1, 3, 0)
