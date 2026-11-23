@@ -41,6 +41,7 @@ def main():
         'test_oblique_mapping.py',
         'test_draw_tool_lifecycle.py',
         'test_corridor_band.py',
+        'test_reverse_route.py',
         'test_panorama_mission.py',
         'test_low_altitude.py',
     ]

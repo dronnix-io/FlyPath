@@ -121,6 +121,57 @@ def test_planning_dialog_state():
         planner._on_preview()
         shared = planner._website_payload('Shared mission')
         saved_result = shared['planning_result']
+        sparse = deepcopy(shared)
+        for key in ('finish_action', 'split_enabled', 'split_count', 'split_max_wp',
+                    'margin', 'flight_path', 'rc_lost_action'):
+            sparse['settings'].pop(key, None)
+        sparse['planning_request']['split']['enabled'] = False
+        sparse['planning_request']['split']['requested_flights'] = 1
+        sparse['planning_request']['split']['max_waypoints_per_flight'] = 70
+        sparse['planning_request']['finish_action'] = 'return_to_home'
+        sparse['planning_request']['margin_m'] = 0
+        sparse['planning_request']['turn_style'] = 'curved'
+        sparse['planning_result'] = module.planning_adapter.plan(sparse['planning_request'])
+        sparse['waypoints'] = [
+            [row['position']['latitude_deg'], row['position']['longitude_deg']]
+            for row in sparse['planning_result']['route']['waypoints']]
+        planner.marginSpin.setValue(20)
+        planner.pathStraightRadio.setChecked(True)
+        planner.finishActionCombo.setCurrentIndex(1)
+        planner.rcLostActionCombo.setCurrentIndex(1)
+        planner.maxWaypointsSpin.setValue(100)
+        planner.splitCheck.setChecked(True)
+        with patch.object(planner, '_plan_shared', side_effect=AssertionError('regenerated')):
+            adjusted, note = planner._apply_website_mission(sparse)
+        assert not adjusted and not note
+        assert not planner._planning.save_requires_regeneration()
+        assert planner._planning.request == sparse['planning_request']
+        assert planner._planning.result == sparse['planning_result']
+        repayload = planner._website_payload('Sparse mission')
+        assert repayload['planning_request'] == sparse['planning_request']
+        assert repayload['planning_result'] == sparse['planning_result']
+        assert repayload['settings']['finish_action'] == 'goHome'
+        assert repayload['settings']['split_enabled'] is False
+        assert repayload['settings']['split_count'] == 1
+        assert repayload['settings']['split_max_wp'] == 70
+        assert repayload['settings']['margin'] == 0
+        assert repayload['settings']['flight_path'] == 'curved'
+        planner._apply_website_mission(repayload)
+        assert not planner._planning.save_requires_regeneration()
+        sparse_enabled = deepcopy(repayload)
+        sparse_enabled['settings']['split_enabled'] = True
+        sparse_enabled['settings'].pop('split_count')
+        sparse_enabled['planning_request']['split']['enabled'] = True
+        sparse_enabled['planning_result'] = module.planning_adapter.plan(
+            sparse_enabled['planning_request'])
+        sparse_enabled['waypoints'] = [
+            [row['position']['latitude_deg'], row['position']['longitude_deg']]
+            for row in sparse_enabled['planning_result']['route']['waypoints']]
+        planner.splitSpin.setValue(3)
+        planner._apply_website_mission(sparse_enabled)
+        assert planner.splitCheck.isChecked() and planner.splitSpin.value() == 1
+        assert not planner._planning.save_requires_regeneration()
+        planner._apply_website_mission(shared)
         project = QgsProject.instance()
         group = project.layerTreeRoot().children()[0]
         external = QgsVectorLayer('Point?crs=EPSG:4326', 'User layer', 'memory')

@@ -243,6 +243,14 @@ def validate_mission(mission):
             if settings.get(key) is not None and (type(settings[key]) not in (int, float)
                                     or not math.isfinite(settings[key])):
                 raise ValueError()
+        if settings.get('mapping_style') == 'corridor':
+            breaks = settings.get('corridor_break_indices', [])
+            line = mission.get('polygon') or []
+            if (not isinstance(breaks, list)
+                    or any(type(index) is not int or not 0 < index < len(line) - 1
+                           for index in breaks)
+                    or breaks != sorted(set(breaks))):
+                raise ValueError()
         launch_offset = settings.get('launch_offset_m', 0)
         if (type(launch_offset) not in (int, float) or not math.isfinite(launch_offset)
                 or not -50 <= launch_offset <= 50

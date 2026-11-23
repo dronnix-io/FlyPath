@@ -53,3 +53,12 @@ results to make them match. Contract-1 missions retain their original replay
 behavior and saved routes until explicit regeneration. Both consumers must be
 updated before transferring contract-2 missions. The corridor coverage band is
 a UI overlay and does not affect the engine route.
+
+Corridor planning uses the shared engine from version 2.3.0. Its contract takes
+one open centre line, the full mapped width, optional interior-vertex mission
+breaks, and optional terrain samples. The plugin retains saved legacy Corridor
+routes without regenerating them. New regeneration of a multipart line is
+rejected with an instruction to plan its disconnected parts as separate
+missions; no parts are silently joined or dropped. Imported engine routes keep
+their saved flight boundaries and terrain elevations until explicit
+regeneration.

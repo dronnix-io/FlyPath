@@ -3156,8 +3156,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         result = self._generate_waypoints()
         if result is None:
             return None
+        if self._planning.result:
+            return [list(mission) for mission in self._missions]
         waypoints, _ = result
-        if self._mission_kind() == 'corridor':
+        if self._mission_kind() == 'corridor' and not self._uses_shared_planning():
             missions_h = self._corridor_missions_with_heights()
         else:
             missions_h = self._missions_with_heights(waypoints, self._gen_elevations)
@@ -3517,13 +3519,15 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
 
     def _uses_shared_planning(self):
         kind = self._mission_kind()
-        return kind in ('orbit', 'oblique', 'panorama') or (kind == '2d' and not self.terrainFollowCheck.isChecked())
+        return kind in ('corridor', 'orbit', 'oblique', 'panorama') or (kind == '2d' and not self.terrainFollowCheck.isChecked())
 
     def _planning_request_from_ui(self):
         if self._mission_kind() == 'orbit':
             return self._orbit_request_from_ui()
         if self._mission_kind() == 'panorama':
             return self._panorama_request_from_ui()
+        if self._mission_kind() == 'corridor':
+            return self._corridor_request_from_ui()
         drone = registry.get(self.droneModelCombo.currentText())
         if not drone.website_code:
             raise ValueError('%s has no shared engine profile.' % drone.name)
@@ -3534,6 +3538,34 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                 pattern='fast' if self.obliqueFastRadio.isChecked() else 'full',
                 **self._grid_controls(drone))
         return planning_adapter.build_request(**self._grid_controls(drone))
+
+    def _corridor_request_from_ui(self):
+        drone = registry.get(self.droneModelCombo.currentText())
+        if not drone.website_code:
+            raise ValueError('%s has no shared engine profile.' % drone.name)
+        try:
+            line = survey_geometry.line_vertices(self._survey_line, self._survey_line_crs)
+        except survey_geometry.MultipartLineError as exc:
+            raise ValueError('A shared corridor plan needs one centre line; this survey has '
+                             '%d separate lines. Plan them as separate missions.' % exc.args[0]) from None
+        return planning_adapter.build_corridor_request(
+            centre_line=[{'latitude_deg': lat, 'longitude_deg': lon} for lon, lat in line],
+            width_m=round(self.bufferSpin.value() * 2.0, 1),
+            break_indices=sorted(vertex for part, vertex in self._corridor_breaks if part == 0),
+            drone_profile_id=drone.website_code,
+            altitude_m=self.altitudeSpin.value(),
+            speed_m_s=self.speedSpin.value(),
+            side_overlap_ratio=self.sideOverlapSpin.value() / 100.0,
+            capture_mode=self._mission_type(),
+            front_overlap_ratio=self.frontOverlapSpin.value() / 100.0,
+            turn_style='curved' if self._path_curved() else 'straight',
+            finish_action=self.finishActionCombo.currentText(),
+            split_enabled=self.splitCheck.isChecked(),
+            requested_flights=self.splitSpin.value() if self.splitCheck.isChecked() else 1,
+            max_waypoints_per_flight=self.maxWaypointsSpin.value(),
+            reverse_route=self.reverseRouteCheck.isChecked(),
+            locations=self._planning.locations,
+        )
 
     def _grid_controls(self, drone):
         """The survey grid controls shared by 2D and oblique requests."""
@@ -3569,8 +3601,12 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self._shot_spacing_m = result['capture']['shot_spacing_m']
         self._missions = [flight['waypoints'] for flight in flights]
         self._gen_elevations = None
+        if request.get('operation') == 'plan_corridor':
+            self._terrain_flights = self._saved_corridor_terrain_flights(request, result)
         stats = result['statistics']
         self.coverageLabel.setText(f"{stats['survey_area_m2'] / 10_000:.1f} ha")
+        if request.get('operation') == 'plan_corridor':
+            self.corridorLengthLabel.setText(self._corridor_length_text())
         incomplete = not stats.get('estimates_complete', False)
         self.flightTimeLabel.setText(_format_duration(stats['known_estimated_seconds']))
         self.distanceLabel.setText(_format_distance(stats['known_distance_m']))
@@ -3609,16 +3645,35 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self.directionSpin.blockSignals(blocked)
         return flights
 
+    def _saved_corridor_terrain_flights(self, request, result):
+        """Use saved engine elevations to prepare takeoff-relative export heights."""
+        return planning_adapter.corridor_flights_with_heights(
+            request, result,
+            takeoff_reference=('shared' if self.sameTakeoffCheck.isChecked()
+                               else 'per_flight'))
+
     def _plan_shared(self, silent=True):
         try:
             request = self._planning_request_from_ui()
+            if (request.get('operation') == 'plan_corridor'
+                    and self.terrainFollowCheck.isChecked()):
+                request['terrain_follow'] = {
+                    'tolerance_m': self.terrainToleranceSpin.value(),
+                }
+                places = planning_adapter.corridor_sample_points(request)
+                request['terrain_follow']['elevations_m'] = [
+                    self._terrain.sample(place['longitude_deg'], place['latitude_deg'])
+                    for place in places]
             result = planning_adapter.plan(request)
             self._apply_planning_result(request, result)
             kind = self._mission_kind()
             self._terrain_flights = (
                 self._oblique_terrain_flights(result) if kind == 'oblique'
                 else self._point_terrain_flights(result) if kind in ('orbit', 'panorama')
+                else self._terrain_flights if kind == 'corridor'
                 else None)
+            if kind == 'corridor':
+                self._terrain_failed = False
             if self._terrain_flights and kind == 'oblique':
                 # Terrain follow may add waypoints along the legs: preview and
                 # count the waypoints that will be flown.
@@ -3629,12 +3684,14 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                     and not result['validation']['export_allowed']):
                 self._set_info(result['validation']['errors'][0]['message'])
             return result
-        except (ValueError, planning_adapter.PlanningError) as exc:
+        except (ValueError, planning_adapter.PlanningError, _TerrainError) as exc:
             self._planning.plan_failed()
             self._terrain_flights = None
             self._waypoints = []
             self._missions = []
             self._shot_spacing_m = 0.0
+            if self._mission_kind() == 'corridor' and self.terrainFollowCheck.isChecked():
+                self._terrain_failed = True
             if not silent:
                 title = {'orbit': 'Cannot Plan Orbit', 'panorama': 'Cannot Plan Panorama'}.get(
                     self._mission_kind(), 'Cannot Plan Mission')
@@ -3723,9 +3780,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             return
         if not self._has_survey_area(silent=True):
             self._clear_stats()
-            return
-        if self._mission_kind() == 'corridor':
-            self._update_stats_corridor()
             return
         if self._uses_shared_planning():
             if self._planning.locked:
@@ -4008,7 +4062,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         self.previewBtn.setText('Preview on Map')
         saved_visibility = preview_layers.visibility()
         self._on_clear_preview(reset_area=False)
-        if self._mission_kind() == 'corridor':
+        if self._mission_kind() == 'corridor' and not self._uses_shared_planning():
             missions_h = self._corridor_missions_with_heights()
             if not missions_h:
                 return
@@ -4021,7 +4075,10 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             waypoints, shot_spacing_m = result
             if self._uses_shared_planning() and self._planning.result:
                 heights = self._terrain_preview_heights()
-                missions_h = [(part, heights[index] if heights else None, None)
+                grounds = (self._terrain_flights if self._mission_kind() == 'corridor'
+                           else None)
+                missions_h = [(part, heights[index] if heights else None,
+                               grounds[index]['ground'] if grounds else None)
                               for index, part in enumerate(self._missions)]
             else:
                 missions_h = self._missions_with_heights(
@@ -4064,7 +4121,9 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
                 self.speedSpin.value() * self.photoIntervalSpin.value(), 0.5)
             self._gen_elevations = self._live_elevations
         heights = self._terrain_preview_heights() if shared else self._live_heights
-        ground = None if shared else self._live_ground
+        ground = ([plan['ground'] for plan in self._terrain_flights]
+                  if shared and self._mission_kind() == 'corridor' and self._terrain_flights
+                  else None if shared else self._live_ground)
         self._redraw_preview_layers(missions, heights, ground)
         self._show_corridor_band()   # keep the overlay in sync with the buffer
 
@@ -4072,7 +4131,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         """Each oblique, orbit or panorama flight's terrain heights for the
         preview, or None."""
         terrain = (self._terrain_flights
-                   if self._mission_kind() in ('oblique', 'orbit', 'panorama') else None)
+                   if self._mission_kind() in ('corridor', 'oblique', 'orbit', 'panorama') else None)
         if not terrain or len(terrain) != len(self._missions):
             return None
         return [plan['heights'] for plan in terrain]
@@ -4481,7 +4540,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         orbit = self._mission_kind() == 'orbit'
         point = orbit or self._mission_kind() == 'panorama'    # no survey polygon
         headings = heights = pitches = None
-        if self._mission_kind() in ('orbit', 'oblique', 'panorama') and flight is not None:
+        if self._mission_kind() in ('corridor', 'orbit', 'oblique', 'panorama') and flight is not None:
             headings, heights, pitches = (
                 flight['headings'], flight['heights'], flight['gimbal_pitches'])
             terrain = getattr(self, '_terrain_flights', None)
@@ -4653,7 +4712,7 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             self._export_local_enterprise(mission, waypoints)
             return
 
-        if self._mission_kind() == 'corridor':
+        if self._mission_kind() == 'corridor' and not self._planning.result:
             if (self._missions and len(self._preview_heights) == len(self._missions)
                     and len(self._preview_ground) == len(self._missions)):
                 missions_h = list(zip(self._missions, self._preview_heights,
@@ -4667,11 +4726,14 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
             consumed = planning_adapter.consume_result(
                 self._planning.request, self._planning.result,
                 legacy_waypoints=[[lat, lon] for lon, lat in self._waypoints])
-            terrain = self._terrain_flights if self._mission_kind() == 'oblique' else None
-            missions_h = [(terrain[index]['waypoints'] if terrain else flight['waypoints'], None, None)
+            terrain = (self._terrain_flights
+                       if self._mission_kind() in ('corridor', 'oblique') else None)
+            missions_h = [(terrain[index]['waypoints'] if terrain else flight['waypoints'],
+                           terrain[index]['heights'] if terrain and self._mission_kind() == 'corridor' else None,
+                           terrain[index]['ground'] if terrain and self._mission_kind() == 'corridor' else None)
                           for index, flight in enumerate(consumed)]
             flight_actions = [flight['actions'] for flight in consumed]
-            if self._mission_kind() in ('orbit', 'oblique', 'panorama'):
+            if self._mission_kind() in ('corridor', 'orbit', 'oblique', 'panorama'):
                 # Each orbit, oblique or panorama flight has its own headings,
                 # heights and tilts.
                 flight_settings = [self._export_settings(flight) for flight in consumed]
@@ -5059,8 +5121,6 @@ class FlyPathDialog(SurveyLifecycleMixin, WebsiteSyncLifecycleMixin, OrbitMixin,
         and self._gen_elevations holds the parallel ground elevations.
         """
         self._gen_elevations = None
-        if self._mission_kind() == 'corridor':
-            return self._generate_corridor_waypoints()
         if self._uses_shared_planning():
             if self._plan_shared(silent=False) is None:
                 return None

@@ -10,19 +10,22 @@ from .flypath_engine.precision import CANONICAL_CONTRACT_VERSION as CONTRACT_VER
 from .flypath_engine.oblique import plan_oblique
 from .flypath_engine.orbit import plan_orbit
 from .flypath_engine.panorama import AUTO_SPACING_PER_ALTITUDE, plan_panorama
+from .flypath_engine.corridor import plan_corridor, corridor_sample_points as _corridor_sample_points
 from .flypath_engine.profiles import PROFILE_VERSION
+from .terrain import heights_above_takeoff
 
 
 PlanningError = _PlanningError
 # Saved Fast oblique results use their original engine geometry during validation.
 SUPPORTED_ENGINE_VERSIONS = ('0.4.0', '1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0', '1.4.1', '2.0.0',
-                             '2.1.0', '2.2.0')
-CONTRACT_2_ENGINE_VERSIONS = ('2.0.0', '2.1.0', '2.2.0')   # the releases that plan contract 2
+                             '2.1.0', '2.2.0', '2.3.0')
+CONTRACT_2_ENGINE_VERSIONS = ('2.0.0', '2.1.0', '2.2.0', '2.3.0')   # the releases that plan contract 2
 SUPPORTED_CONTRACT_VERSIONS = (1, CONTRACT_VERSION)
 ORBIT_MIN_ENGINE_VERSION = (1, 2, 0)   # the first engine release with plan_orbit
 ORBIT_RINGS_MIN_ENGINE_VERSION = (1, 3, 0)
 OBLIQUE_MIN_ENGINE_VERSION = (1, 4, 0)   # the first engine release with plan_oblique
 PANORAMA_MIN_ENGINE_VERSION = (2, 1, 0)  # the first engine release with plan_panorama
+CORRIDOR_MIN_ENGINE_VERSION = (2, 3, 0)
 # Area panoramas: the engine's default point spacing, as a multiple of the altitude.
 PANORAMA_AUTO_SPACING_PER_ALTITUDE = AUTO_SPACING_PER_ALTITUDE
 
@@ -82,6 +85,43 @@ def build_request(*, survey_area, drone_profile_id, altitude_m, speed_m_s,
         'cross_hatch': bool(cross_hatch),
         'reverse_route': bool(reverse_route),
         'terrain_follow': False,
+    }
+    if locations is not None:
+        request['locations'] = locations
+    return request
+
+
+def build_corridor_request(*, centre_line, width_m, break_indices,
+                           drone_profile_id, altitude_m, speed_m_s,
+                           side_overlap_ratio, capture_mode, front_overlap_ratio,
+                           turn_style, finish_action, split_enabled,
+                           requested_flights, max_waypoints_per_flight,
+                           reverse_route, locations=None):
+    """Translate the plugin's full-width corridor controls to contract 2."""
+    capture = {'mode': 'full_auto' if capture_mode == 'full' else 'semi_auto'}
+    if capture['mode'] == 'full_auto':
+        capture['front_overlap_ratio'] = front_overlap_ratio
+    request = {
+        'contract_version': CONTRACT_VERSION,
+        'operation': 'plan_corridor',
+        'mapping_style': 'corridor',
+        'centre_line': centre_line,
+        'width_m': width_m,
+        'break_indices': break_indices,
+        'drone_profile_id': drone_profile_id,
+        'profile_version': PROFILE_VERSION,
+        'altitude_m': altitude_m,
+        'speed_m_s': speed_m_s,
+        'side_overlap_ratio': side_overlap_ratio,
+        'capture': capture,
+        'turn_style': turn_style,
+        'finish_action': FINISH_ACTIONS[finish_action],
+        'split': {
+            'enabled': bool(split_enabled),
+            'requested_flights': requested_flights,
+            'max_waypoints_per_flight': max_waypoints_per_flight,
+        },
+        'reverse_route': bool(reverse_route),
     }
     if locations is not None:
         request['locations'] = locations
@@ -193,7 +233,41 @@ def plan(request, *, engine_version=None):
         return plan_panorama(request)
     if request.get('operation') == 'plan_oblique':
         return plan_oblique(request, engine_version=engine_version)
+    if request.get('operation') == 'plan_corridor':
+        return plan_corridor(request)
     return plan_2d(request)
+
+
+def corridor_sample_points(request):
+    """Expose the engine's deterministic terrain lookup positions to QGIS."""
+    return _corridor_sample_points(request)
+
+
+def corridor_flights_with_heights(request, result, *, takeoff_reference='per_flight'):
+    """Prepare export heights from saved elevations without sampling terrain again."""
+    rows = result['route']['waypoints']
+    grounds = [row.get('ground_elevation_m') for row in rows]
+    if not grounds or all(value is None for value in grounds):
+        return None
+    if any(not _finite(value) for value in grounds):
+        raise ValueError('The saved corridor terrain elevations are incomplete.')
+    points = [(row['position']['longitude_deg'], row['position']['latitude_deg'])
+              for row in rows]
+    altitude = request['altitude_m']
+    if takeoff_reference not in ('shared', 'per_flight'):
+        raise ValueError('The corridor takeoff reference is invalid.')
+    plans = []
+    for flight in result['flights']:
+        start = flight['route_start_waypoint_index']
+        end = flight['route_end_waypoint_index']
+        base = grounds[0] if takeoff_reference == 'shared' else grounds[start]
+        plans.append({
+            'waypoints': points[start:end + 1],
+            'ground': grounds[start:end + 1],
+            'heights': heights_above_takeoff(
+                grounds[start:end + 1], altitude, base=base),
+        })
+    return plans
 
 
 def needs_geometry_update(result):
@@ -226,6 +300,11 @@ def consume_result(request, result, *, require_supported=True,
     if panorama and (result.get('operation') != 'plan_panorama'
                      or not _orbit_capable(result.get('engine_version'), PANORAMA_MIN_ENGINE_VERSION)):
         raise ValueError('This saved panorama engine version is not supported.')
+    corridor = request.get('operation') == 'plan_corridor'
+    if corridor and (result.get('operation') != 'plan_corridor'
+                     or not _orbit_capable(result.get('engine_version'), CORRIDOR_MIN_ENGINE_VERSION)
+                     or request.get('contract_version') != 2):
+        raise ValueError('This saved corridor engine version is not supported.')
     if any(result.get(key) != request.get(key)
            for key in ('profile_version', 'drone_profile_id')):
         raise ValueError('The saved planning result does not match its request.')
@@ -298,7 +377,8 @@ def consume_result(request, result, *, require_supported=True,
         raise ValueError('The saved planning result has no flights.')
     # Adjacent flights share their seam waypoint, except orbit flights that
     # split between rings, oblique flights between passes and panorama flights
-    # between points: the next one starts at its ring's, pass's or point's
+    # between points, or corridor flights between centre-line groups: the next
+    # one starts at its ring's, pass's, point's or group's
     # first waypoint.
     orbit = request.get('operation') == 'plan_orbit'
     consumed = []
@@ -313,7 +393,8 @@ def consume_result(request, result, *, require_supported=True,
                     and not (start == previous_end + 1
                              and ((orbit and 'ring_start' in (rows[start].get('roles') or ()))
                                   or (oblique and 'pass_start' in (rows[start].get('roles') or ()))
-                                  or (panorama and 'point_start' in (rows[start].get('roles') or ())))))):
+                                  or (panorama and 'point_start' in (rows[start].get('roles') or ()))
+                                  or (corridor and 'corridor_group_start' in (rows[start].get('roles') or ())))))):
             raise ValueError('The saved flight boundaries are invalid.')
         actions = flight.get('actions')
         if not isinstance(actions, list) or any(
@@ -366,13 +447,69 @@ def validate_mission_provenance(mission):
         return None
     request = mission.get('planning_request')
     settings = mission.get('settings') or {}
+    # The website may omit fixed defaults; its waypoint limit can vary by policy.
+    split_request = request.get('split') if isinstance(request, dict) else None
+    split_max_wp = settings.get('split_max_wp',
+                                split_request.get('max_waypoints_per_flight')
+                                if isinstance(split_request, dict) else None)
+    if type(split_max_wp) is not int or not 2 <= split_max_wp <= 200:
+        raise ValueError('The saved maximum waypoint count is invalid.')
+    finish_action = settings.get('finish_action', 'goHome')
     oblique = settings.get('mapping_style') == 'oblique'
     panorama = settings.get('mapping_style') == 'panorama'
+    corridor = settings.get('mapping_style') == 'corridor'
     if not isinstance(request, dict):
         raise ValueError('The saved planning request is missing.')
     if oblique and not _orbit_capable(result.get('engine_version'), OBLIQUE_MIN_ENGINE_VERSION):
         raise ValueError('This saved oblique engine version is not supported.')
-    if panorama:
+    if corridor:
+        if not _orbit_capable(result.get('engine_version'), CORRIDOR_MIN_ENGINE_VERSION):
+            raise ValueError('This saved corridor engine version is not supported.')
+        expected = {
+            'operation': 'plan_corridor',
+            'mapping_style': 'corridor',
+            'drone_profile_id': mission.get('drone_model'),
+            'width_m': settings.get('corridor_width'),
+            'altitude_m': settings.get('altitude'),
+            'speed_m_s': settings.get('speed'),
+            'side_overlap_ratio': _ratio(settings.get('side_overlap')),
+            'turn_style': settings.get('flight_path', 'curved'),
+            'finish_action': WEBSITE_FINISH_ACTIONS.get(finish_action),
+            'reverse_route': bool(settings.get('reverse_route')),
+        }
+        if any(request.get(key) != value for key, value in expected.items()):
+            raise ValueError('The saved corridor request does not match the mission settings.')
+        if request.get('break_indices', []) != settings.get('corridor_break_indices', []):
+            raise ValueError('The saved corridor breaks do not match the mission settings.')
+        line = request.get('centre_line')
+        geometry = ([[point.get('latitude_deg'), point.get('longitude_deg')]
+                     for point in line] if isinstance(line, list)
+                    and all(isinstance(point, dict) for point in line) else None)
+        if geometry != (mission.get('polygon') or []):
+            raise ValueError('The saved corridor line does not match the mission geometry.')
+        capture = request.get('capture')
+        full = settings.get('capture_mode') == 'full'
+        if (not isinstance(capture, dict)
+                or capture.get('mode') != ('full_auto' if full else 'semi_auto')
+                or (full and capture.get('front_overlap_ratio') !=
+                    _ratio(settings.get('front_overlap')))):
+            raise ValueError('The saved corridor capture does not match the mission settings.')
+        split = request.get('split')
+        enabled = settings.get('split_enabled', False)
+        if (not isinstance(split, dict) or split.get('enabled') is not enabled
+                or split.get('max_waypoints_per_flight') != split_max_wp
+                or (enabled and split.get('requested_flights') != settings.get('split_count', 1))
+                or (not enabled and split.get('requested_flights') != 1)):
+            raise ValueError('The saved corridor split does not match the mission settings.')
+        terrain = request.get('terrain_follow')
+        if bool(settings.get('terrain_follow')):
+            if (not isinstance(terrain, dict)
+                    or terrain.get('tolerance_m') != settings.get(
+                        'terrain_tolerance', terrain.get('tolerance_m'))):
+                raise ValueError('The saved corridor terrain does not match the mission settings.')
+        elif terrain not in (None, False):
+            raise ValueError('The saved corridor terrain does not match the mission settings.')
+    elif panorama:
         if not _orbit_capable(result.get('engine_version'), PANORAMA_MIN_ENGINE_VERSION):
             raise ValueError('This saved panorama engine version is not supported.')
         expected = {
@@ -382,7 +519,7 @@ def validate_mission_provenance(mission):
             'altitude_m': settings.get('altitude'),
             'speed_m_s': settings.get('speed'),
             'turn_style': settings.get('flight_path', 'curved'),
-            'finish_action': WEBSITE_FINISH_ACTIONS.get(settings.get('finish_action')),
+            'finish_action': WEBSITE_FINISH_ACTIONS.get(finish_action),
             'include_nadir': settings.get('panorama_nadir', True),
             'terrain_follow': False,
         }
@@ -390,7 +527,7 @@ def validate_mission_provenance(mission):
             raise ValueError('The saved panorama request does not match the mission settings.')
         if (request.get('capture') != {'mode': 'full_auto',
                                        'overlap_ratio': _ratio(settings.get('panorama_overlap', 30))}
-                or request.get('split') != {'max_waypoints_per_flight': settings.get('split_max_wp', 200)}):
+                or request.get('split') != {'max_waypoints_per_flight': split_max_wp}):
             raise ValueError('The saved panorama capture or split does not match the mission settings.')
         polygon = mission.get('polygon') or []
         layout = settings.get('panorama_layout', 'points')
@@ -433,7 +570,7 @@ def validate_mission_provenance(mission):
                                (mission.get('polygon') or [[None, None]])[0])),
             'speed_m_s': settings.get('speed'),
             'direction': 'counterclockwise' if settings.get('reverse_route') else 'clockwise',
-            'finish_action': WEBSITE_FINISH_ACTIONS.get(settings.get('finish_action')),
+            'finish_action': WEBSITE_FINISH_ACTIONS.get(finish_action),
             'terrain_follow': False,
         }
         if any(request.get(key) != value for key, value in expected.items()):
@@ -459,8 +596,8 @@ def validate_mission_provenance(mission):
         preference_only = (enabled is True and settings.get('split_count', 1) == 1
                            and request_enabled is False)
         if (not isinstance(split, dict) or (request_enabled is not enabled and not preference_only)
-                or split.get('max_waypoints_per_flight') != settings.get('split_max_wp')
-                or (request_enabled and split.get('requested_flights') != settings.get('split_count'))
+                or split.get('max_waypoints_per_flight') != split_max_wp
+                or (request_enabled and split.get('requested_flights') != settings.get('split_count', 1))
                 or (not request_enabled and 'requested_flights' in split)):
             raise ValueError('The saved orbit split does not match the mission settings.')
     else:
@@ -472,7 +609,7 @@ def validate_mission_provenance(mission):
             'side_overlap_ratio': _ratio(settings.get('side_overlap')),
             'margin_m': settings.get('margin', 0),
             'turn_style': settings.get('flight_path', 'curved'),
-            'finish_action': WEBSITE_FINISH_ACTIONS.get(settings.get('finish_action')),
+            'finish_action': WEBSITE_FINISH_ACTIONS.get(finish_action),
             'cross_hatch': bool(settings.get('cross_hatch')),
             'reverse_route': bool(settings.get('reverse_route')),
             'terrain_follow': bool(settings.get('terrain_follow')),
@@ -494,10 +631,10 @@ def validate_mission_provenance(mission):
         if expected_mode == 'full_auto' and capture.get('front_overlap_ratio') != _ratio(settings.get('front_overlap')):
             raise ValueError('The saved overlap request does not match the mission settings.')
         split = request.get('split')
-        enabled = settings.get('split_enabled')
+        enabled = settings.get('split_enabled', False)
         if (not isinstance(split, dict) or split.get('enabled') is not enabled
-                or split.get('max_waypoints_per_flight') != settings.get('split_max_wp')
-                or (enabled and split.get('requested_flights') != settings.get('split_count'))
+                or split.get('max_waypoints_per_flight') != split_max_wp
+                or (enabled and split.get('requested_flights') != settings.get('split_count', 1))
                 or (not enabled and split.get('requested_flights') != 1)):
             raise ValueError('The saved split request does not match the mission settings.')
         direction = request.get('direction')
