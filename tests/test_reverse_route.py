@@ -160,9 +160,9 @@ def test_shared_corridor_import_exports_saved_flights_and_terrain():
         raise unittest.SkipTest('Requires a configured QGIS Python runtime') from exc
     with _KeepUserSettings():
         from qgis.core import QgsCoordinateReferenceSystem, QgsGeometry
-        from FlyPath import planning_adapter, mission_export
-
         app, canvas, dialog, sync = _modules()
+        planning_adapter = importlib.import_module(dialog.__package__ + '.planning_adapter')
+        mission_export = importlib.import_module(dialog.__package__ + '.mission_export')
         planner = dialog.FlyPathDialog(SimpleNamespace(mapCanvas=lambda: canvas))
         try:
             planner.show()
