@@ -139,11 +139,19 @@ def _test_point_terrain():
         assert [float(value) for value in re.findall(
             r'<wpml:executeHeight>([-\d.]+)<', wpml)] == [
                 round(height - 2.0, 1) for height in settings.heights]
-        planner.launchOffsetSpin.setValue(0.0)
-
-        # flypath.io would plan it flat, so it stays local.
-        with check.assertRaisesRegex(sync.FlypathSyncError, 'Orbit terrain follow'):
-            planner._website_payload('Terrain orbit')
+        mission = planner._website_payload('Terrain orbit')
+        sync.validate_mission(mission)
+        assert mission['settings']['terrain_follow'] is True
+        assert mission['settings']['takeoff_reference'] == 'shared'
+        assert mission['settings']['launch_offset_m'] == 2.0
+        assert mission['planning_result'] == result
+        planner.terrainFollowCheck.setChecked(False)
+        planner._apply_website_mission(mission)
+        assert planner.terrainFollowCheck.isChecked()
+        assert planner.sameTakeoffCheck.isChecked()
+        assert planner.launchOffsetSpin.value() == 2.0
+        assert planner._planning.result == result
+        assert planner._terrain_flights[0]['heights'] == terrain[0]['heights']
 
         # A second ring keeps its own altitude above the ground.
         planner.addRingBtn.click()
@@ -159,9 +167,22 @@ def _test_point_terrain():
         # Each split from its own first waypoint when it has its own takeoff.
         planner.sameTakeoffCheck.setChecked(False)
         planner._on_preview()
+        per_flight_heights = [plan['heights'] for plan in planner._terrain_flights]
         for flight, plan in zip(planner._planning.result['flights'], planner._terrain_flights):
             part = rows[flight['route_start_waypoint_index']:flight['route_end_waypoint_index'] + 1]
             assert plan['heights'][0] == part[0]['altitude_m']
+        planner.launchOffsetSpin.setValue(-3.5)
+        per_flight = planner._website_payload('Split terrain orbit')
+        sync.validate_mission(per_flight)
+        assert per_flight['settings']['takeoff_reference'] == 'per_flight'
+        assert per_flight['settings']['launch_offset_m'] == -3.5
+        planner._apply_website_mission(per_flight)
+        assert not planner.sameTakeoffCheck.isChecked()
+        assert planner.launchOffsetSpin.value() == -3.5
+        assert planner._planning.result == per_flight['planning_result']
+        assert [plan['heights'] for plan in planner._terrain_flights] == per_flight_heights
+        assert planner._website_payload('Again')['settings']['terrain_follow'] is True
+        planner._terrain = slope
         planner.sameTakeoffCheck.setChecked(True)
 
         # No elevation data: the flat route previews, export is blocked.

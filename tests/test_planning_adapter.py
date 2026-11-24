@@ -64,6 +64,55 @@ def test_locations_survive_the_adapter_request():
     assert planning_adapter.plan(planned_request)['statistics']['estimates_complete']
 
 
+@pytest.mark.parametrize('terrain', [False, True])
+def test_sparse_corridor_provenance_preserves_saved_route(terrain):
+    line = [
+        {'latitude_deg': 51.05, 'longitude_deg': -114.09},
+        {'latitude_deg': 51.051, 'longitude_deg': -114.0885},
+        {'latitude_deg': 51.052, 'longitude_deg': -114.087},
+    ]
+    planned = planning_adapter.build_corridor_request(
+        centre_line=line, width_m=60, break_indices=[],
+        drone_profile_id='mini4pro', altitude_m=80, speed_m_s=8,
+        side_overlap_ratio=.7, capture_mode='semi', front_overlap_ratio=.8,
+        turn_style='curved', finish_action='Return to Home',
+        split_enabled=False, requested_flights=1,
+        max_waypoints_per_flight=70, reverse_route=False,
+    )
+    planned.pop('break_indices')  # The contract defaults omitted breaks to none.
+    if terrain:
+        planned['terrain_follow'] = {'tolerance_m': 5}
+        positions = planning_adapter.corridor_sample_points(planned)
+        planned['terrain_follow']['elevations_m'] = [
+            1000 + (point['latitude_deg'] - 51.05) * 20000 for point in positions]
+    result = planning_adapter.plan(planned)
+    mission = {
+        'drone_model': 'mini4pro',
+        'polygon': [[point['latitude_deg'], point['longitude_deg']] for point in line],
+        'waypoints': [[row['position']['latitude_deg'], row['position']['longitude_deg']]
+                      for row in result['route']['waypoints']],
+        'settings': {'mapping_style': 'corridor', 'corridor_width': 60,
+                     'altitude': 80, 'speed': 8, 'side_overlap': 70,
+                     'capture_mode': 'semi', 'terrain_follow': terrain},
+        'planning_request': planned, 'planning_result': result,
+    }
+    saved = deepcopy(mission)
+    supported, flights = planning_adapter.validate_mission_provenance(mission)
+    assert supported and len(flights) == len(result['flights'])
+    assert mission == saved
+    if terrain:
+        assert planning_adapter.corridor_flights_with_heights(planned, result)
+    for key, wrong in (('corridor_width', 61), ('corridor_break_indices', [1]),
+                       ('split_max_wp', 69), ('reverse_route', True),
+                       ('terrain_tolerance', 10)):
+        if key == 'terrain_tolerance' and not terrain:
+            continue
+        changed = deepcopy(mission)
+        changed['settings'][key] = wrong
+        with pytest.raises(ValueError):
+            planning_adapter.validate_mission_provenance(changed)
+
+
 @pytest.mark.parametrize('pattern,nadir', [('fast', True), ('fast', False), ('full', True), ('full', False)])
 @pytest.mark.parametrize('engine_version', ['1.4.0', '1.4.1', '2.0.0', '2.1.0', '2.2.0'])
 def test_oblique_sync_provenance_keeps_passes_and_rejects_changed_settings(pattern, nadir, engine_version):
@@ -546,11 +595,81 @@ def panorama_request(**overrides):
     return planning_adapter.build_panorama_request(**values)
 
 
+@pytest.mark.parametrize('style', ['2d', 'oblique', 'orbit', 'panorama'])
+@pytest.mark.parametrize('limit', [70, 200])
+def test_sparse_saved_settings_keep_verified_request(style, limit):
+    if style == 'orbit':
+        planned = orbit_request(max_waypoints_per_flight=limit)
+        polygon = [[51.0, -114.0]]
+        settings = dict(mapping_style='orbit', orbit_radius=30, orbit_tilt=-35,
+                        altitude=25, speed=3, capture_mode='full', side_overlap=90)
+    elif style == 'panorama':
+        planned = panorama_request(max_waypoints_per_flight=limit)
+        polygon = [[51.05, -114.09]]
+        settings = dict(mapping_style='panorama', capture_mode='full', altitude=60, speed=2)
+    else:
+        planned = request(capture_mode='semi', finish_action='Return to Home',
+                          split_enabled=False, requested_flights=1,
+                          max_waypoints_per_flight=limit)
+        settings = dict(mapping_style=style, altitude=80, speed=8,
+                        side_overlap=70, capture_mode='semi', direction=70)
+        if style == 'oblique':
+            planned.pop('cross_hatch')
+            planned.update(operation='plan_oblique', mapping_style='oblique',
+                           pattern='full', gimbal_pitch_deg=-45, include_nadir=True)
+            settings.update(oblique_pattern='full', oblique_pitch=-45,
+                            oblique_nadir=True)
+        polygon = [[p['latitude_deg'], p['longitude_deg']] for p in AREA['exterior']]
+    result = planning_adapter.plan(planned)
+    mission = dict(drone_model=planned['drone_profile_id'], polygon=polygon,
+                   settings=settings, planning_request=planned, planning_result=result)
+    saved = deepcopy(mission)
+    assert planning_adapter.validate_mission_provenance(mission)[0]
+    assert mission == saved
+    for key, wrong in (('finish_action', 'noAction'), ('split_max_wp', limit - 1),
+                       ('split_count', 2), ('split_enabled', True)):
+        if key == 'split_count' and style in ('2d', 'oblique', 'panorama'):
+            continue  # Disabled split count is not part of these requests.
+        if key == 'split_enabled' and style in ('orbit', 'panorama'):
+            continue  # Orbit preserves this preference; Panorama ignores it.
+        if key == 'split_count' and style == 'orbit':
+            continue
+        bad = deepcopy(mission)
+        bad['settings'][key] = wrong
+        with pytest.raises(ValueError):
+            planning_adapter.validate_mission_provenance(bad)
+    changed = deepcopy(mission)
+    changed['planning_result']['statistics']['route_distance_m'] += 1
+    with pytest.raises(ValueError):
+        planning_adapter.validate_mission_provenance(changed)
+    changed = deepcopy(mission)
+    changed['planning_request']['split']['max_waypoints_per_flight'] = 1
+    with pytest.raises(ValueError):
+        planning_adapter.validate_mission_provenance(changed)
+
+
+def test_omitted_split_count_defaults_to_one_when_enabled():
+    planned = request(capture_mode='semi', finish_action='Return to Home',
+                      split_enabled=True, requested_flights=1)
+    result = planning_adapter.plan(planned)
+    mission = dict(drone_model='mini3pro',
+                   polygon=[[p['latitude_deg'], p['longitude_deg']]
+                            for p in AREA['exterior']],
+                   settings=dict(mapping_style='2d', altitude=80, speed=8,
+                                 side_overlap=70, capture_mode='semi', direction=70,
+                                 split_enabled=True, split_max_wp=70),
+                   planning_request=planned, planning_result=result)
+    assert planning_adapter.validate_mission_provenance(mission)[0]
+    mission['settings']['split_count'] = 2
+    with pytest.raises(ValueError):
+        planning_adapter.validate_mission_provenance(mission)
+
+
 def test_panorama_flight_carries_outward_headings_and_row_tilts():
     planned = panorama_request()
     assert planned['capture'] == {'mode': 'full_auto', 'overlap_ratio': .3}
     result = planning_adapter.plan(planned)
-    assert result['engine_version'] == '2.2.0' and result['contract_version'] == 2
+    assert result['engine_version'] == '2.3.0' and result['contract_version'] == 2
     [flight] = planning_adapter.consume_result(planned, result)
     assert len(flight['waypoints']) == len(flight['headings']) == len(flight['gimbal_pitches']) == 24
     assert flight['headings'][:3] == [0.0, 45.0, 90.0] and flight['heights'] is None
@@ -564,3 +683,36 @@ def test_panorama_results_need_a_panorama_engine():
     for changed in (dict(result, engine_version='2.0.0'), dict(result, operation='plan_orbit')):
         with pytest.raises(ValueError):
             planning_adapter.consume_result(planned, changed)
+
+
+@pytest.mark.parametrize('make_request', [request, orbit_request, panorama_request])
+def test_engine_21_results_keep_their_saved_provenance(make_request):
+    planned = make_request()
+    result = planning_adapter.plan(planned)
+    # These operations have unchanged calculations in the profile-only 2.2 release.
+    result['engine_version'] = '2.1.0'
+    saved = deepcopy(result)
+    assert planning_adapter.consume_result(planned, result)
+    assert result == saved
+
+
+@pytest.mark.parametrize('make_request', [request, orbit_request, panorama_request])
+def test_mavic_3_pro_plans_and_exports_with_engine_23(make_request):
+    planned = make_request(drone_profile_id='mavic3pro')
+    result = planning_adapter.plan(planned)
+    assert result['engine_version'] == '2.3.0'
+    drone = registry.get(registry.name_for_website_code('mavic3pro'))
+    for flight in planning_adapter.consume_result(planned, result):
+        spec = MissionSpec(
+            waypoints=flight['waypoints'], altitude_m=planned['altitude_m'],
+            speed_ms=planned['speed_m_s'], finish_action='Return to Home',
+            rc_lost_action='Return to Home', capture_mode='full',
+            actions=flight['actions'], headings=flight['headings'],
+            gimbal_pitches=flight['gimbal_pitches'], heights=flight['heights'])
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / 'mission.kmz')
+            write_mission(drone, spec, path)
+            with zipfile.ZipFile(path) as archive:
+                wpml = archive.read('wpmz/waylines.wpml').decode('utf-8')
+        assert f'<wpml:droneEnumValue>{drone.drone_enum}</wpml:droneEnumValue>' in wpml
+        assert wpml.count('<Placemark>') == len(flight['waypoints'])

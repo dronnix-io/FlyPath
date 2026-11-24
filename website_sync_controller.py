@@ -287,7 +287,7 @@ class WebsiteSyncLifecycleMixin:
         orbit = kind == 'orbit'
         panorama = kind == 'panorama'
         self._check_low_altitude_sync()
-        if kind in ('oblique', 'orbit', 'panorama') and self.terrainFollowCheck.isChecked():
+        if kind in ('oblique', 'panorama') and self.terrainFollowCheck.isChecked():
             # The website would plan it flat; never present that as this route.
             raise FlypathSyncError(
                 'flypath.io does not support %s terrain follow yet. Turn off '
@@ -354,7 +354,7 @@ class WebsiteSyncLifecycleMixin:
     def _website_settings(self):
         """The mission parameters the website knows, by its own key names.
 
-        Plugin-only settings (launch offset, GSD, photo interval, gimbal angle,
+        Plugin-only settings (GSD, photo interval, gimbal angle,
         DEM choice, takeoff-zone tolerance, corridor mission breaks) are left
         out rather than invented as new server-side keys. Values outside the
         website's own ranges are not clamped here: the server rejects them with
@@ -385,15 +385,19 @@ class WebsiteSyncLifecycleMixin:
             'speed':          round(self.speedSpin.value(), 1),
             'side_overlap':   self.sideOverlapSpin.value(),
             'terrain_follow': bool(self.terrainFollowCheck.isChecked()),
+            'takeoff_reference': ('shared' if self.sameTakeoffCheck.isChecked()
+                                  else 'per_flight'),
             'split_count':    self.splitSpin.value(),
             'split_enabled':  self.splitCheck.isChecked(),
             'auto_direction': self.autoDirectionBtn.isChecked(),
             'reverse_route':  self.reverseRouteCheck.isChecked(),
             'split_max_wp':   self.maxWaypointsSpin.value(),
+            'launch_offset_m': (0 if kind == 'panorama' or
+                                (orbit and not self.terrainFollowCheck.isChecked())
+                                else self.launchOffsetSpin.value()),
         }
         if orbit:
             settings['flight_path'] = 'curved'
-            settings['terrain_follow'] = False
             rings = self._orbit_rings_from_ui()
             settings['altitude'] = rings[0][1]
             settings['orbit_radius'] = rings[0][0]
@@ -417,6 +421,8 @@ class WebsiteSyncLifecycleMixin:
             # The plugin's Buffer is the half-width each side; the website's
             # corridor_width is the full mapped width.
             settings['corridor_width'] = round(self.bufferSpin.value() * 2.0, 1)
+            settings['corridor_break_indices'] = sorted(
+                vertex for part, vertex in self._corridor_breaks if part == 0)
         else:
             # Flight lines are bidirectional, so a heading and its opposite are
             # the same grid; the website's range stops below 180.
@@ -488,6 +494,8 @@ class WebsiteSyncLifecycleMixin:
             supported, flights = provenance
             self._apply_planning_result(request, result, flights=flights)
             self._planning.preserve_imported_route(supported=supported)
+            if self._mission_kind() == 'orbit' and self.terrainFollowCheck.isChecked():
+                self._terrain_flights = self._point_terrain_flights(result)
             if planning_adapter.needs_geometry_update(result):
                 self._planning.require_regeneration()
                 self._set_info('This saved Fast oblique route needs the geometry correction. '
@@ -505,6 +513,10 @@ class WebsiteSyncLifecycleMixin:
             self._waypoints = route
             self._missions = (self._split_missions(route)
                               if self._mission_type() != 'full' else [route])
+            if self._mission_kind() == 'corridor' and not self.terrainFollowCheck.isChecked():
+                # Empty height caches mark the saved flat flights ready for direct export.
+                self._preview_heights = [None] * len(self._missions)
+                self._preview_ground = [None] * len(self._missions)
             self._live_waypoints = route
             self._live_missions = self._missions
             self._shot_spacing_m = max(
@@ -533,9 +545,15 @@ class WebsiteSyncLifecycleMixin:
         self._planning.preserve_imported_route()
         self.previewBtn.setText('Regenerate on Map' if self._planning.regeneration_required
                                 else 'Preview on Map')
-        if self.terrainFollowCheck.isChecked():
+        if self.terrainFollowCheck.isChecked() and not self._terrain_flights:
             self._terrain_failed = True
-        self._preview_layer_ids = preview_layers.create(self._missions)
+        if self._mission_kind() == 'corridor' and self._terrain_flights:
+            self._preview_heights = [flight['heights'] for flight in self._terrain_flights]
+            self._preview_ground = [flight['ground'] for flight in self._terrain_flights]
+            self._preview_layer_ids = preview_layers.create(
+                self._missions, self._preview_heights, self._preview_ground)
+        else:
+            self._preview_layer_ids = preview_layers.create(self._missions)
         self._update_web_buttons()
         self.iface.mapCanvas().refresh()
 
@@ -612,7 +630,7 @@ class WebsiteSyncLifecycleMixin:
         destination_mode = destination_settings.value('dest_mode')
         state_names = (
             '_waypoints', '_missions', '_shot_spacing_m', '_gen_elevations',
-            '_terrain_failed', '_website_link', '_source_mode',
+            '_terrain_failed', '_terrain_flights', '_website_link', '_source_mode',
             '_monitored_layer_id',
             '_selected_layer_id', '_split_overridden', '_split_choice_required',
             '_setting_split', '_loading_mission', '_survey_area_layer_id',
@@ -630,10 +648,10 @@ class WebsiteSyncLifecycleMixin:
             'autoDirectionBtn', 'missionTypeCombo', 'droneModelCombo',
             'captureFullRadio', 'captureSemiRadio', 'pathCurvedRadio',
             'pathStraightRadio', 'finishActionCombo', 'rcLostActionCombo',
-            'altitudeSpin', 'speedSpin', 'sideOverlapSpin', 'frontOverlapSpin',
+            'altitudeSpin', 'launchOffsetSpin', 'speedSpin', 'sideOverlapSpin', 'frontOverlapSpin',
             'marginSpin', 'directionSpin', 'terrainToleranceSpin',
             'maxWaypointsSpin', 'bufferSpin', 'crossHatchCheck',
-            'terrainFollowCheck', 'reverseRouteCheck', 'sourceDrawRadio',
+            'terrainFollowCheck', 'sameTakeoffCheck', 'reverseRouteCheck', 'sourceDrawRadio',
             'sourceLayerRadio', 'sourceSelectionRadio', 'splitCheck', 'splitSpin',
             'layerCombo', 'featureCombo', 'splitPartCombo',
             'showTakeoffZoneBtn', 'showContoursBtn',
@@ -798,9 +816,9 @@ class WebsiteSyncLifecycleMixin:
                 'This mission uses a capture mode this plugin does not know '
                 '(%s).' % capture)
         finish = flypath_sync.label_for_code(
-            flypath_sync.WEBSITE_FINISH_ACTIONS, settings.get('finish_action'))
+            flypath_sync.WEBSITE_FINISH_ACTIONS, settings.get('finish_action', 'goHome'))
         rc_lost = flypath_sync.label_for_code(
-            flypath_sync.WEBSITE_RC_LOST_ACTIONS, settings.get('rc_lost_action'))
+            flypath_sync.WEBSITE_RC_LOST_ACTIONS, settings.get('rc_lost_action', 'goBack'))
         for label, code, value in (
                 ('finish action', settings.get('finish_action'), finish),
                 ('RC lost action', settings.get('rc_lost_action'), rc_lost)):
@@ -862,8 +880,8 @@ class WebsiteSyncLifecycleMixin:
         self.droneModelCombo.setCurrentText(drone_name)
         (self.captureFullRadio if capture == 'full'
          else self.captureSemiRadio).setChecked(True)
-        if settings.get('flight_path') in ('curved', 'straight'):
-            (self.pathCurvedRadio if settings['flight_path'] == 'curved'
+        if settings.get('flight_path', 'curved') in ('curved', 'straight'):
+            (self.pathCurvedRadio if settings.get('flight_path', 'curved') == 'curved'
              else self.pathStraightRadio).setChecked(True)
         if finish:
             self.finishActionCombo.setCurrentText(finish)
@@ -876,14 +894,20 @@ class WebsiteSyncLifecycleMixin:
         # never handed a plan quietly different from the one on the website.
         adjusted = []
         fields = [('altitude', self.altitudeSpin, settings.get('altitude')),
+                  ('launch offset', self.launchOffsetSpin, settings.get('launch_offset_m', 0)),
                   ('speed', self.speedSpin, settings.get('speed')),
                   ('side overlap', self.sideOverlapSpin, settings.get('side_overlap')),
                   ('front overlap', self.frontOverlapSpin, settings.get('front_overlap')),
-                  ('margin', self.marginSpin, settings.get('margin')),
+                  ('margin', self.marginSpin, settings.get('margin', 0)),
                   ('direction', self.directionSpin, settings.get('direction')),
                   ('terrain tolerance', self.terrainToleranceSpin,
-                   settings.get('terrain_tolerance')),
-                  ('max waypoints', self.maxWaypointsSpin, settings.get('split_max_wp'))]
+                   settings.get('terrain_tolerance',
+                                ((mission.get('planning_request') or {}).get('terrain_follow') or {}).get(
+                                    'tolerance_m') if corridor and provenance else None)),
+                  ('max waypoints', self.maxWaypointsSpin,
+                   settings.get('split_max_wp',
+                                (mission.get('planning_request') or {}).get('split', {}).get(
+                                    'max_waypoints_per_flight') if provenance else None))]
         if orbit:
             fields.extend((('orbit radius', self.orbitRadiusSpin, settings.get('orbit_radius')),
                            ('orbit tilt', self.orbitTiltSpin, settings.get('orbit_tilt'))))
@@ -925,6 +949,9 @@ class WebsiteSyncLifecycleMixin:
                 rings.append(tuple(values))
             self._select_orbit_ring(0, rings)
         self.crossHatchCheck.setChecked(bool(settings.get('cross_hatch')))
+        blocked = self.sameTakeoffCheck.blockSignals(True)
+        self.sameTakeoffCheck.setChecked(settings.get('takeoff_reference') == 'shared')
+        self.sameTakeoffCheck.blockSignals(blocked)
         blocked = self.terrainFollowCheck.blockSignals(True)
         self.terrainFollowCheck.setChecked(bool(settings.get('terrain_follow')))
         self.terrainFollowCheck.blockSignals(blocked)
@@ -946,13 +973,16 @@ class WebsiteSyncLifecycleMixin:
         elif corridor:
             self._show_drawn_line(geom, wgs84)
             self._set_survey_line(geom, wgs84)
+            self._corridor_breaks = {(0, index) for index in
+                                     settings.get('corridor_break_indices', [])}
+            self._redraw_break_markers()
         else:
             self._show_drawn_polygon(geom, wgs84)
             self._set_survey_polygon(geom, wgs84)
         # Geometry establishes the split range. An explicit saved choice must
         # override battery defaults even when setValue would emit no signal.
         self._split_overridden = True
-        split_enabled = settings.get('split_enabled')
+        split_enabled = settings.get('split_enabled', False if provenance else None)
         self._setting_split = True
         if panorama:
             self.splitCheck.setChecked(False)

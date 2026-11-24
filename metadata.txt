@@ -3,8 +3,14 @@ name=FlyPath
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Generate DJI WPML KMZ mission files for 2D, oblique, corridor, orbit (3D model) and panorama drone missions directly from QGIS
-version=5.3.0
-changelog=5.3.0 - New drone: DJI Mavic 3 Pro (and Mavic 3 Pro Cine). Missions use its 4/3
+version=5.4.0
+changelog=5.4.0 - Shared Corridor planning, terrain samples and flight splitting
+    now preserve the same engine route across the plugin and website.
+    Improved mission sync for saved planning requests and routes,
+    including launch offsets, takeoff references, and Orbit rings and splits. Fixed
+    imports of website missions with omitted default settings while keeping saved
+    route verification.
+    5.3.0 - New drone: DJI Mavic 3 Pro (and Mavic 3 Pro Cine). Missions use its 4/3
     20 MP Hasselblad main camera, so select that camera for mapping, with 43 min flight time and
     15 km range from DJI's specs. It uses the shared DJI Fly waypoint value of the other consumer
     drones; please open an issue if DJI Fly rejects a mission. It pairs with a DJI RC, RC-N1 or RC

@@ -380,7 +380,13 @@ Open the **My missions** tab and click **Connect account**. Paste the token from
 - If someone changed the mission on the website after you opened it, FlyPath does not overwrite their work. It asks whether to load the latest version, save yours as a copy, or cancel; your local plan is kept.
 - Projects are created and renamed on the website.
 
-**What syncs:** 2D, Corridor, Orbit (with rings and splitting), Oblique and Panorama missions with the consumer drones FlyPath supports. Reversed routes from older versions do not open in QGIS yet and stay on the website. Oblique, Orbit and Panorama missions with terrain follow stay local for now: export them, or turn terrain follow off before saving.
+**What syncs:** 2D, Corridor, Orbit (with rings, splitting, and terrain follow), Oblique and Panorama missions with the consumer drones FlyPath supports. Reversed routes from older versions do not open in QGIS yet and stay on the website. Oblique and Panorama missions with terrain follow stay local for now: export them, or turn terrain follow off before saving.
+
+For 2D, Corridor, Oblique, and terrain-following Orbit missions, sync also carries **Launch Offset** as `settings.launch_offset_m` (metres, -50 to 50). Older missions without the field use zero. The plugin sends zero explicitly when clearing a saved offset. Positive values mean the takeoff point is higher than the reference ground, so export subtracts that offset from waypoint heights. Flat Orbit and Panorama missions send zero; Panorama terrain-following missions remain local. The plugin advertises `launch-offset-v1` in `X-FlyPath-Sync-Capabilities` so the website can prevent older plugins from opening or changing missions with a nonzero offset.
+
+Sync also carries **Same takeoff for all splits** as `settings.takeoff_reference`: `shared` uses the ground elevation at the first waypoint of the full flown route (after reversal) for every split, while `per_flight` uses the ground elevation at each flight's first waypoint. Older website missions without this field use `per_flight`; new local plugin missions still default to `shared`. The setting is sent for every syncable mission type, though it has no effect while terrain follow is off. The plugin advertises `takeoff-reference-v1` in `X-FlyPath-Sync-Capabilities` so the website can guard terrain-following missions against clients that cannot preserve this choice.
+
+Terrain-following Orbit missions sync with their saved route, `settings.terrain_follow`, launch offset, and takeoff reference. The plugin advertises `orbit-terrain-v1` in `X-FlyPath-Sync-Capabilities` so the website can guard these missions against older clients. Local export still needs an available elevation source to calculate terrain heights.
 
 Not connected yet? The tab explains what an account adds and links to [flypath.io/register](https://flypath.io/register/).
 

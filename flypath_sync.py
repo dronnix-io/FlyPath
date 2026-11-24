@@ -48,6 +48,7 @@ MAX_JSON_DEPTH = 32
 TIMEOUT_S = 20
 SYNC_API_VERSION = 1
 SYNC_VERSION_HEADER = 'X-FlyPath-Sync-Version'
+SYNC_CAPABILITIES_HEADER = 'X-FlyPath-Sync-Capabilities'
 SUPPORTED_MAPPING_STYLES = ('2d', 'corridor', 'orbit', 'oblique', 'panorama')
 SYNC_MISMATCH_MESSAGE = ('Website sync is incompatible with this FlyPath plugin. '
                          'Update the plugin to reconnect.')
@@ -222,6 +223,7 @@ def validate_mission(mission):
         enums = {'capture_mode': ('semi', 'full'),
                  'oblique_pattern': ('fast', 'full'),
                  'panorama_layout': ('points', 'area'),
+                 'takeoff_reference': ('shared', 'per_flight'),
                  'flight_path': ('straight', 'curved'),
                  'finish_action': tuple(WEBSITE_FINISH_ACTIONS.values()),
                  'rc_lost_action': tuple(WEBSITE_RC_LOST_ACTIONS.values())}
@@ -241,6 +243,21 @@ def validate_mission(mission):
             if settings.get(key) is not None and (type(settings[key]) not in (int, float)
                                     or not math.isfinite(settings[key])):
                 raise ValueError()
+        if settings.get('mapping_style') == 'corridor':
+            breaks = settings.get('corridor_break_indices', [])
+            line = mission.get('polygon') or []
+            if (not isinstance(breaks, list)
+                    or any(type(index) is not int or not 0 < index < len(line) - 1
+                           for index in breaks)
+                    or breaks != sorted(set(breaks))):
+                raise ValueError()
+        launch_offset = settings.get('launch_offset_m', 0)
+        if (type(launch_offset) not in (int, float) or not math.isfinite(launch_offset)
+                or not -50 <= launch_offset <= 50
+                or (settings.get('mapping_style') == 'panorama' and launch_offset != 0)
+                or (settings.get('mapping_style') == 'orbit'
+                    and not settings.get('terrain_follow', False) and launch_offset != 0)):
+            raise ValueError()
         if 'orbit_rings' in settings and settings.get('mapping_style') != 'orbit':
             raise ValueError()
         if settings.get('mapping_style') == 'panorama':
@@ -287,7 +304,6 @@ def validate_mission(mission):
                     or not -90 <= settings.get('orbit_tilt', 1) <= 0
                     or not 10 <= settings.get('altitude', 0) <= 500
                     or settings.get('flight_path', 'curved') != 'curved'
-                    or settings.get('terrain_follow', False)
                     or type(settings.get('split_count', 1)) is not int
                     or not 1 <= settings.get('split_count', 1) <= 99
                     or (not settings.get('split_enabled', False)
@@ -395,7 +411,8 @@ def _call(base_url, token, path, data=None, method=None):
     url = _api_url(base_url, path)
     headers = {'Authorization': 'Token %s' % token.strip(),
                'Accept': 'application/json',
-               SYNC_VERSION_HEADER: str(SYNC_API_VERSION)}
+               SYNC_VERSION_HEADER: str(SYNC_API_VERSION),
+               SYNC_CAPABILITIES_HEADER: 'launch-offset-v1,takeoff-reference-v1,orbit-terrain-v1'}
     body = None
     if data is not None:
         try:

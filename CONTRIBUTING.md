@@ -140,3 +140,11 @@ can share it.
 For anything about a specific change, open an issue or comment on your pull
 request so the discussion stays with the code. For anything else, reach the
 maintainer at [salar@dronnix.com](mailto:salar@dronnix.com).
+
+## Corridor engine dependency
+
+The Corridor integration requires engine 2.3.0 at the immutable commit recorded
+in `flypath-engine.json`. Run the normal vendoring, validation and build commands
+against that pin. The version label does not require a release tag: the commit
+is the source authority. Merge the engine change before the consumer integration;
+local source copies are development artifacts and must not replace the pin.

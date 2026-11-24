@@ -122,16 +122,33 @@ class TransportValidation(unittest.TestCase):
                              ('settings', {'speed': float('inf')}),
                              ('settings', {'split_count': True}),
                              ('settings', {'terrain_follow': 'false'}),
+                             ('settings', {'takeoff_reference': None}),
+                             ('settings', {'takeoff_reference': True}),
+                             ('settings', {'takeoff_reference': 'future'}),
                              ('settings', {'flight_path': 'unknown'})):
             with self.subTest(field=field, value=str(value)[:70]):
                 with self.assertRaises(sync.FlypathSyncError):
                     sync.validate_mission({**mission, field: value})
         sync.validate_mission({'settings': {'split_count': 1e300, 'speed': -100}})
+        for choice in ('shared', 'per_flight'):
+            sync.validate_mission({'settings': {'takeoff_reference': choice}})
         for project_id in (True, 0, -1, '2', {}):
             with self.subTest(project_id=project_id), self.assertRaises(sync.FlypathSyncError):
                 sync.validate_mission({'project_id': project_id})
         sync.validate_mission({'project_id': None})
         sync.validate_mission({'project_id': 2})
+
+    def test_launch_offset_validation(self):
+        sync.validate_mission({'settings': {}})
+        for value in (-50, 0, 12.5, 50):
+            sync.validate_mission({'settings': {'launch_offset_m': value}})
+        for value in (None, True, '2', float('nan'), float('inf'), -50.1, 50.1):
+            with self.subTest(value=value), self.assertRaises(sync.FlypathSyncError):
+                sync.validate_mission({'settings': {'launch_offset_m': value}})
+        for style in ('orbit', 'panorama'):
+            with self.subTest(style=style), self.assertRaises(sync.FlypathSyncError):
+                sync.validate_mission({'settings': {'mapping_style': style,
+                                                    'launch_offset_m': 1}})
 
     def test_real_redirects_never_reach_target(self):
         received = []

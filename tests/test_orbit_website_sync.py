@@ -38,8 +38,10 @@ def test_orbit_roundtrip_and_dirty_route():
         planner.reverseRouteCheck.setChecked(True)
         planner.set_orbit_centre(-114, 51)
         planner._on_preview()
+        planner.launchOffsetSpin.setValue(8)
         mission = planner._website_payload('Orbit')
         sync.validate_mission(mission)
+        assert mission['settings']['launch_offset_m'] == 0
         assert mission['polygon'] == [[51, -114]]
         assert mission['settings']['orbit_radius'] == 45
         assert mission['settings']['orbit_tilt'] == -40
