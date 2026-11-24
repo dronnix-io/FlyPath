@@ -41,7 +41,7 @@ Follow FlyPath updates on [X (@SalarDrones)](https://x.com/SalarDrones) and [Lin
 - **Handles big jobs:** splits a survey into several flights by battery and waypoint limit.
 - **Follows the ground:** optional terrain follow from free online elevation data or your own DEM.
 - **Sends to the controller:** replaces a mission on the DJI RC over USB, with a picture of each mission so you pick the right one.
-- **Works with flypath.io:** save missions to your free account and open them again in QGIS.
+- **Works with flypath.io:** save missions to your flypath.io account and open them again in QGIS.
 
 ---
 
@@ -104,6 +104,8 @@ Parallel passes along a centre line, for roads, pipelines, rivers and power line
 
 - FlyPath adds as many passes as the buffer needs, following the line's curves and corners.
 - **Min Flights** splits the corridor into that many stretches, and **Set Mission Breaks** lets you click line vertices to force a break, for example at a safe landing spot.
+- The centre line must be one continuous line. If a layer feature has several separate lines, plan each one as its own mission.
+- Corridor routes come from the same planning engine as flypath.io, so a corridor planned in QGIS and on the website gives the same route.
 
 ### Orbit (3D Model)
 
@@ -354,7 +356,7 @@ A split mission is saved as one file per flight: `<name>_1_of_N.kmz`, `<name>_2_
 |---|---|---|
 | Best for | Planning with your GIS data (layers, selections, DEMs) and sending missions to the DJI RC | Keeping all your missions in one place, sharing them, and planning in any browser without QGIS |
 | Works offline | Yes, once installed | No, it is a website |
-| Account | Not needed | Free account |
+| Account | Not needed | flypath.io account |
 
 Coming to flypath.io: 2D maps and 3D models made in the cloud from the photos of the missions you fly.
 
@@ -380,13 +382,12 @@ Open the **My missions** tab and click **Connect account**. Paste the token from
 - If someone changed the mission on the website after you opened it, FlyPath does not overwrite their work. It asks whether to load the latest version, save yours as a copy, or cancel; your local plan is kept.
 - Projects are created and renamed on the website.
 
-**What syncs:** 2D, Corridor, Orbit (with rings, splitting, and terrain follow), Oblique and Panorama missions with the consumer drones FlyPath supports. Reversed routes from older versions do not open in QGIS yet and stay on the website. Oblique and Panorama missions with terrain follow stay local for now: export them, or turn terrain follow off before saving.
+**What syncs:** 2D, Corridor, Orbit (with rings, splitting and terrain follow), Oblique and Panorama missions with the consumer drones FlyPath supports. **Launch Offset**, **Same takeoff for all splits** and Corridor **Mission Breaks** are saved with the mission.
 
-For 2D, Corridor, Oblique, and terrain-following Orbit missions, sync also carries **Launch Offset** as `settings.launch_offset_m` (metres, -50 to 50). Older missions without the field use zero. The plugin sends zero explicitly when clearing a saved offset. Positive values mean the takeoff point is higher than the reference ground, so export subtracts that offset from waypoint heights. Flat Orbit and Panorama missions send zero; Panorama terrain-following missions remain local. The plugin advertises `launch-offset-v1` in `X-FlyPath-Sync-Capabilities` so the website can prevent older plugins from opening or changing missions with a nonzero offset.
+- Oblique and Panorama missions with terrain follow stay local for now: export them, or turn terrain follow off before saving.
+- A reversed 2D mission without terrain follow, saved by an early FlyPath version, does not open in QGIS and stays on the website. Reversed Corridor missions and reversed 2D missions with terrain follow open normally.
 
-Sync also carries **Same takeoff for all splits** as `settings.takeoff_reference`: `shared` uses the ground elevation at the first waypoint of the full flown route (after reversal) for every split, while `per_flight` uses the ground elevation at each flight's first waypoint. Older website missions without this field use `per_flight`; new local plugin missions still default to `shared`. The setting is sent for every syncable mission type, though it has no effect while terrain follow is off. The plugin advertises `takeoff-reference-v1` in `X-FlyPath-Sync-Capabilities` so the website can guard terrain-following missions against clients that cannot preserve this choice.
-
-Terrain-following Orbit missions sync with their saved route, `settings.terrain_follow`, launch offset, and takeoff reference. The plugin advertises `orbit-terrain-v1` in `X-FlyPath-Sync-Capabilities` so the website can guard these missions against older clients. Local export still needs an available elevation source to calculate terrain heights.
+Developers: the sync fields for these settings are described in [docs/terrain-sync.md](docs/terrain-sync.md).
 
 Not connected yet? The tab explains what an account adds and links to [flypath.io/register](https://flypath.io/register/).
 
@@ -417,7 +418,7 @@ If DJI Fly rejects a mission on one of the "reports wanted" drones, please [open
 | Requirement | Details |
 |---|---|
 | Operating system | Windows 10 / 11 or Linux |
-| QGIS | 3.34 or later, including QGIS 4; tested on 3.44 and 4.0 |
+| QGIS | 3.34 or later, including QGIS 4; tested on 3.34, 3.44 and 4.0 |
 | Drone | One of the [supported drones](#supported-drones) |
 | Controller | DJI RC2, for sending missions over USB |
 | Python libraries | Shapely 2.1+ and pyproj 3.7+, included with current QGIS releases |
@@ -467,11 +468,11 @@ Go to **Plugins > FlyPath > FlyPath**, or click the FlyPath icon in the toolbar.
 - Tested on Windows 10 / 11 and Linux. macOS is planned.
 - Sending to the RC needs a DJI RC2 over USB, with one existing DJI Fly mission for each flight you send.
 - Terrain follow uses a bare-earth elevation model of about 30 m, so it does not see trees or buildings. Heights are measured from takeoff at the first waypoint of each flight.
-- Oblique terrain follow works out where the camera looks at takeoff level, so on steep slopes the photo centres move a little. Oblique, Orbit and Panorama missions with terrain follow cannot be saved to flypath.io yet.
+- Oblique terrain follow works out where the camera looks at takeoff level, so on steep slopes the photo centres move a little. Oblique and Panorama missions with terrain follow cannot be saved to flypath.io yet.
 - Panorama terrain follow sets a height at each point only, so the drone climbs or descends in a straight line between points. Over a ridge between two points, keep a safe altitude.
 - Panorama missions work with DJI Fly drones only. FlyPath takes the photos; stitch them with panorama software.
 - Low-altitude missions (below 30 m for mapping, 10 m for Orbit and Panorama) cannot be saved to flypath.io yet. Export them as a KMZ or send them to the RC.
-- Corridor and 2D missions always look straight down. Mission Breaks go on the centre line's existing vertices.
+- Corridor and 2D missions always look straight down. Mission Breaks go on the centre line's existing vertices, and a corridor needs one continuous centre line.
 - The Mini 3 Pro mission settings are community-verified, not confirmed from a mission made on its controller.
 
 ---
@@ -498,6 +499,7 @@ FlyPath/
 ├── flypath_dialog.py           # Planner panel, preview and export
 ├── survey_controller.py        # Survey area drawing, layers and selection
 ├── orbit_controller.py         # Orbit (3D Model) circle, rings and controls
+├── panorama_controller.py      # Panorama points, area and controls
 ├── planning_adapter.py         # Requests to and results from the planning engine
 ├── flypath_engine/             # Planning engine (fetched by tools/vendor_engine.py)
 ├── terrain.py                  # Terrain follow heights
